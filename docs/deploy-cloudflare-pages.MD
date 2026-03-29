@@ -107,6 +107,22 @@ npm run build
 - 确认仓库连接正常。
 - 确认 push 的分支是 Pages 项目配置的生产分支。
 
+### 8.4 报错：deploy configuration 指向不存在的 `dist/wrangler.json`
+
+如果日志出现类似报错：
+
+```text
+There is a deploy configuration at '.wrangler/deploy/config.json'; but the redirected configuration path it points to '.wrangler/deploy/..\\..\\dist\\wrangler.json', does not exists
+```
+
+通常是 `.wrangler` 目录中的临时配置残留导致（尤其是本地 Windows 生成过缓存后）。
+
+处理方式：
+
+- 确认 Pages 的 Build command 使用 `npm run build`（不要填 `npm run deploy`）。
+- 确认仓库未提交 `.wrangler/` 目录。
+- 本项目已内置 `npm run clean:wrangler`，并在 `prebuild` / `predeploy` 自动执行清理，重新推送后可恢复。
+
 ## 9. 发布建议
 
 1. 生产分支建议开启 PR 合并流程，避免直接 push。
