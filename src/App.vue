@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FamilyTreeChart from './components/FamilyTreeChart.vue'
 import MemberDetail from './components/MemberDetail.vue'
+import EventManager from './components/EventManager.vue'
 import MemberForm from './components/MemberForm.vue'
 import MemberList from './components/MemberList.vue'
 import OcrImportManager from './components/OcrImportManager.vue'
@@ -10,7 +11,7 @@ import { exportAsJson } from './services/importExport'
 import { buildNavigationUrl } from './services/navigationBridge'
 import { exportSqliteData, importSqliteData } from './services/storage'
 import { useFamilyStore } from './stores/familyStore'
-import type { Gender, MemberInput, Track } from './types/member'
+import type { FamilyEventInput, Gender, MemberInput, Track } from './types/member'
 import type { DuplicateAction, TempMember } from './types/ocr'
 
 const store = useFamilyStore()
@@ -21,11 +22,51 @@ const formModel = ref<MemberInput>({
   parentId: null,
   gender: '男' as Gender,
   spouseIds: [],
+  birthDate: '',
+  photoUrl: '',
+  biography: '',
 })
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const searchKeyword = ref('')
 const isBootstrapping = ref(true)
 const bootstrapError = ref('')
+
+type ToastType = 'success' | 'error' | 'info'
+
+const toast = ref<{ visible: boolean; message: string; type: ToastType }>({
+  visible: false,
+  message: '',
+  type: 'info',
+})
+let toastTimerId: number | null = null
+
+function showToast(message: string, type: ToastType = 'info'): void {
+  toast.value = {
+    visible: true,
+    message,
+    type,
+  }
+
+  if (toastTimerId !== null) {
+    window.clearTimeout(toastTimerId)
+  }
+
+  toastTimerId = window.setTimeout(() => {
+    toast.value.visible = false
+  }, 2200)
+}
+
+function notifySuccess(message: string): void {
+  showToast(message, 'success')
+}
+
+function notifyError(message: string): void {
+  showToast(message, 'error')
+}
+
+function notifyInfo(message: string): void {
+  showToast(message, 'info')
+}
 
 async function bootstrapStore() {
   bootstrapError.value = ''
@@ -33,7 +74,7 @@ async function bootstrapStore() {
   try {
     await store.init()
   } catch (error) {
-    bootstrapError.value = error instanceof Error ? error.message : '本地数据库初始化失败'
+    bootstrapError.value = error instanceof Error ? error.message : '云端 D1 数据初始化失败'
   } finally {
     isBootstrapping.value = false
   }
@@ -41,6 +82,12 @@ async function bootstrapStore() {
 
 onMounted(() => {
   void bootstrapStore()
+})
+
+onBeforeUnmount(() => {
+  if (toastTimerId !== null) {
+    window.clearTimeout(toastTimerId)
+  }
 })
 
 const editingMember = computed(() => {
@@ -52,6 +99,7 @@ const editingMember = computed(() => {
 
 const members = computed(() => store.members.value)
 const tracks = computed(() => store.tracks.value)
+const events = computed(() => store.events.value)
 const selectedMember = computed(() => store.selectedMember.value)
 const highlightedIds = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
@@ -111,10 +159,11 @@ function findSpouseNames(spouseIds: number[]): string {
 function handleSubmit(payload: MemberInput, id?: number) {
   const result = typeof id === 'number' ? store.updateMember(id, payload) : store.addMember(payload)
   if (!result.ok) {
-    window.alert(result.message ?? '保存失败')
+    notifyError(result.message ?? '保存失败')
     return
   }
   editingId.value = null
+  notifySuccess(typeof id === 'number' ? '编辑成功' : '新增成功')
 }
 
 function handleEdit(id: number) {
@@ -142,12 +191,12 @@ function handleRemove(id: number) {
 
   const result = store.deleteMember(id)
   if (!result.ok) {
-    window.alert(result.message ?? '删除失败')
+    notifyError(result.message ?? '删除失败')
     return
   }
 
   editingId.value = null
-  window.alert(result.message ?? '删除成功')
+  notifySuccess(result.message ?? '删除成功')
 }
 
 function handleExport() {
@@ -159,30 +208,36 @@ function handleExport() {
   anchor.download = 'family-tree-backup.json'
   anchor.click()
   URL.revokeObjectURL(url)
+  notifySuccess('导出 JSON 成功')
 }
 
 async function handleExportSqlite() {
   try {
     const binary = await exportSqliteData()
-    const blob = new Blob([binary], { type: 'application/octet-stream' })
+    const binaryBuffer = binary.buffer.slice(
+      binary.byteOffset,
+      binary.byteOffset + binary.byteLength,
+    ) as ArrayBuffer
+    const blob = new Blob([binaryBuffer], { type: 'application/octet-stream' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = 'family-tree-backup.sqlite'
     anchor.click()
     URL.revokeObjectURL(url)
+    notifySuccess('导出 SQLite 成功')
   } catch (error) {
-    window.alert(error instanceof Error ? error.message : '导出 SQLite 失败')
+    notifyError(error instanceof Error ? error.message : '导出 SQLite 失败')
   }
 }
 
 function handleTrackUpload(payload: { raw: string; name: string; memberId: number | null }) {
   const result = store.addTrackFromGpx(payload.raw, payload.name, payload.memberId)
   if (!result.ok) {
-    window.alert(result.message ?? '轨迹上传失败')
+    notifyError(result.message ?? '轨迹上传失败')
     return
   }
-  window.alert(result.message ?? '轨迹上传成功')
+  notifySuccess(result.message ?? '轨迹上传成功')
 }
 
 function handleTrackRemove(id: number) {
@@ -193,24 +248,29 @@ function handleTrackRemove(id: number) {
 
   const result = store.deleteTrack(id)
   if (!result.ok) {
-    window.alert(result.message ?? '轨迹删除失败')
+    notifyError(result.message ?? '轨迹删除失败')
     return
   }
-  window.alert(result.message ?? '轨迹已删除')
+  notifySuccess(result.message ?? '轨迹已删除')
 }
 
 function handleTrackNavigate(track: Track) {
   const url = buildNavigationUrl(track.endPoint)
-  window.open(url, '_blank', 'noopener,noreferrer')
+  const popup = window.open(url, '_blank', 'noopener,noreferrer')
+  if (popup) {
+    notifyInfo('导航页面已打开')
+    return
+  }
+  notifyError('导航页面被拦截，请允许弹窗后重试')
 }
 
 function handleTrackMetaUpdate(payload: { id: number; name: string; memberId: number | null }) {
   const result = store.updateTrackMeta(payload.id, payload.name, payload.memberId)
   if (!result.ok) {
-    window.alert(result.message ?? '轨迹更新失败')
+    notifyError(result.message ?? '轨迹更新失败')
     return
   }
-  window.alert(result.message ?? '轨迹信息已更新')
+  notifySuccess(result.message ?? '轨迹信息已更新')
 }
 
 function handleOcrImport(payload: { members: TempMember[]; duplicateAction: DuplicateAction }) {
@@ -218,10 +278,37 @@ function handleOcrImport(payload: { members: TempMember[]; duplicateAction: Dupl
     duplicateAction: payload.duplicateAction,
   })
   if (!result.ok) {
-    window.alert(result.message ?? 'OCR 导入失败')
+    notifyError(result.message ?? 'OCR 导入失败')
     return
   }
-  window.alert(result.message ?? 'OCR 导入成功')
+  notifySuccess(result.message ?? 'OCR 导入成功')
+}
+
+function handleEventAdd(payload: FamilyEventInput) {
+  const result = store.addEvent(payload)
+  if (!result.ok) {
+    notifyError(result.message ?? '事件新增失败')
+    return
+  }
+  notifySuccess(result.message ?? '事件新增成功')
+}
+
+function handleEventUpdate(payload: { id: number; input: FamilyEventInput }) {
+  const result = store.updateEvent(payload.id, payload.input)
+  if (!result.ok) {
+    notifyError(result.message ?? '事件更新失败')
+    return
+  }
+  notifySuccess(result.message ?? '事件更新成功')
+}
+
+function handleEventRemove(id: number) {
+  const result = store.deleteEvent(id)
+  if (!result.ok) {
+    notifyError(result.message ?? '事件删除失败')
+    return
+  }
+  notifySuccess(result.message ?? '事件已删除')
 }
 
 function openImportDialog() {
@@ -248,9 +335,9 @@ async function handleImport(event: Event) {
       const imported = await importSqliteData(new Uint8Array(buffer))
       store.replaceData(imported)
       editingId.value = null
-      window.alert('SQLite 导入成功')
+      notifySuccess('SQLite 导入成功')
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'SQLite 导入失败')
+      notifyError(error instanceof Error ? error.message : 'SQLite 导入失败')
     }
     input.value = ''
     return
@@ -259,10 +346,10 @@ async function handleImport(event: Event) {
   const text = await file.text()
   const result = store.importDataFromJson(text)
   if (!result.ok) {
-    window.alert(result.message ?? '导入失败')
+    notifyError(result.message ?? '导入失败')
   } else {
     editingId.value = null
-    window.alert(result.message ?? '导入成功')
+    notifySuccess(result.message ?? '导入成功')
   }
 
   input.value = ''
@@ -289,8 +376,8 @@ async function handleImport(event: Event) {
     </header>
 
     <section v-if="isBootstrapping" class="status-panel">
-      <h3>正在加载本地数据库</h3>
-      <p>请稍候，系统正在初始化 SQLite 存储并恢复数据。</p>
+      <h3>正在连接云端存储</h3>
+      <p>请稍候，系统正在初始化 Cloudflare D1 数据并恢复内容。</p>
     </section>
 
     <section v-else-if="bootstrapError" class="status-panel status-panel-error">
@@ -338,6 +425,14 @@ async function handleImport(event: Event) {
           @update-meta="handleTrackMetaUpdate"
         />
 
+        <EventManager
+          :events="events"
+          :members="members"
+          @add="handleEventAdd"
+          @update="handleEventUpdate"
+          @remove="handleEventRemove"
+        />
+
         <OcrImportManager
           :members="members"
           @import-members="handleOcrImport"
@@ -354,7 +449,19 @@ async function handleImport(event: Event) {
     </main>
 
     <footer class="footer">
-      <p>数据默认存储在本地 SQLite（IndexedDB 持久化），请定期导出备份。</p>
+      <p>数据默认存储在 Cloudflare D1 云端数据库，请定期导出备份。</p>
     </footer>
+
+    <transition name="toast-fade">
+      <div
+        v-if="toast.visible"
+        class="app-toast"
+        :class="`app-toast-${toast.type}`"
+        role="status"
+        aria-live="polite"
+      >
+        {{ toast.message }}
+      </div>
+    </transition>
   </div>
 </template>

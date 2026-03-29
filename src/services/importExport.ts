@@ -1,4 +1,13 @@
-import { APP_SCHEMA_VERSION, type FamilyData, type Member, type Track } from '../types/member'
+import {
+  APP_SCHEMA_VERSION,
+  type FamilyData,
+  type FamilyEvent,
+  type FamilyEventType,
+  type Member,
+  type Track,
+} from '../types/member'
+
+const EVENT_TYPES: FamilyEventType[] = ['婚', '丧', '嫁', '娶', '生', '卒', '其他']
 
 function isMember(value: unknown): value is Member {
   if (!value || typeof value !== 'object') {
@@ -11,8 +20,20 @@ function isMember(value: unknown): value is Member {
   const spouseOk =
     member.spouseIds === undefined ||
     (Array.isArray(member.spouseIds) && member.spouseIds.every((id) => typeof id === 'number'))
+  const birthDateOk = member.birthDate === undefined || typeof member.birthDate === 'string'
+  const photoUrlOk = member.photoUrl === undefined || typeof member.photoUrl === 'string'
+  const biographyOk = member.biography === undefined || typeof member.biography === 'string'
 
-  return typeof member.id === 'number' && typeof member.name === 'string' && genderOk && parentOk && spouseOk
+  return (
+    typeof member.id === 'number' &&
+    typeof member.name === 'string' &&
+    genderOk &&
+    parentOk &&
+    spouseOk &&
+    birthDateOk &&
+    photoUrlOk &&
+    biographyOk
+  )
 }
 
 function uniqueNumbers(values: number[]): number[] {
@@ -77,6 +98,25 @@ function isTrack(value: unknown): value is Track {
   )
 }
 
+function isEvent(value: unknown): value is FamilyEvent {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const event = value as Partial<FamilyEvent>
+  const typeOk = typeof event.type === 'string' && EVENT_TYPES.includes(event.type as FamilyEventType)
+  return (
+    typeof event.id === 'number' &&
+    (event.memberId === null || typeof event.memberId === 'number') &&
+    typeOk &&
+    typeof event.title === 'string' &&
+    typeof event.date === 'string' &&
+    (event.description === undefined || typeof event.description === 'string') &&
+    typeof event.createdAt === 'string' &&
+    typeof event.updatedAt === 'string'
+  )
+}
+
 export function exportAsJson(data: FamilyData): string {
   return JSON.stringify(data, null, 2)
 }
@@ -98,9 +138,18 @@ export function parseImportedJson(raw: string): FamilyData {
     ? obj.members.filter(isMember).map((member) => ({
         ...member,
         spouseIds: Array.isArray(member.spouseIds) ? member.spouseIds : [],
+        birthDate: member.birthDate ?? '',
+        photoUrl: member.photoUrl ?? '',
+        biography: member.biography ?? '',
       }))
     : []
   const tracks = Array.isArray(obj.tracks) ? obj.tracks.filter(isTrack) : []
+  const events = Array.isArray(obj.events)
+    ? obj.events.filter(isEvent).map((event) => ({
+        ...event,
+        description: event.description ?? '',
+      }))
+    : []
   if (members.length === 0) {
     throw new Error('导入失败：未找到有效成员数据')
   }
@@ -118,12 +167,17 @@ export function parseImportedJson(raw: string): FamilyData {
   const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
   const nextTrackId =
     typeof obj.nextTrackId === 'number' ? Math.max(obj.nextTrackId, maxTrackId + 1) : maxTrackId + 1
+  const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
+  const nextEventId =
+    typeof obj.nextEventId === 'number' ? Math.max(obj.nextEventId, maxEventId + 1) : maxEventId + 1
 
   return {
     schemaVersion: APP_SCHEMA_VERSION,
     members: normalizeMemberSpouses(members),
     tracks,
+    events,
     nextId,
     nextTrackId,
+    nextEventId,
   }
 }

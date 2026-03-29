@@ -1,0 +1,12 @@
+name = "family-tree-d1-api"
+main = "src/index.ts"
+compatibility_date = "2026-03-29"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "family"
+database_id = "916cd827-77ab-4c0c-bfb3-753a047332f8"
+
+[vars]
+ALLOWED_ORIGIN = "*"
+API_TOKEN = ""

@@ -8,6 +8,22 @@ export interface Member {
   parentId: number | null
   gender: Gender
   spouseIds: number[]
+  birthDate?: string
+  photoUrl?: string
+  biography?: string
+}
+
+export type FamilyEventType = '婚' | '丧' | '嫁' | '娶' | '生' | '卒' | '其他'
+
+export interface FamilyEvent {
+  id: number
+  memberId: number | null
+  type: FamilyEventType
+  title: string
+  date: string
+  description?: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface GpxPoint {
@@ -39,8 +55,10 @@ export interface FamilyData {
   schemaVersion: number
   members: Member[]
   tracks: Track[]
+  events: FamilyEvent[]
   nextId: number
   nextTrackId: number
+  nextEventId: number
 }
 
 export interface MemberInput {
@@ -48,4 +66,15 @@ export interface MemberInput {
   parentId: number | null
   gender: Gender
   spouseIds: number[]
+  birthDate: string
+  photoUrl: string
+  biography: string
+}
+
+export interface FamilyEventInput {
+  memberId: number | null
+  type: FamilyEventType
+  title: string
+  date: string
+  description: string
 }

@@ -23,6 +23,16 @@ const emit = defineEmits<{
       <p><span>ID</span>{{ member.id }}</p>
       <p><span>父亲</span>{{ findParentName(member.parentId) }}</p>
       <p><span>配偶</span>{{ findSpouseNames(member.spouseIds) }}</p>
+      <p><span>出生</span>{{ member.birthDate || '未填写' }}</p>
+      <p><span>照片</span>{{ member.photoUrl || '未填写' }}</p>
+      <p><span>生平</span>{{ member.biography || '未填写' }}</p>
+      <img
+        v-if="member.photoUrl"
+        class="member-photo"
+        :src="member.photoUrl"
+        alt="成员照片"
+        loading="lazy"
+      />
     </div>
 
     <p v-else class="empty-tip">暂无成员，请先新增族人。</p>

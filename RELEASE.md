@@ -136,3 +136,64 @@ family-tree/
 ---
 
 > ✅ 部署完成后，您的电子族谱即可通过全球网络访问，家族成员可随时查看与维护族谱。如有任何问题，请参考 Cloudflare Pages 官方文档或联系技术支持。
+
+---
+
+## 10. 发布到 Cloudflare Workers 时的变量配置（D1 版本）
+
+当前项目已接入 D1 API，部署到 Cloudflare Workers 时，需要配置两类变量：
+
+### 10.1 前端构建变量（`VITE_*`）
+
+这类变量在 `vite build` 时注入前端代码，部署后不会再动态读取。
+
+需要配置：
+
+| 变量名 | 作用 | 示例 |
+|------|------|------|
+| `VITE_D1_API_BASE_URL` | 前端请求的 D1 API 地址 | `https://family-tree-api.your-subdomain.workers.dev` |
+| `VITE_D1_API_TOKEN` | 前端调用 API 使用的 Bearer Token（可选） | `your-token` |
+
+本地构建时，在项目根目录配置 `.env.local` 或 `.env.production`：
+
+```bash
+VITE_D1_API_BASE_URL="https://family-tree-api.your-subdomain.workers.dev"
+VITE_D1_API_TOKEN=""
+```
+
+### 10.2 Worker 运行时变量（API Worker）
+
+这类变量在 Worker 运行时通过 `env` 读取。
+
+在 `cloudflare-d1-worker/wrangler.toml` 中保留：
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "family"
+database_id = "你的 D1 数据库 ID"
+
+[vars]
+ALLOWED_ORIGIN = "https://你的前端域名"
+```
+
+`API_TOKEN` 建议使用 Secret（不要明文写进 `wrangler.toml`）：
+
+```bash
+cd cloudflare-d1-worker
+wrangler secret put API_TOKEN
+```
+
+### 10.3 推荐发布顺序
+
+1. 先部署 API Worker（`cloudflare-d1-worker`），拿到最终 `workers.dev` 地址。
+2. 把该地址写入前端 `VITE_D1_API_BASE_URL` 后，再执行前端构建与发布。
+3. 若启用了 `API_TOKEN`，确保前端 `VITE_D1_API_TOKEN` 与 Worker Secret 一致。
+
+### 10.4 常见错误与排查
+
+| 现象 | 常见原因 | 处理方式 |
+|------|---------|---------|
+| `初始化失败 / Failed to fetch` | `VITE_D1_API_BASE_URL` 地址错误、Worker 未部署、TLS/域名不可达 | 先在浏览器直接访问 `${VITE_D1_API_BASE_URL}/api/family-data` 验证可达性 |
+| `401 未授权` | Worker 配置了 `API_TOKEN`，但前端未配置或不一致 | 重新设置 `wrangler secret put API_TOKEN`，并同步前端变量 |
+| CORS 报错 | `ALLOWED_ORIGIN` 未匹配前端域名 | 将 `ALLOWED_ORIGIN` 改为前端实际域名后重新部署 Worker |

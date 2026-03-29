@@ -1,6 +1,6 @@
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js'
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url'
-import type { FamilyData, Member, Track } from '../types/member'
+import type { FamilyData, FamilyEvent, Member, Track } from '../types/member'
 
 const SQLITE_DB_NAME = 'family-tree-sqlite'
 const SQLITE_STORE_NAME = 'dbfiles'
@@ -89,14 +89,31 @@ function migrateTables(database: Database): void {
       parent_id INTEGER,
       gender TEXT CHECK(gender IN ('男', '女')) DEFAULT '男',
       spouse_ids TEXT DEFAULT '[]',
-      birth_year TEXT,
-      death_year TEXT,
+      birth_date TEXT,
+      photo_url TEXT,
       biography TEXT,
       created_at INTEGER,
       updated_at INTEGER,
       FOREIGN KEY (parent_id) REFERENCES members(id) ON DELETE SET NULL
     );
   `)
+
+  // Backward-compatible upgrades for existing local SQLite files.
+  try {
+    database.run('ALTER TABLE members ADD COLUMN birth_date TEXT;')
+  } catch {
+    // column exists
+  }
+  try {
+    database.run('ALTER TABLE members ADD COLUMN photo_url TEXT;')
+  } catch {
+    // column exists
+  }
+  try {
+    database.run('ALTER TABLE members ADD COLUMN biography TEXT;')
+  } catch {
+    // column exists
+  }
 
   database.run(`
     CREATE TABLE IF NOT EXISTS tracks (
@@ -117,6 +134,20 @@ function migrateTables(database: Database): void {
     CREATE TABLE IF NOT EXISTS metadata (
       key TEXT PRIMARY KEY,
       value TEXT
+    );
+  `)
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS family_events (
+      id INTEGER PRIMARY KEY,
+      member_id INTEGER,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      date TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE SET NULL
     );
   `)
 }
@@ -141,7 +172,17 @@ function readMetaNumber(database: Database, key: string, fallback: number): numb
 
 function queryMembers(database: Database): Member[] {
   const result = database.exec(
-    'SELECT id, name, parent_id, gender, spouse_ids FROM members ORDER BY id ASC;',
+    `SELECT
+      id,
+      name,
+      parent_id,
+      gender,
+      spouse_ids,
+      birth_date,
+      photo_url,
+      biography
+    FROM members
+    ORDER BY id ASC;`,
   )
 
   const rows = result[0]?.values ?? []
@@ -155,8 +196,39 @@ function queryMembers(database: Database): Member[] {
       parentId: row[2] === null ? null : Number(row[2]),
       gender: row[3] === '女' ? '女' : '男',
       spouseIds,
+      birthDate: String(row[5] ?? ''),
+      photoUrl: String(row[6] ?? ''),
+      biography: String(row[7] ?? ''),
     }
   })
+}
+
+function queryEvents(database: Database): FamilyEvent[] {
+  const result = database.exec(
+    `SELECT
+      id,
+      member_id,
+      type,
+      title,
+      date,
+      description,
+      created_at,
+      updated_at
+    FROM family_events
+    ORDER BY date DESC, id DESC;`,
+  )
+
+  const rows = result[0]?.values ?? []
+  return rows.map((row: unknown[]) => ({
+    id: Number(row[0]),
+    memberId: row[1] === null ? null : Number(row[1]),
+    type: String(row[2] ?? '其他') as FamilyEvent['type'],
+    title: String(row[3] ?? ''),
+    date: String(row[4] ?? ''),
+    description: String(row[5] ?? ''),
+    createdAt: String(row[6] ?? new Date().toISOString()),
+    updatedAt: String(row[7] ?? new Date().toISOString()),
+  }))
 }
 
 function queryTracks(database: Database): Track[] {
@@ -196,15 +268,19 @@ function queryTracks(database: Database): Track[] {
 function toFamilyData(database: Database): FamilyData {
   const members = queryMembers(database)
   const tracks = queryTracks(database)
+  const events = queryEvents(database)
   const maxMemberId = members.length > 0 ? Math.max(...members.map((m) => m.id)) : 0
   const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
+  const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
 
   return {
     schemaVersion: readMetaNumber(database, 'schema_version', 2),
     members,
+    events,
     tracks,
     nextId: Math.max(readMetaNumber(database, 'next_id', maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(readMetaNumber(database, 'next_track_id', maxTrackId + 1), maxTrackId + 1),
+    nextEventId: Math.max(readMetaNumber(database, 'next_event_id', maxEventId + 1), maxEventId + 1),
   }
 }
 
@@ -252,6 +328,7 @@ export async function saveFamilyDataToSqlite(data: FamilyData): Promise<void> {
 
   database.run('BEGIN TRANSACTION;')
   try {
+    database.run('DELETE FROM family_events;')
     database.run('DELETE FROM tracks;')
     database.run('DELETE FROM members;')
 
@@ -262,8 +339,8 @@ export async function saveFamilyDataToSqlite(data: FamilyData): Promise<void> {
         parent_id,
         gender,
         spouse_ids,
-        birth_year,
-        death_year,
+        birth_date,
+        photo_url,
         biography,
         created_at,
         updated_at
@@ -277,14 +354,41 @@ export async function saveFamilyDataToSqlite(data: FamilyData): Promise<void> {
         member.parentId,
         member.gender,
         JSON.stringify(member.spouseIds),
-        null,
-        null,
-        null,
+        member.birthDate || '',
+        member.photoUrl || '',
+        member.biography || '',
         nowTs,
         nowTs,
       ])
     }
     memberStmt.free()
+
+    const eventStmt = database.prepare(
+      `INSERT INTO family_events (
+        id,
+        member_id,
+        type,
+        title,
+        date,
+        description,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+    )
+
+    for (const event of data.events) {
+      eventStmt.run([
+        event.id,
+        event.memberId,
+        event.type,
+        event.title,
+        event.date,
+        event.description || '',
+        event.createdAt,
+        event.updatedAt,
+      ])
+    }
+    eventStmt.free()
 
     const trackStmt = database.prepare(
       `INSERT INTO tracks (
@@ -319,6 +423,7 @@ export async function saveFamilyDataToSqlite(data: FamilyData): Promise<void> {
     metaStmt.run(['schema_version', String(data.schemaVersion)])
     metaStmt.run(['next_id', String(data.nextId)])
     metaStmt.run(['next_track_id', String(data.nextTrackId)])
+    metaStmt.run(['next_event_id', String(data.nextEventId)])
     metaStmt.run(['last_write_at', new Date().toISOString()])
     metaStmt.free()
 

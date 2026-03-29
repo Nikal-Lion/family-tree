@@ -3,7 +3,7 @@ import { parseImportedJson } from '../services/importExport'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
 import { canAssignParent, validateName } from '../services/validators'
-import type { FamilyData, Member, MemberInput, Track } from '../types/member'
+import type { FamilyData, FamilyEvent, FamilyEventInput, Member, MemberInput, Track } from '../types/member'
 import type { OcrImportOptions, TempMember } from '../types/ocr'
 
 interface ActionResult {
@@ -14,14 +14,18 @@ interface ActionResult {
 const state = reactive<{
   members: Member[]
   tracks: Track[]
+  events: FamilyEvent[]
   nextId: number
   nextTrackId: number
+  nextEventId: number
   selectedId: number | null
 }>({
   members: [],
   tracks: [],
+  events: [],
   nextId: 1,
   nextTrackId: 1,
+  nextEventId: 1,
   selectedId: null,
 })
 
@@ -116,8 +120,10 @@ function persist(): void {
     schemaVersion: schemaVersion.value,
     members: state.members,
     tracks: state.tracks,
+    events: state.events,
     nextId: state.nextId,
     nextTrackId: state.nextTrackId,
+    nextEventId: state.nextEventId,
   }
 
   persistQueue = persistQueue
@@ -131,10 +137,16 @@ function applyLoadedData(data: FamilyData): void {
   schemaVersion.value = data.schemaVersion
   state.members = [...data.members].sort((a, b) => a.id - b.id)
   state.tracks = [...data.tracks].sort((a, b) => a.id - b.id)
+  state.events = [...(data.events ?? [])].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
   state.nextId = data.nextId
   state.nextTrackId = data.nextTrackId
+  state.nextEventId = data.nextEventId ?? 1
   state.selectedId = data.members[0]?.id ?? null
   ensureBidirectionalSpouses()
+}
+
+function normalizeProfileText(value: string): string {
+  return value.trim()
 }
 
 async function init(): Promise<void> {
@@ -175,6 +187,9 @@ function addMember(input: MemberInput): ActionResult {
     gender: input.gender,
     parentId: normalizeParent(input.parentId),
     spouseIds: [],
+    birthDate: normalizeProfileText(input.birthDate),
+    photoUrl: normalizeProfileText(input.photoUrl),
+    biography: normalizeProfileText(input.biography),
   }
 
   state.nextId += 1
@@ -207,6 +222,9 @@ function updateMember(id: number, input: MemberInput): ActionResult {
   target.name = input.name.trim()
   target.gender = input.gender
   target.parentId = normalizedParentId
+  target.birthDate = normalizeProfileText(input.birthDate)
+  target.photoUrl = normalizeProfileText(input.photoUrl)
+  target.biography = normalizeProfileText(input.biography)
   applySpouseLinks(id, input.spouseIds, previousSpouseIds)
   ensureBidirectionalSpouses()
   persist()
@@ -248,6 +266,7 @@ function deleteMember(id: number): ActionResult {
 
   const deletionIds = new Set(collectDescendants(id))
   state.members = state.members.filter((member) => !deletionIds.has(member.id))
+  state.events = state.events.filter((event) => event.memberId === null || !deletionIds.has(event.memberId))
   ensureBidirectionalSpouses()
 
   if (state.members.length === 0) {
@@ -268,7 +287,9 @@ function importDataFromJson(raw: string): ActionResult {
     state.tracks = imported.tracks.sort((a, b) => a.id - b.id)
     state.nextId = imported.nextId
     state.nextTrackId = imported.nextTrackId
+    state.nextEventId = imported.nextEventId
     state.selectedId = imported.members[0]?.id ?? null
+    state.events = imported.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
     ensureBidirectionalSpouses()
     persist()
     return { ok: true, message: '导入成功' }
@@ -283,6 +304,81 @@ function importDataFromJson(raw: string): ActionResult {
 function replaceData(data: FamilyData): void {
   applyLoadedData(data)
   ready.value = true
+}
+
+function normalizeEventInput(input: FamilyEventInput): FamilyEventInput {
+  return {
+    memberId: input.memberId,
+    type: input.type,
+    title: input.title.trim(),
+    date: input.date.trim(),
+    description: input.description.trim(),
+  }
+}
+
+function addEvent(input: FamilyEventInput): ActionResult {
+  const normalized = normalizeEventInput(input)
+  if (!normalized.title) {
+    return { ok: false, message: '事件标题不能为空' }
+  }
+  if (!normalized.date) {
+    return { ok: false, message: '事件日期不能为空' }
+  }
+
+  const now = new Date().toISOString()
+  const event: FamilyEvent = {
+    id: state.nextEventId,
+    memberId: normalized.memberId,
+    type: normalized.type,
+    title: normalized.title,
+    date: normalized.date,
+    description: normalized.description,
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  state.nextEventId += 1
+  state.events.push(event)
+  state.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+  persist()
+  return { ok: true, message: '事件新增成功' }
+}
+
+function updateEvent(id: number, input: FamilyEventInput): ActionResult {
+  const target = state.events.find((event) => event.id === id)
+  if (!target) {
+    return { ok: false, message: '事件不存在' }
+  }
+
+  const normalized = normalizeEventInput(input)
+  if (!normalized.title) {
+    return { ok: false, message: '事件标题不能为空' }
+  }
+  if (!normalized.date) {
+    return { ok: false, message: '事件日期不能为空' }
+  }
+
+  target.memberId = normalized.memberId
+  target.type = normalized.type
+  target.title = normalized.title
+  target.date = normalized.date
+  target.description = normalized.description
+  target.updatedAt = new Date().toISOString()
+
+  state.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+  persist()
+  return { ok: true, message: '事件更新成功' }
+}
+
+function deleteEvent(id: number): ActionResult {
+  const before = state.events.length
+  state.events = state.events.filter((event) => event.id !== id)
+  if (state.events.length === before) {
+    return { ok: false, message: '事件不存在' }
+  }
+
+  persist()
+  return { ok: true, message: '事件已删除' }
 }
 
 function normalizeTrackName(name: string): string {
@@ -402,6 +498,9 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
       gender,
       parentId: null,
       spouseIds: [],
+      birthDate: '',
+      photoUrl: '',
+      biography: '',
     }
 
     state.nextId += 1
@@ -460,12 +559,14 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
 export function useFamilyStore() {
   const members = computed(() => state.members)
   const tracks = computed(() => state.tracks)
+  const events = computed(() => state.events)
   const selectedId = computed(() => state.selectedId)
   const selectedMember = computed(() => getMemberById(state.selectedId))
 
   return {
     members,
     tracks,
+    events,
     selectedId,
     selectedMember,
     ready: computed(() => ready.value),
@@ -481,6 +582,9 @@ export function useFamilyStore() {
     addTrackFromGpx,
     updateTrackMeta,
     deleteTrack,
+    addEvent,
+    updateEvent,
+    deleteEvent,
     importOcrMembers,
     importDataFromJson,
     replaceData,
@@ -488,8 +592,10 @@ export function useFamilyStore() {
       schemaVersion: schemaVersion.value,
       members: state.members,
       tracks: state.tracks,
+      events: state.events,
       nextId: state.nextId,
       nextTrackId: state.nextTrackId,
+      nextEventId: state.nextEventId,
     }),
   }
 }

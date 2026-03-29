@@ -1,29 +1,36 @@
-import { APP_SCHEMA_VERSION, type FamilyData, type Member, type Track } from '../types/member'
 import {
-  exportSqliteBinary,
-  importSqliteBinary,
-  initSqliteStorage,
-  loadFamilyDataFromSqlite,
-  saveFamilyDataToSqlite,
-} from './sqliteService'
+  APP_SCHEMA_VERSION,
+  type FamilyData,
+  type FamilyEvent,
+  type FamilyEventType,
+  type Member,
+  type Track,
+} from '../types/member'
+import {
+  exportD1BackupBinary,
+  importD1BackupBinary,
+  loadFamilyDataFromD1,
+  saveFamilyDataToD1,
+} from './d1ApiService'
 
 export const STORAGE_KEY = 'family_tree_app_data'
 const STORAGE_MIGRATED_KEY = 'family_tree_storage_migrated'
-const USE_SQLITE = import.meta.env.VITE_USE_SQLITE !== 'false'
-const SQLITE_DUAL_WRITE = import.meta.env.VITE_SQLITE_DUAL_WRITE !== 'false'
+const EVENT_TYPES: FamilyEventType[] = ['婚', '丧', '嫁', '娶', '生', '卒', '其他']
 
 const defaultMembers: Member[] = [
-  { id: 1, name: '始祖', parentId: null, gender: '男', spouseIds: [] },
-  { id: 2, name: '长子', parentId: 1, gender: '男', spouseIds: [] },
-  { id: 3, name: '次女', parentId: 1, gender: '女', spouseIds: [] },
+  { id: 1, name: '始祖', parentId: null, gender: '男', spouseIds: [], birthDate: '', photoUrl: '', biography: '' },
+  { id: 2, name: '长子', parentId: 1, gender: '男', spouseIds: [], birthDate: '', photoUrl: '', biography: '' },
+  { id: 3, name: '次女', parentId: 1, gender: '女', spouseIds: [], birthDate: '', photoUrl: '', biography: '' },
 ]
 
 const defaultData: FamilyData = {
   schemaVersion: APP_SCHEMA_VERSION,
   members: defaultMembers,
   tracks: [],
+  events: [],
   nextId: 4,
   nextTrackId: 1,
+  nextEventId: 1,
 }
 
 function cloneDefaultData(): FamilyData {
@@ -31,9 +38,30 @@ function cloneDefaultData(): FamilyData {
     schemaVersion: defaultData.schemaVersion,
     members: defaultData.members.map((member) => ({ ...member, spouseIds: [...member.spouseIds] })),
     tracks: [],
+    events: [],
     nextId: defaultData.nextId,
     nextTrackId: defaultData.nextTrackId,
+    nextEventId: defaultData.nextEventId,
   }
+}
+
+function isEvent(value: unknown): value is FamilyEvent {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const event = value as Partial<FamilyEvent>
+  const typeOk = typeof event.type === 'string' && EVENT_TYPES.includes(event.type as FamilyEventType)
+  return (
+    typeof event.id === 'number' &&
+    (event.memberId === null || typeof event.memberId === 'number') &&
+    typeOk &&
+    typeof event.title === 'string' &&
+    typeof event.date === 'string' &&
+    (event.description === undefined || typeof event.description === 'string') &&
+    typeof event.createdAt === 'string' &&
+    typeof event.updatedAt === 'string'
+  )
 }
 
 function isTrack(value: unknown): value is Track {
@@ -109,8 +137,20 @@ function isMember(value: unknown): value is Member {
   const spouseOk =
     m.spouseIds === undefined ||
     (Array.isArray(m.spouseIds) && m.spouseIds.every((id) => typeof id === 'number'))
+  const birthDateOk = m.birthDate === undefined || typeof m.birthDate === 'string'
+  const photoUrlOk = m.photoUrl === undefined || typeof m.photoUrl === 'string'
+  const biographyOk = m.biography === undefined || typeof m.biography === 'string'
 
-  return typeof m.id === 'number' && typeof m.name === 'string' && genderOk && parentOk && spouseOk
+  return (
+    typeof m.id === 'number' &&
+    typeof m.name === 'string' &&
+    genderOk &&
+    parentOk &&
+    spouseOk &&
+    birthDateOk &&
+    photoUrlOk &&
+    biographyOk
+  )
 }
 
 function loadFamilyDataFromLocalStorage(): FamilyData {
@@ -125,11 +165,18 @@ function loadFamilyDataFromLocalStorage(): FamilyData {
       ? parsed.members.filter(isMember).map((member) => ({
           ...member,
           spouseIds: Array.isArray(member.spouseIds) ? member.spouseIds : [],
+          birthDate: member.birthDate ?? '',
+          photoUrl: member.photoUrl ?? '',
+          biography: member.biography ?? '',
         }))
       : []
     const tracks = Array.isArray(parsed.tracks) ? parsed.tracks.filter(isTrack) : []
+    const events = Array.isArray(parsed.events)
+      ? parsed.events.filter(isEvent).map((event) => ({ ...event, description: event.description ?? '' }))
+      : []
     const nextId = typeof parsed.nextId === 'number' ? parsed.nextId : 1
     const nextTrackId = typeof parsed.nextTrackId === 'number' ? parsed.nextTrackId : 1
+    const nextEventId = typeof parsed.nextEventId === 'number' ? parsed.nextEventId : 1
 
     if (members.length === 0) {
       return cloneDefaultData()
@@ -137,21 +184,20 @@ function loadFamilyDataFromLocalStorage(): FamilyData {
 
     const computedNextId = Math.max(nextId, ...members.map((m) => m.id + 1))
     const computedNextTrackId = Math.max(nextTrackId, ...tracks.map((t) => t.id + 1), 1)
+    const computedNextEventId = Math.max(nextEventId, ...events.map((e) => e.id + 1), 1)
 
     return {
       schemaVersion: APP_SCHEMA_VERSION,
       members: normalizeMemberSpouses(members),
       tracks,
+      events,
       nextId: computedNextId,
       nextTrackId: computedNextTrackId,
+      nextEventId: computedNextEventId,
     }
   } catch {
     return cloneDefaultData()
   }
-}
-
-function saveFamilyDataToLocalStorage(data: FamilyData): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
 }
 
 function hasLocalPersistedPayload(): boolean {
@@ -166,61 +212,50 @@ function wasMigratedToSqlite(): boolean {
   return localStorage.getItem(STORAGE_MIGRATED_KEY) === '1'
 }
 
+function clearLegacyLocalStorageData(): void {
+  localStorage.removeItem(STORAGE_KEY)
+}
+
+function saveFamilyDataToLocalStorage(data: FamilyData): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+}
+
 export async function initializeStorage(): Promise<FamilyData> {
   const localData = loadFamilyDataFromLocalStorage()
+  try {
+    const d1Data = await loadFamilyDataFromD1()
+    if (d1Data) {
+      return d1Data
+    }
 
-  if (!USE_SQLITE) {
+    const hasLocalData = hasLocalPersistedPayload()
+    const seedData = hasLocalData ? localData : cloneDefaultData()
+    await saveFamilyDataToD1(seedData)
+
+    if (hasLocalData && !wasMigratedToSqlite()) {
+      markMigratedToSqlite()
+      clearLegacyLocalStorageData()
+    }
+
+    return seedData
+  } catch (error) {
+    // Keep the app usable when cloud endpoint is temporarily unavailable.
+    console.warn('D1 初始化失败，已回退到本地数据。', error)
     return localData
   }
-
-  await initSqliteStorage()
-  const sqliteData = await loadFamilyDataFromSqlite()
-  if (sqliteData) {
-    return sqliteData
-  }
-
-  const hasLocalData = hasLocalPersistedPayload()
-  const seedData = hasLocalData ? localData : cloneDefaultData()
-  await saveFamilyDataToSqlite(seedData)
-
-  if (hasLocalData && !wasMigratedToSqlite()) {
-    markMigratedToSqlite()
-  }
-
-  if (SQLITE_DUAL_WRITE) {
-    saveFamilyDataToLocalStorage(seedData)
-  }
-
-  return seedData
 }
 
 export async function saveFamilyData(data: FamilyData): Promise<void> {
-  if (USE_SQLITE) {
-    await saveFamilyDataToSqlite(data)
-    if (SQLITE_DUAL_WRITE) {
-      saveFamilyDataToLocalStorage(data)
-    }
-    return
-  }
-
-  saveFamilyDataToLocalStorage(data)
+  await saveFamilyDataToD1(data)
 }
 
 export async function exportSqliteData(): Promise<Uint8Array> {
-  if (!USE_SQLITE) {
-    throw new Error('当前未启用 SQLite 模式')
-  }
-  return exportSqliteBinary()
+  return exportD1BackupBinary()
 }
 
 export async function importSqliteData(binary: Uint8Array): Promise<FamilyData> {
-  if (!USE_SQLITE) {
-    throw new Error('当前未启用 SQLite 模式')
-  }
-  const imported = await importSqliteBinary(binary)
-  if (SQLITE_DUAL_WRITE) {
-    saveFamilyDataToLocalStorage(imported)
-  }
+  const imported = await importD1BackupBinary(binary)
   markMigratedToSqlite()
+  clearLegacyLocalStorageData()
   return imported
 }

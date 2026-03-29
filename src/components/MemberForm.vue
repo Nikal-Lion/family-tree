@@ -18,6 +18,10 @@ const form = defineModel<MemberInput>('form', {
     name: '',
     parentId: null,
     gender: '男' as Gender,
+    spouseIds: [],
+    birthDate: '',
+    photoUrl: '',
+    biography: '',
   },
 })
 
@@ -46,6 +50,9 @@ watch(
         parentId: member.parentId,
         gender: member.gender,
         spouseIds: [...member.spouseIds],
+        birthDate: member.birthDate ?? '',
+        photoUrl: member.photoUrl ?? '',
+        biography: member.biography ?? '',
       }
       return
     }
@@ -55,6 +62,9 @@ watch(
       parentId: null,
       gender: '男',
       spouseIds: [],
+      birthDate: '',
+      photoUrl: '',
+      biography: '',
     }
   },
   { immediate: true },
@@ -132,6 +142,21 @@ function submitForm() {
         <button type="button" class="btn-ghost" @click="clearSpouses">清空配偶</button>
       </div>
       <small class="search-meta">可不选择配偶；已选后可点“清空配偶”取消。</small>
+    </label>
+
+    <label class="field">
+      <span>出生日期</span>
+      <input v-model="form.birthDate" type="date" />
+    </label>
+
+    <label class="field">
+      <span>照片链接</span>
+      <input v-model="form.photoUrl" type="url" placeholder="https://example.com/photo.jpg" />
+    </label>
+
+    <label class="field">
+      <span>生平</span>
+      <textarea v-model="form.biography" rows="3" placeholder="可记录人物生平简介"></textarea>
     </label>
 
     <div class="btn-row">
