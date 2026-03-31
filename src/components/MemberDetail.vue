@@ -5,11 +5,13 @@ const props = defineProps<{
   member: Member | null
   findParentName: (id: number | null) => string
   findSpouseNames: (ids: number[]) => string
+  generation: number | null
 }>()
 
 const emit = defineEmits<{
   edit: [id: number]
   remove: [id: number]
+  addChild: [parentId: number]
 }>()
 </script>
 
@@ -21,6 +23,7 @@ const emit = defineEmits<{
       <p><span>姓名</span>{{ member.name }}</p>
       <p><span>性别</span>{{ member.gender }}</p>
       <p><span>ID</span>{{ member.id }}</p>
+      <p><span>世代</span>第 {{ generation ?? '?' }} 代</p>
       <p><span>父亲</span>{{ findParentName(member.parentId) }}</p>
       <p><span>配偶</span>{{ findSpouseNames(member.spouseIds) }}</p>
       <p><span>出生</span>{{ member.birthDate || '未填写' }}</p>
@@ -39,6 +42,7 @@ const emit = defineEmits<{
 
     <div v-if="member" class="btn-row">
       <button class="btn-primary" type="button" @click="emit('edit', member.id)">编辑</button>
+      <button class="btn-ghost" type="button" @click="emit('addChild', member.id)">添加子女</button>
       <button class="btn-danger" type="button" @click="emit('remove', member.id)">删除</button>
     </div>
   </section>

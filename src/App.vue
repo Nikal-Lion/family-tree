@@ -6,8 +6,10 @@ import EventManager from './components/EventManager.vue'
 import MemberForm from './components/MemberForm.vue'
 import MemberList from './components/MemberList.vue'
 import OcrImportManager from './components/OcrImportManager.vue'
+import StatsDashboard from './components/StatsDashboard.vue'
 import TrackManager from './components/TrackManager.vue'
 import { exportAsJson } from './services/importExport'
+import { computeGenerations } from './services/generationService'
 import { buildNavigationUrl } from './services/navigationBridge'
 import { exportSqliteData, importSqliteData } from './services/storage'
 import { useFamilyStore } from './stores/familyStore'
@@ -27,6 +29,7 @@ const formModel = ref<MemberInput>({
   biography: '',
 })
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
 const searchKeyword = ref('')
 const isBootstrapping = ref(true)
 const bootstrapError = ref('')
@@ -101,6 +104,15 @@ const members = computed(() => store.members.value)
 const tracks = computed(() => store.tracks.value)
 const events = computed(() => store.events.value)
 const selectedMember = computed(() => store.selectedMember.value)
+
+const generationMap = computed(() => computeGenerations(members.value))
+
+const selectedGeneration = computed(() => {
+  const id = store.selectedId.value
+  if (id === null) return null
+  return generationMap.value.get(id) ?? null
+})
+
 const highlightedIds = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
   if (!keyword) {
@@ -199,6 +211,20 @@ function handleRemove(id: number) {
   notifySuccess(result.message ?? '删除成功')
 }
 
+function handleAddChild(parentId: number) {
+  editingId.value = null
+  formModel.value = {
+    name: '',
+    parentId,
+    gender: '男',
+    spouseIds: [],
+    birthDate: '',
+    photoUrl: '',
+    biography: '',
+  }
+  notifyInfo('已自动填充父亲，请输入子女姓名后保存')
+}
+
 function handleExport() {
   const json = exportAsJson(store.exportData())
   const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
@@ -229,6 +255,11 @@ async function handleExportSqlite() {
   } catch (error) {
     notifyError(error instanceof Error ? error.message : '导出 SQLite 失败')
   }
+}
+
+function handleExportTreePng() {
+  treeChartRef.value?.exportAsPng()
+  notifySuccess('族谱树图已导出为 PNG')
 }
 
 function handleTrackUpload(payload: { raw: string; name: string; memberId: number | null }) {
@@ -365,6 +396,7 @@ async function handleImport(event: Event) {
         <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite</button>
         <button class="btn-primary" type="button" @click="handleExport">导出 JSON</button>
         <button class="btn-ghost" type="button" @click="handleExportSqlite">导出 SQLite</button>
+        <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
       </div>
       <input
         ref="fileInputRef"
@@ -389,6 +421,7 @@ async function handleImport(event: Event) {
     <main v-else class="main-layout">
       <section class="left-pane">
         <FamilyTreeChart
+          ref="treeChartRef"
           :members="members"
           :selected-id="store.selectedId.value"
           :highlight-ids="highlightedIds"
@@ -397,6 +430,12 @@ async function handleImport(event: Event) {
       </section>
 
       <aside class="right-pane">
+        <StatsDashboard
+          :members="members"
+          :tracks="tracks"
+          :events="events"
+        />
+
         <MemberForm
           v-model:form="formModel"
           :members="members"
@@ -409,6 +448,7 @@ async function handleImport(event: Event) {
           :members="members"
           :selected-id="store.selectedId.value"
           :find-parent-name="findParentName"
+          :generation-map="generationMap"
           @select="store.selectMember"
           @edit="handleEdit"
           @remove="handleRemove"
@@ -442,8 +482,10 @@ async function handleImport(event: Event) {
           :member="selectedMember"
           :find-parent-name="findParentName"
           :find-spouse-names="findSpouseNames"
+          :generation="selectedGeneration"
           @edit="handleEdit"
           @remove="handleRemove"
+          @add-child="handleAddChild"
         />
       </aside>
     </main>

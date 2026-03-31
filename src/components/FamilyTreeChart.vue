@@ -19,6 +19,23 @@ const emit = defineEmits<{
   select: [id: number]
 }>()
 
+function exportAsPng() {
+  if (!chart) {
+    return
+  }
+  const url = chart.getDataURL({
+    type: 'png',
+    pixelRatio: 2,
+    backgroundColor: '#fffef7',
+  })
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = 'family-tree.png'
+  anchor.click()
+}
+
+defineExpose({ exportAsPng })
+
 const chartRef = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | null = null
 let lastCenteredId: number | null = null
