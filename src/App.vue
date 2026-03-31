@@ -8,6 +8,11 @@ import MemberList from './components/MemberList.vue'
 import OcrImportManager from './components/OcrImportManager.vue'
 import StatsDashboard from './components/StatsDashboard.vue'
 import TrackManager from './components/TrackManager.vue'
+import {
+  getD1ApiDiagnosticsConfig,
+  runD1SelfCheck,
+  type D1SelfCheckResult,
+} from './services/d1ApiService'
 import { exportAsJson } from './services/importExport'
 import { computeGenerations } from './services/generationService'
 import { buildNavigationUrl } from './services/navigationBridge'
@@ -33,6 +38,8 @@ const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
 const searchKeyword = ref('')
 const isBootstrapping = ref(true)
 const bootstrapError = ref('')
+const selfCheckResult = ref<D1SelfCheckResult | null>(null)
+const selfCheckPending = ref(false)
 
 type ToastType = 'success' | 'error' | 'info'
 
@@ -71,6 +78,36 @@ function notifyInfo(message: string): void {
   showToast(message, 'info')
 }
 
+function formatDisplayTime(value: string | null | undefined): string {
+  if (!value) {
+    return '未检测'
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+async function refreshD1Diagnostics(notify = false): Promise<void> {
+  selfCheckPending.value = true
+  try {
+    const result = await runD1SelfCheck()
+    selfCheckResult.value = result
+    if (notify) {
+      if (result.ok) {
+        notifySuccess('D1 自检完成')
+      } else {
+        notifyError(`D1 自检失败：${result.message}`)
+      }
+    }
+  } finally {
+    selfCheckPending.value = false
+  }
+}
+
 async function bootstrapStore() {
   bootstrapError.value = ''
   isBootstrapping.value = true
@@ -83,14 +120,42 @@ async function bootstrapStore() {
   }
 }
 
+async function refreshCloudDataOnFocus(): Promise<void> {
+  if (isBootstrapping.value || !store.ready.value) {
+    return
+  }
+
+  try {
+    await store.syncFromCloud()
+  } catch (error) {
+    console.warn('切回页面时同步 D1 数据失败', error)
+  }
+}
+
+function handleWindowFocus(): void {
+  void refreshCloudDataOnFocus()
+}
+
+function handleVisibilityChange(): void {
+  if (document.visibilityState !== 'visible') {
+    return
+  }
+  void refreshCloudDataOnFocus()
+}
+
 onMounted(() => {
   void bootstrapStore()
+  void refreshD1Diagnostics()
+  window.addEventListener('focus', handleWindowFocus)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onBeforeUnmount(() => {
   if (toastTimerId !== null) {
     window.clearTimeout(toastTimerId)
   }
+  window.removeEventListener('focus', handleWindowFocus)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 const editingMember = computed(() => {
@@ -111,6 +176,55 @@ const selectedGeneration = computed(() => {
   const id = store.selectedId.value
   if (id === null) return null
   return generationMap.value.get(id) ?? null
+})
+
+const d1Config = computed(() => getD1ApiDiagnosticsConfig())
+const diagnostics = computed(() => selfCheckResult.value)
+const diagnosticsTone = computed(() => diagnostics.value?.status ?? 'warning')
+const diagnosticsTitle = computed(() => {
+  if (selfCheckPending.value && !diagnostics.value) {
+    return '正在检测 D1 连接'
+  }
+  if (!diagnostics.value) {
+    return '尚未执行 D1 自检'
+  }
+  if (diagnostics.value.status === 'ok') {
+    return 'D1 连接正常'
+  }
+  if (diagnostics.value.status === 'warning') {
+    return 'D1 已连通，但状态需要确认'
+  }
+  return 'D1 自检失败'
+})
+const diagnosticsSummary = computed(() => {
+  if (selfCheckPending.value && !diagnostics.value) {
+    return '正在向 Cloudflare Worker 发起请求并验证 D1 返回。'
+  }
+  return diagnostics.value?.message ?? '点击“重新检测”后，可确认当前页面是否已连接到 D1。'
+})
+const diagnosticsTimeText = computed(() => formatDisplayTime(diagnostics.value?.checkedAt))
+const diagnosticsHttpStatusText = computed(() => {
+  const status = diagnostics.value?.httpStatus
+  return typeof status === 'number' ? String(status) : '无'
+})
+const diagnosticsSchemaText = computed(() => {
+  const schemaVersion = diagnostics.value?.schemaVersion
+  return typeof schemaVersion === 'number' ? String(schemaVersion) : '无'
+})
+const diagnosticsStatusLabel = computed(() => {
+  if (selfCheckPending.value) {
+    return '检测中'
+  }
+  if (!diagnostics.value) {
+    return '未检测'
+  }
+  if (diagnostics.value.status === 'ok') {
+    return '正常'
+  }
+  if (diagnostics.value.status === 'warning') {
+    return '空库'
+  }
+  return '失败'
 })
 
 const highlightedIds = computed(() => {
@@ -418,7 +532,59 @@ async function handleImport(event: Event) {
       <button class="btn-primary" type="button" @click="bootstrapStore">重试</button>
     </section>
 
-    <main v-else class="main-layout">
+    <section class="diagnostic-panel" :class="`diagnostic-panel-${diagnosticsTone}`">
+      <div class="diagnostic-header">
+        <div>
+          <p class="diagnostic-kicker">D1 自检面板</p>
+          <h3>{{ diagnosticsTitle }}</h3>
+          <p>{{ diagnosticsSummary }}</p>
+        </div>
+        <button class="btn-ghost" type="button" :disabled="selfCheckPending" @click="refreshD1Diagnostics(true)">
+          {{ selfCheckPending ? '检测中...' : '重新检测' }}
+        </button>
+      </div>
+
+      <div class="diagnostic-grid">
+        <div class="diagnostic-item">
+          <span>状态</span>
+          <strong>{{ diagnosticsStatusLabel }}</strong>
+        </div>
+        <div class="diagnostic-item diagnostic-item-wide">
+          <span>API 地址</span>
+          <strong>{{ diagnostics?.apiBaseUrl ?? d1Config.apiBaseUrl ?? '未配置' }}</strong>
+        </div>
+        <div class="diagnostic-item">
+          <span>Token</span>
+          <strong>{{ d1Config.tokenConfigured ? '已配置' : '未配置' }}</strong>
+        </div>
+        <div class="diagnostic-item">
+          <span>HTTP 状态</span>
+          <strong>{{ diagnosticsHttpStatusText }}</strong>
+        </div>
+        <div class="diagnostic-item">
+          <span>最近检测</span>
+          <strong>{{ diagnosticsTimeText }}</strong>
+        </div>
+        <div class="diagnostic-item">
+          <span>Schema</span>
+          <strong>{{ diagnosticsSchemaText }}</strong>
+        </div>
+        <div class="diagnostic-item">
+          <span>云端成员</span>
+          <strong>{{ diagnostics?.memberCount ?? 0 }}</strong>
+        </div>
+        <div class="diagnostic-item">
+          <span>云端轨迹</span>
+          <strong>{{ diagnostics?.trackCount ?? 0 }}</strong>
+        </div>
+        <div class="diagnostic-item">
+          <span>云端事件</span>
+          <strong>{{ diagnostics?.eventCount ?? 0 }}</strong>
+        </div>
+      </div>
+    </section>
+
+    <main v-if="!isBootstrapping && !bootstrapError" class="main-layout">
       <section class="left-pane">
         <FamilyTreeChart
           ref="treeChartRef"

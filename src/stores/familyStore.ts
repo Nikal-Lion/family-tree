@@ -1,5 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import { parseImportedJson } from '../services/importExport'
+import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
 import { canAssignParent, validateName } from '../services/validators'
@@ -33,6 +34,7 @@ const schemaVersion = ref(2)
 const ready = ref(false)
 let initPromise: Promise<void> | null = null
 let persistQueue: Promise<void> = Promise.resolve()
+let syncPromise: Promise<boolean> | null = null
 
 function uniqueNumbers(values: number[]): number[] {
   return [...new Set(values)]
@@ -133,7 +135,7 @@ function persist(): void {
     })
 }
 
-function applyLoadedData(data: FamilyData): void {
+function applyLoadedData(data: FamilyData, options?: { preserveSelectedId?: boolean }): void {
   schemaVersion.value = data.schemaVersion
   state.members = [...data.members].sort((a, b) => a.id - b.id)
   state.tracks = [...data.tracks].sort((a, b) => a.id - b.id)
@@ -141,7 +143,11 @@ function applyLoadedData(data: FamilyData): void {
   state.nextId = data.nextId
   state.nextTrackId = data.nextTrackId
   state.nextEventId = data.nextEventId ?? 1
-  state.selectedId = data.members[0]?.id ?? null
+  const nextSelectedId = options?.preserveSelectedId ? state.selectedId : null
+  state.selectedId =
+    nextSelectedId !== null && data.members.some((member) => member.id === nextSelectedId)
+      ? nextSelectedId
+      : data.members[0]?.id ?? null
   ensureBidirectionalSpouses()
 }
 
@@ -164,6 +170,34 @@ async function init(): Promise<void> {
   })()
 
   return initPromise
+}
+
+async function syncFromCloud(): Promise<boolean> {
+  if (!ready.value) {
+    await init()
+    return true
+  }
+  if (syncPromise) {
+    return syncPromise
+  }
+
+  syncPromise = (async () => {
+    await persistQueue
+    const loaded = await loadFamilyDataFromD1()
+    if (!loaded) {
+      return false
+    }
+
+    applyLoadedData(loaded, { preserveSelectedId: true })
+    ready.value = true
+    return true
+  })()
+
+  try {
+    return await syncPromise
+  } finally {
+    syncPromise = null
+  }
 }
 
 function normalizeParent(parentId: number | null): number | null {
@@ -571,6 +605,7 @@ export function useFamilyStore() {
     selectedMember,
     ready: computed(() => ready.value),
     init,
+    syncFromCloud,
     nextId: computed(() => state.nextId),
     nextTrackId: computed(() => state.nextTrackId),
     selectMember: (id: number) => {

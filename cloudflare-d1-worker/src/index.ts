@@ -68,6 +68,9 @@ function corsHeaders(env: Env): Headers {
 function jsonResponse(env: Env, data: unknown, status = 200): Response {
   const headers = corsHeaders(env)
   headers.set('Content-Type', 'application/json; charset=utf-8')
+  headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  headers.set('Pragma', 'no-cache')
+  headers.set('Expires', '0')
   return new Response(JSON.stringify(data), { status, headers })
 }
 
