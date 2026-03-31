@@ -49,6 +49,13 @@ select {
   box-shadow: var(--shadow);
 }
 
+.topbar-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 .topbar h1 {
   margin: 0;
   letter-spacing: 2px;

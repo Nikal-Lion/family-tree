@@ -9,6 +9,7 @@ const props = defineProps<{
   selectedId: number | null
   findParentName: (id: number | null) => string
   generationMap: Map<number, number>
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -112,7 +113,7 @@ function getGeneration(id: number): number {
           </span>
         </div>
 
-        <div class="member-actions" @click.stop>
+        <div v-if="!readonly" class="member-actions" @click.stop>
           <button class="btn-ghost" type="button" @click="emit('edit', member.id)">编辑</button>
           <button class="btn-danger" type="button" @click="emit('remove', member.id)">删除</button>
         </div>

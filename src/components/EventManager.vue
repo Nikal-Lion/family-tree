@@ -7,6 +7,7 @@ const EVENT_TYPES: FamilyEventType[] = ['婚', '丧', '嫁', '娶', '生', '卒'
 const props = defineProps<{
   events: FamilyEvent[]
   members: Member[]
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -92,8 +93,9 @@ function findMemberName(memberId: number | null): string {
 
 <template>
   <section class="panel-block event-block">
-    <h3>{{ editingId === null ? '新增事件' : '编辑事件' }}</h3>
+    <h3>{{ readonly ? '事件记录' : (editingId === null ? '新增事件' : '编辑事件') }}</h3>
 
+    <template v-if="!readonly">
     <div class="field-row">
       <label class="field">
         <span>类型</span>
@@ -134,6 +136,7 @@ function findMemberName(memberId: number | null): string {
       </button>
       <button v-if="editingId !== null" type="button" class="btn-ghost" @click="resetForm">取消编辑</button>
     </div>
+    </template>
 
     <ul class="event-list">
       <li v-for="event in events" :key="event.id" class="event-item">
@@ -142,7 +145,7 @@ function findMemberName(memberId: number | null): string {
           <span>{{ findMemberName(event.memberId) }}</span>
           <span v-if="event.description">{{ event.description }}</span>
         </div>
-        <div class="member-actions">
+        <div v-if="!readonly" class="member-actions">
           <button class="btn-ghost" type="button" @click="beginEdit(event)">编辑</button>
           <button class="btn-danger" type="button" @click="removeEvent(event.id)">删除</button>
         </div>

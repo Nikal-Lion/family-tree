@@ -6,6 +6,7 @@ const props = defineProps<{
   findParentName: (id: number | null) => string
   findSpouseNames: (ids: number[]) => string
   generation: number | null
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -40,7 +41,7 @@ const emit = defineEmits<{
 
     <p v-else class="empty-tip">暂无成员，请先新增族人。</p>
 
-    <div v-if="member" class="btn-row">
+    <div v-if="member && !readonly" class="btn-row">
       <button class="btn-primary" type="button" @click="emit('edit', member.id)">编辑</button>
       <button class="btn-ghost" type="button" @click="emit('addChild', member.id)">添加子女</button>
       <button class="btn-danger" type="button" @click="emit('remove', member.id)">删除</button>

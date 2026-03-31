@@ -6,6 +6,7 @@ const props = defineProps<{
   tracks: Track[]
   members: Member[]
   selectedMemberId: number | null
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -84,6 +85,7 @@ function promptRename(track: Track) {
   <section class="panel-block track-block">
     <h3>扫墓轨迹</h3>
 
+    <template v-if="!readonly">
     <div class="field-row">
       <input
         v-model="trackName"
@@ -105,6 +107,7 @@ function promptRename(track: Track) {
     </div>
 
     <input ref="fileInputRef" class="hidden-input" type="file" accept=".gpx" @change="handleFileChange" />
+    </template>
 
     <p class="search-meta">已上传 {{ tracks.length }} 条轨迹</p>
     <p v-if="selectedMemberId !== null" class="search-meta">
@@ -122,8 +125,8 @@ function promptRename(track: Track) {
         </div>
         <div class="member-actions">
           <button class="btn-ghost" type="button" @click.stop="emit('navigate', track)">导航</button>
-          <button class="btn-ghost" type="button" @click.stop="promptRename(track)">重命名</button>
-          <button class="btn-danger" type="button" @click.stop="emit('remove', track.id)">删除</button>
+          <button v-if="!readonly" class="btn-ghost" type="button" @click.stop="promptRename(track)">重命名</button>
+          <button v-if="!readonly" class="btn-danger" type="button" @click.stop="emit('remove', track.id)">删除</button>
         </div>
       </li>
     </ul>

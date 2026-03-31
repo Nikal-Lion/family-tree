@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import AuthManager from './components/AuthManager.vue'
 import FamilyTreeChart from './components/FamilyTreeChart.vue'
 import MemberDetail from './components/MemberDetail.vue'
 import EventManager from './components/EventManager.vue'
@@ -8,6 +9,7 @@ import MemberList from './components/MemberList.vue'
 import OcrImportManager from './components/OcrImportManager.vue'
 import StatsDashboard from './components/StatsDashboard.vue'
 import TrackManager from './components/TrackManager.vue'
+import { useAuth } from './services/authService'
 import {
   getD1ApiDiagnosticsConfig,
   runD1SelfCheck,
@@ -22,6 +24,8 @@ import type { FamilyEventInput, Gender, MemberInput, Track } from './types/membe
 import type { DuplicateAction, TempMember } from './types/ocr'
 
 const store = useFamilyStore()
+const { isAdmin } = useAuth()
+const isViewerMode = computed(() => !isAdmin.value)
 
 const editingId = ref<number | null>(null)
 const formModel = ref<MemberInput>({
@@ -504,10 +508,15 @@ async function handleImport(event: Event) {
 <template>
   <div class="page">
     <header class="topbar">
-      <h1>家族云谱</h1>
-      <p>记录家族世系，传承家族文化</p>
+      <div class="topbar-main">
+        <div>
+          <h1>家族云谱</h1>
+          <p>记录家族世系，传承家族文化</p>
+        </div>
+        <AuthManager @notify="(msg, type) => showToast(msg, type)" />
+      </div>
       <div class="top-actions">
-        <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite</button>
+        <button v-if="isAdmin" class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite</button>
         <button class="btn-primary" type="button" @click="handleExport">导出 JSON</button>
         <button class="btn-ghost" type="button" @click="handleExportSqlite">导出 SQLite</button>
         <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
@@ -532,7 +541,7 @@ async function handleImport(event: Event) {
       <button class="btn-primary" type="button" @click="bootstrapStore">重试</button>
     </section>
 
-    <section class="diagnostic-panel" :class="`diagnostic-panel-${diagnosticsTone}`">
+    <section v-if="isAdmin" class="diagnostic-panel" :class="`diagnostic-panel-${diagnosticsTone}`">
       <div class="diagnostic-header">
         <div>
           <p class="diagnostic-kicker">D1 自检面板</p>
@@ -603,6 +612,7 @@ async function handleImport(event: Event) {
         />
 
         <MemberForm
+          v-if="isAdmin"
           v-model:form="formModel"
           :members="members"
           :editing-member="editingMember"
@@ -615,6 +625,7 @@ async function handleImport(event: Event) {
           :selected-id="store.selectedId.value"
           :find-parent-name="findParentName"
           :generation-map="generationMap"
+          :readonly="isViewerMode"
           @select="store.selectMember"
           @edit="handleEdit"
           @remove="handleRemove"
@@ -625,6 +636,7 @@ async function handleImport(event: Event) {
           :tracks="tracks"
           :members="members"
           :selected-member-id="store.selectedId.value"
+          :readonly="isViewerMode"
           @upload="handleTrackUpload"
           @remove="handleTrackRemove"
           @navigate="handleTrackNavigate"
@@ -634,12 +646,14 @@ async function handleImport(event: Event) {
         <EventManager
           :events="events"
           :members="members"
+          :readonly="isViewerMode"
           @add="handleEventAdd"
           @update="handleEventUpdate"
           @remove="handleEventRemove"
         />
 
         <OcrImportManager
+          v-if="isAdmin"
           :members="members"
           @import-members="handleOcrImport"
         />
@@ -649,6 +663,7 @@ async function handleImport(event: Event) {
           :find-parent-name="findParentName"
           :find-spouse-names="findSpouseNames"
           :generation="selectedGeneration"
+          :readonly="isViewerMode"
           @edit="handleEdit"
           @remove="handleRemove"
           @add-child="handleAddChild"
