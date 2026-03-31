@@ -86,8 +86,6 @@ function isAuthorized(request: Request, env: Env): boolean {
 
 async function ensureSchema(env: Env): Promise<void> {
   await env.DB.exec(`
-    PRAGMA foreign_keys = ON;
-
     CREATE TABLE IF NOT EXISTS members (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
