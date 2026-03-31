@@ -6,6 +6,7 @@ compatibility_date = "2026-03-29"
 binding = "DB"
 database_name = "family"
 database_id = "916cd827-77ab-4c0c-bfb3-753a047332f8"
+migrations_dir = "migrations"
 
 [vars]
 ALLOWED_ORIGIN = "*"
