@@ -10,5 +10,32 @@
   },
   "compatibility_flags": [
     "nodejs_compat"
-  ]
+  ],
+  
+  // D1 数据库绑定配置
+  // 获取 database_id: 执行 wrangler d1 list
+  // 创建数据库（如果不存在）: wrangler d1 create family-tree-db
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "family",
+      // 替换为实际的数据库 ID
+      "database_id": "916cd827-77ab-4c0c-bfb3-753a047332f8"
+    }
+  ],
+
+  // 环境配置
+  "env": {
+    "production": {
+      "routes": [
+        {
+          "pattern": "*.wolfife.workers.dev/*",
+          "zone_name": "wolfife.workers.dev"
+        }
+      ],
+      "vars": {
+        "API_TOKEN": ""
+      }
+    }
+  }
 }

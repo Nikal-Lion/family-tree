@@ -1,10 +1,11 @@
-interface D1QueryResult<T> {
-  results?: T[]
-}
+import { drizzle } from 'drizzle-orm/d1'
+import { eq, desc } from 'drizzle-orm'
+import * as schema from './schema'
 
-interface D1PreparedStatement {
-  bind(...values: unknown[]): D1PreparedStatement
-  all<T>(): Promise<D1QueryResult<T>>
+interface Env {
+  DB: D1Database
+  ALLOWED_ORIGIN?: string
+  API_TOKEN?: string
 }
 
 interface D1Database {
@@ -13,10 +14,13 @@ interface D1Database {
   exec(query: string): Promise<unknown>
 }
 
-interface Env {
-  DB: D1Database
-  ALLOWED_ORIGIN?: string
-  API_TOKEN?: string
+interface D1PreparedStatement {
+  bind(...values: unknown[]): D1PreparedStatement
+  all<T>(): Promise<D1QueryResult<T>>
+}
+
+interface D1QueryResult<T> {
+  results?: T[]
 }
 
 interface FamilyData {
@@ -57,6 +61,16 @@ interface FamilyData {
   nextEventId: number
 }
 
+/**
+ * 创建 Drizzle 数据库实例
+ */
+function getDb(env: Env) {
+  return drizzle(env.DB)
+}
+
+/**
+ * 生成 CORS 响应头
+ */
 function corsHeaders(env: Env): Headers {
   const headers = new Headers()
   headers.set('Access-Control-Allow-Origin', env.ALLOWED_ORIGIN || '*')
@@ -65,6 +79,9 @@ function corsHeaders(env: Env): Headers {
   return headers
 }
 
+/**
+ * 生成 JSON 响应
+ */
 function jsonResponse(env: Env, data: unknown, status = 200): Response {
   const headers = corsHeaders(env)
   headers.set('Content-Type', 'application/json; charset=utf-8')
@@ -74,10 +91,16 @@ function jsonResponse(env: Env, data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers })
 }
 
+/**
+ * 返回未授权响应
+ */
 function unauthorized(env: Env): Response {
   return jsonResponse(env, { error: '未授权请求' }, 401)
 }
 
+/**
+ * 检查请求是否授权
+ */
 function isAuthorized(request: Request, env: Env): boolean {
   const expected = (env.API_TOKEN || '').trim()
   if (!expected) {
@@ -87,59 +110,73 @@ function isAuthorized(request: Request, env: Env): boolean {
   return auth === `Bearer ${expected}`
 }
 
+/**
+ * 确保数据库表存在
+ */
 async function ensureSchema(env: Env): Promise<void> {
-  await env.DB.exec(`
-    CREATE TABLE IF NOT EXISTS members (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      parent_id INTEGER,
-      gender TEXT CHECK(gender IN ('男', '女')) DEFAULT '男',
-      spouse_ids TEXT DEFAULT '[]',
-      birth_date TEXT,
-      photo_url TEXT,
-      biography TEXT,
-      created_at INTEGER,
-      updated_at INTEGER,
-      FOREIGN KEY (parent_id) REFERENCES members(id) ON DELETE SET NULL
-    );
+  const db = getDb(env)
+  try {
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS members (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        parent_id INTEGER,
+        gender TEXT CHECK(gender IN ('男', '女')) DEFAULT '男',
+        spouse_ids TEXT DEFAULT '[]',
+        birth_date TEXT,
+        photo_url TEXT,
+        biography TEXT,
+        created_at INTEGER,
+        updated_at INTEGER,
+        FOREIGN KEY (parent_id) REFERENCES members(id) ON DELETE SET NULL
+      );
 
-    CREATE TABLE IF NOT EXISTS family_events (
-      id INTEGER PRIMARY KEY,
-      member_id INTEGER,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      date TEXT NOT NULL,
-      description TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE SET NULL
-    );
+      CREATE TABLE IF NOT EXISTS family_events (
+        id INTEGER PRIMARY KEY,
+        member_id INTEGER,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        date TEXT NOT NULL,
+        description TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE SET NULL
+      );
 
-    CREATE TABLE IF NOT EXISTS tracks (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      member_id INTEGER,
-      points_json TEXT NOT NULL,
-      start_point_json TEXT NOT NULL,
-      end_point_json TEXT NOT NULL,
-      stats_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE SET NULL
-    );
+      CREATE TABLE IF NOT EXISTS tracks (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        member_id INTEGER,
+        points_json TEXT NOT NULL,
+        start_point_json TEXT NOT NULL,
+        end_point_json TEXT NOT NULL,
+        stats_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE SET NULL
+      );
 
-    CREATE TABLE IF NOT EXISTS metadata (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
-  `)
+      CREATE TABLE IF NOT EXISTS metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `)
+  } catch {
+    // 如果表已存在，Drizzle 会捕获错误，我们忽略它
+  }
 }
 
+/**
+ * 安全地将值转换为整数
+ */
 function toInt(value: unknown, fallback = 0): number {
   const num = Number(value)
   return Number.isFinite(num) ? num : fallback
 }
 
+/**
+ * 安全地解析 JSON
+ */
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== 'string') {
     return fallback
@@ -151,101 +188,76 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
+/**
+ * 从数据库读取完整的家族数据
+ * 使用 Drizzle ORM 查询所有成员、事件、轨迹及元数据
+ */
 async function readFamilyData(env: Env): Promise<FamilyData | null> {
   await ensureSchema(env)
 
-  const memberRows = await env.DB.prepare(
-    `SELECT
-      id,
-      name,
-      parent_id,
-      gender,
-      spouse_ids,
-      birth_date,
-      photo_url,
-      biography
-    FROM members
-    ORDER BY id ASC;`,
-  ).all<Record<string, unknown>>()
-  const members = (memberRows.results || []).map((row: Record<string, unknown>) => {
-    const gender: '男' | '女' = row.gender === '女' ? '女' : '男'
-    return {
-      id: toInt(row.id),
-      name: String(row.name || ''),
-      parentId: row.parent_id === null ? null : toInt(row.parent_id),
-      gender,
-      spouseIds: parseJson<number[]>(row.spouse_ids, []).filter((id) => Number.isInteger(id)),
-      birthDate: String(row.birth_date || ''),
-      photoUrl: String(row.photo_url || ''),
-      biography: String(row.biography || ''),
-    }
-  })
+  const db = getDb(env)
+
+  // 查询所有成员
+  const memberRows = await db.select().from(schema.members).orderBy(schema.members.id).all()
+
+  const members = memberRows.map((row) => ({
+    id: row.id,
+    name: row.name || '',
+    parentId: row.parentId,
+    gender: row.gender as '男' | '女',
+    spouseIds: parseJson<number[]>(row.spouseIds, []).filter((id) => Number.isInteger(id)),
+    birthDate: row.birthDate || '',
+    photoUrl: row.photoUrl || '',
+    biography: row.biography || '',
+  }))
 
   if (members.length === 0) {
     return null
   }
 
-  const trackRows = await env.DB.prepare(
-    `SELECT
-      id,
-      name,
-      member_id,
-      points_json,
-      start_point_json,
-      end_point_json,
-      stats_json,
-      created_at,
-      updated_at
-    FROM tracks
-    ORDER BY id ASC;`,
-  ).all<Record<string, unknown>>()
+  // 查询所有轨迹
+  const trackRows = await db.select().from(schema.tracks).orderBy(schema.tracks.id).all()
 
-  const tracks = (trackRows.results || []).map((row: Record<string, unknown>) => ({
-    id: toInt(row.id),
-    name: String(row.name || ''),
-    memberId: row.member_id === null ? null : toInt(row.member_id),
-    points: parseJson<unknown[]>(row.points_json, []),
-    startPoint: parseJson<unknown>(row.start_point_json, {}),
-    endPoint: parseJson<unknown>(row.end_point_json, {}),
-    stats: parseJson<unknown>(row.stats_json, {}),
-    createdAt: String(row.created_at || new Date().toISOString()),
-    updatedAt: String(row.updated_at || new Date().toISOString()),
+  const tracks = trackRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    memberId: row.memberId,
+    points: parseJson<unknown[]>(row.pointsJson, []),
+    startPoint: parseJson<unknown>(row.startPointJson, {}),
+    endPoint: parseJson<unknown>(row.endPointJson, {}),
+    stats: parseJson<unknown>(row.statsJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   }))
 
-  const eventRows = await env.DB.prepare(
-    `SELECT
-      id,
-      member_id,
-      type,
-      title,
-      date,
-      description,
-      created_at,
-      updated_at
-    FROM family_events
-    ORDER BY date DESC, id DESC;`,
-  ).all<Record<string, unknown>>()
+  // 查询所有事件
+  const eventRows = await db
+    .select()
+    .from(schema.familyEvents)
+    .orderBy(desc(schema.familyEvents.date), desc(schema.familyEvents.id))
+    .all()
 
-  const events = (eventRows.results || []).map((row: Record<string, unknown>) => ({
-    id: toInt(row.id),
-    memberId: row.member_id === null ? null : toInt(row.member_id),
-    type: String(row.type || '其他') as FamilyData['events'][number]['type'],
-    title: String(row.title || ''),
-    date: String(row.date || ''),
-    description: String(row.description || ''),
-    createdAt: String(row.created_at || new Date().toISOString()),
-    updatedAt: String(row.updated_at || new Date().toISOString()),
+  const events = eventRows.map((row) => ({
+    id: row.id,
+    memberId: row.memberId,
+    type: row.type as FamilyData['events'][number]['type'],
+    title: row.title,
+    date: row.date,
+    description: row.description || '',
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   }))
 
-  const metaRows = await env.DB.prepare('SELECT key, value FROM metadata;').all<Record<string, unknown>>()
+  // 查询元数据
+  const metaRows = await db.select().from(schema.metadata).all()
   const meta = new Map<string, string>()
-  for (const row of metaRows.results || []) {
-    meta.set(String(row.key), String(row.value || ''))
+  for (const row of metaRows) {
+    meta.set(row.key, row.value || '')
   }
 
-  const maxMemberId = members.length > 0 ? Math.max(...members.map((m: { id: number }) => m.id)) : 0
-  const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t: { id: number }) => t.id)) : 0
-  const maxEventId = events.length > 0 ? Math.max(...events.map((e: { id: number }) => e.id)) : 0
+  const maxMemberId = members.length > 0 ? Math.max(...members.map((m) => m.id)) : 0
+  const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
+  const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
 
   return {
     schemaVersion: toInt(meta.get('schema_version'), 2),
@@ -258,113 +270,100 @@ async function readFamilyData(env: Env): Promise<FamilyData | null> {
   }
 }
 
+/**
+ * 将完整的家族数据写入数据库
+ * 使用 Drizzle ORM 进行事务性操作：
+ * 1. 删除所有现有数据（成员、事件、轨迹）
+ * 2. 批量插入新的成员、事件、轨迹
+ * 3. 更新元数据
+ */
 async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
   await ensureSchema(env)
 
-  const statements: D1PreparedStatement[] = []
+  const db = getDb(env)
   const nowTs = Math.floor(Date.now() / 1000)
 
-  statements.push(env.DB.prepare('DELETE FROM tracks;'))
-  statements.push(env.DB.prepare('DELETE FROM family_events;'))
-  statements.push(env.DB.prepare('DELETE FROM members;'))
+  // 执行删除操作
+  await db.delete(schema.tracks).run()
+  await db.delete(schema.familyEvents).run()
+  await db.delete(schema.members).run()
 
-  for (const member of data.members) {
-    statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO members (
-            id,
-            name,
-            parent_id,
-            gender,
-            spouse_ids,
-            birth_date,
-            photo_url,
-            biography,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-        )
-        .bind(
-          member.id,
-          member.name,
-          member.parentId,
-          member.gender,
-          JSON.stringify(member.spouseIds || []),
-          member.birthDate || '',
-          member.photoUrl || '',
-          member.biography || '',
-          nowTs,
-          nowTs,
-        ),
-    )
+  // 批量插入成员
+  if (data.members.length > 0) {
+    await db
+      .insert(schema.members)
+      .values(
+        data.members.map((member) => ({
+          id: member.id,
+          name: member.name,
+          parentId: member.parentId,
+          gender: member.gender,
+          spouseIds: JSON.stringify(member.spouseIds || []),
+          birthDate: member.birthDate || null,
+          photoUrl: member.photoUrl || null,
+          biography: member.biography || null,
+          createdAt: nowTs,
+          updatedAt: nowTs,
+        })),
+      )
+      .run()
   }
 
-  for (const event of data.events || []) {
-    statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO family_events (
-            id,
-            member_id,
-            type,
-            title,
-            date,
-            description,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
-        )
-        .bind(
-          event.id,
-          event.memberId,
-          event.type,
-          event.title,
-          event.date,
-          event.description || '',
-          event.createdAt,
-          event.updatedAt,
-        ),
-    )
+  // 批量插入事件
+  if (data.events && data.events.length > 0) {
+    await db
+      .insert(schema.familyEvents)
+      .values(
+        data.events.map((event) => ({
+          id: event.id,
+          memberId: event.memberId,
+          type: event.type,
+          title: event.title,
+          date: event.date,
+          description: event.description || null,
+          createdAt: event.createdAt,
+          updatedAt: event.updatedAt,
+        })),
+      )
+      .run()
   }
 
-  for (const track of data.tracks) {
-    statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO tracks (
-            id,
-            name,
-            member_id,
-            points_json,
-            start_point_json,
-            end_point_json,
-            stats_json,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-        )
-        .bind(
-          track.id,
-          track.name,
-          track.memberId,
-          JSON.stringify(track.points || []),
-          JSON.stringify(track.startPoint || {}),
-          JSON.stringify(track.endPoint || {}),
-          JSON.stringify(track.stats || {}),
-          track.createdAt,
-          track.updatedAt,
-        ),
-    )
+  // 批量插入轨迹
+  if (data.tracks && data.tracks.length > 0) {
+    await db
+      .insert(schema.tracks)
+      .values(
+        data.tracks.map((track) => ({
+          id: track.id,
+          name: track.name,
+          memberId: track.memberId,
+          pointsJson: JSON.stringify(track.points || []),
+          startPointJson: JSON.stringify(track.startPoint || {}),
+          endPointJson: JSON.stringify(track.endPoint || {}),
+          statsJson: JSON.stringify(track.stats || {}),
+          createdAt: track.createdAt,
+          updatedAt: track.updatedAt,
+        })),
+      )
+      .run()
   }
 
-  statements.push(env.DB.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);').bind('schema_version', String(data.schemaVersion)))
-  statements.push(env.DB.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);').bind('next_id', String(data.nextId)))
-  statements.push(env.DB.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);').bind('next_track_id', String(data.nextTrackId)))
-  statements.push(env.DB.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);').bind('next_event_id', String(data.nextEventId)))
-  statements.push(env.DB.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);').bind('last_sync_time', new Date().toISOString()))
+  // 更新元数据
+  const metadataUpdates = [
+    { key: 'schema_version', value: String(data.schemaVersion) },
+    { key: 'next_id', value: String(data.nextId) },
+    { key: 'next_track_id', value: String(data.nextTrackId) },
+    { key: 'next_event_id', value: String(data.nextEventId) },
+    { key: 'last_sync_time', value: new Date().toISOString() },
+  ]
 
-  await env.DB.batch(statements)
+  for (const { key, value } of metadataUpdates) {
+    await db
+      .insert(schema.metadata)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: schema.metadata.key, set: { value } })
+      .run()
+  }
 }
 
 export default {

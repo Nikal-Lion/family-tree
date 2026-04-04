@@ -8,6 +8,11 @@ database_name = "family"
 database_id = "916cd827-77ab-4c0c-bfb3-753a047332f8"
 migrations_dir = "migrations"
 
+[[secrets_store_secrets]]
+store_id = "923699c9df3d437c8ecfbd0923a411e6"
+binding = "SECRET"
+secret_name = "family-secret"
+
 [vars]
 ALLOWED_ORIGIN = "*"
 API_TOKEN = ""
