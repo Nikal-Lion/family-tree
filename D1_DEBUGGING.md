@@ -168,7 +168,7 @@ npm run preview
 在另一个终端测试：
 ```bash
 curl -X GET http://localhost:8787/api/family-data \
-  -H "Authorization: Bearer CPYc^1FJl0lNoxVBtk1PyvB9" \
+  -H "Authorization: Bearer Token" \
   -H "Content-Type: application/json"
 ```
 

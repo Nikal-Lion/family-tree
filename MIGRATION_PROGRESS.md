@@ -63,7 +63,7 @@ wrangler d1 list
 ```bash
 npm run preview
 curl http://localhost:8787/api/family-data \
-  -H "Authorization: Bearer CPYc^1FJl0lNoxVBtk1PyvB9"
+  -H "Authorization: Bearer Token"
 ```
 
 **状态**：⏳ 等待配置完成后执行
@@ -139,7 +139,7 @@ npm run preview
 
 # 步骤 4：验证
 curl -X GET http://localhost:8787/api/family-data \
-  -H "Authorization: Bearer CPYc^1FJl0lNoxVBtk1PyvB9"
+  -H "Authorization: Bearer Token"
 ```
 
 ## 📚 文档导航

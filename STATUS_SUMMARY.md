@@ -78,7 +78,7 @@ cat .env.local
 应该包含：
 ```dotenv
 VITE_D1_API_BASE_URL=https://family-tree.wolfife.workers.dev
-VITE_D1_API_TOKEN=CPYc^1FJl0lNoxVBtk1PyvB9
+VITE_D1_API_TOKEN=Token
 ```
 
 #### 步骤 2.2：更新 `wrangler.jsonc` 中的环境变量
@@ -87,7 +87,7 @@ VITE_D1_API_TOKEN=CPYc^1FJl0lNoxVBtk1PyvB9
   "env": {
     "production": {
       "vars": {
-        "API_TOKEN": "CPYc^1FJl0lNoxVBtk1PyvB9"  // ← 与 .env.local 相同
+        "API_TOKEN": "Token"  // ← 与 .env.local 相同
       }
     }
   }
@@ -108,7 +108,7 @@ npm run preview
 ```bash
 # 在另一个终端中测试 API
 curl -X GET http://localhost:8787/api/family-data \
-  -H "Authorization: Bearer CPYc^1FJl0lNoxVBtk1PyvB9" \
+  -H "Authorization: Bearer Token" \
   -H "Content-Type: application/json"
 ```
 
@@ -142,7 +142,7 @@ npm run deploy
 #### 步骤 4.3：验证生产环境
 ```bash
 curl -X GET https://family-tree.wolfife.workers.dev/api/family-data \
-  -H "Authorization: Bearer CPYc^1FJl0lNoxVBtk1PyvB9"
+  -H "Authorization: Bearer Token"
 ```
 
 #### 步骤 4.4：查看日志
@@ -173,7 +173,7 @@ npm run preview
 # 在另一个终端：
 # 6. 测试 API
 curl http://localhost:8787/api/family-data \
-  -H "Authorization: Bearer CPYc^1FJl0lNoxVBtk1PyvB9"
+  -H "Authorization: Bearer Token"
 
 # 7. 查看 Worker 日志
 wrangler tail
