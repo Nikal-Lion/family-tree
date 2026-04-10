@@ -183,6 +183,7 @@ const selectedGeneration = computed(() => {
 })
 
 const d1Config = computed(() => getD1ApiDiagnosticsConfig())
+const d1ApiUrl = `${window.location.origin}/api/family-data`
 const diagnostics = computed(() => selfCheckResult.value)
 const diagnosticsTone = computed(() => diagnostics.value?.status ?? 'warning')
 const diagnosticsTitle = computed(() => {
@@ -560,7 +561,7 @@ async function handleImport(event: Event) {
         </div>
         <div class="diagnostic-item diagnostic-item-wide">
           <span>API 地址</span>
-          <strong>{{ diagnostics?.apiBaseUrl ?? d1Config.apiBaseUrl ?? '未配置' }}</strong>
+          <strong>{{ d1ApiUrl }}</strong>
         </div>
         <div class="diagnostic-item">
           <span>Token</span>

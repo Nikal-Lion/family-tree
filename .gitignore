@@ -35,3 +35,6 @@ Thumbs.db
 # Vite cache
 .vite/
 
+# Wrangler local dev state (D1, KV, R2 local data, deploy cache)
+.wrangler/
+
