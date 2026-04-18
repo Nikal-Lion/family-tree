@@ -14,9 +14,15 @@ const newMobile = ref('')
 const newRole = ref<LoginUserRole>('user')
 
 function sortUsers(items: LoginUser[]): LoginUser[] {
+  const rank: Record<LoginUserRole, number> = {
+    sysadmin: 0,
+    maintainer: 1,
+    user: 2,
+  }
+
   return [...items].sort((a, b) => {
     if (a.role !== b.role) {
-      return a.role === 'sysadmin' ? -1 : 1
+      return rank[a.role] - rank[b.role]
     }
     return a.id - b.id
   })
@@ -78,23 +84,36 @@ async function handleToggleEnabled(item: LoginUser): Promise<void> {
   }
 }
 
-async function handleToggleRole(item: LoginUser): Promise<void> {
+async function handleRoleChange(item: LoginUser, roleRaw: string): Promise<void> {
   if (submitting.value) {
     return
   }
 
-  const nextRole: LoginUserRole = item.role === 'sysadmin' ? 'user' : 'sysadmin'
+  const role: LoginUserRole =
+    roleRaw === 'sysadmin' || roleRaw === 'maintainer' ? roleRaw : 'user'
+
+  if (item.role === role) {
+    return
+  }
 
   submitting.value = true
   try {
-    const updated = await updateLoginUser(item.id, { role: nextRole })
+    const updated = await updateLoginUser(item.id, { role })
     users.value = sortUsers(users.value.map((entry) => (entry.id === item.id ? updated : entry)))
-    emit('notify', `角色已更新为 ${nextRole}`, 'success')
+    emit('notify', `角色已更新为 ${role}`, 'success')
   } catch (error) {
     emit('notify', error instanceof Error ? error.message : '更新用户角色失败', 'error')
   } finally {
     submitting.value = false
   }
+}
+
+function onRoleSelectChange(item: LoginUser, event: Event): void {
+  const target = event.target as HTMLSelectElement | null
+  if (!target) {
+    return
+  }
+  void handleRoleChange(item, target.value)
 }
 
 async function handleDelete(item: LoginUser): Promise<void> {
@@ -137,6 +156,7 @@ onMounted(() => {
       />
       <select v-model="newRole">
         <option value="user">普通用户</option>
+        <option value="maintainer">数据维护人员</option>
         <option value="sysadmin">sysadmin</option>
       </select>
       <button class="btn-primary" type="button" :disabled="submitting" @click="handleCreateUser">
@@ -160,9 +180,16 @@ onMounted(() => {
         </div>
 
         <div class="member-actions">
-          <button class="btn-ghost" type="button" :disabled="submitting" @click="handleToggleRole(item)">
-            {{ item.role === 'sysadmin' ? '设为普通用户' : '设为 sysadmin' }}
-          </button>
+          <select
+            class="role-select"
+            :value="item.role"
+            :disabled="submitting"
+            @change="onRoleSelectChange(item, $event)"
+          >
+            <option value="user">普通用户</option>
+            <option value="maintainer">数据维护人员</option>
+            <option value="sysadmin">sysadmin</option>
+          </select>
           <button class="btn-ghost" type="button" :disabled="submitting" @click="handleToggleEnabled(item)">
             {{ item.enabled ? '禁用' : '启用' }}
           </button>
@@ -193,5 +220,12 @@ onMounted(() => {
 
 .login-user-tools {
   margin-bottom: 10px;
+}
+
+.role-select {
+  border: 1px solid #ccbfa1;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #fffdf8;
 }
 </style>

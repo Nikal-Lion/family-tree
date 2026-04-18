@@ -73,7 +73,7 @@ interface FamilyData {
   nextEventId: number
 }
 
-type LoginUserRole = 'user' | 'sysadmin'
+type LoginUserRole = 'user' | 'maintainer' | 'sysadmin'
 
 interface LoginUserRecord {
   id: number
@@ -481,6 +481,16 @@ function requireSysadmin(auth: AuthContext): Response | null {
   return null
 }
 
+function requireMaintainerOrSysadmin(auth: AuthContext): Response | null {
+  if (!auth.authenticated) {
+    return errorResponse('未登录', 401, 'AUTH_REQUIRED')
+  }
+  if (auth.role !== 'maintainer' && auth.role !== 'sysadmin') {
+    return errorResponse('需要 maintainer 或 sysadmin 权限', 403, 'FORBIDDEN')
+  }
+  return null
+}
+
 function parseJsonBody<T>(value: unknown): T | null {
   if (!value || typeof value !== 'object') {
     return null
@@ -538,7 +548,7 @@ async function ensureSchema(db: D1Database): Promise<void> {
     db.prepare(`CREATE TABLE IF NOT EXISTS login_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mobile TEXT NOT NULL UNIQUE,
-      role TEXT NOT NULL CHECK(role IN ('user', 'sysadmin')) DEFAULT 'user',
+      role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -560,6 +570,47 @@ async function ensureSchema(db: D1Database): Promise<void> {
     db.prepare('CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at)'),
   ])
+
+  await ensureLoginUsersRoleConstraint(db)
+}
+
+async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
+  const row = await db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'login_users' LIMIT 1")
+    .all<{ sql: string }>()
+
+  const sql = (row.results?.[0]?.sql || '').toLowerCase()
+  if (sql.includes("'maintainer'")) {
+    return
+  }
+
+  await db.exec(`
+PRAGMA foreign_keys = OFF;
+CREATE TABLE IF NOT EXISTS login_users__new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mobile TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO login_users__new (id, mobile, role, enabled, created_at, updated_at)
+SELECT
+  id,
+  mobile,
+  CASE
+    WHEN role IN ('user', 'maintainer', 'sysadmin') THEN role
+    ELSE 'user'
+  END,
+  enabled,
+  created_at,
+  updated_at
+FROM login_users;
+DROP TABLE login_users;
+ALTER TABLE login_users__new RENAME TO login_users;
+CREATE INDEX IF NOT EXISTS idx_login_users_role_enabled ON login_users(role, enabled);
+PRAGMA foreign_keys = ON;
+`)
 }
 
 async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
@@ -872,7 +923,13 @@ export default {
 
         const rows = await env.DB
           .prepare(
-            'SELECT id, mobile, role, enabled, created_at, updated_at FROM login_users ORDER BY role DESC, id ASC',
+            `SELECT id, mobile, role, enabled, created_at, updated_at
+             FROM login_users
+             ORDER BY CASE role
+               WHEN 'sysadmin' THEN 0
+               WHEN 'maintainer' THEN 1
+               ELSE 2
+             END, id ASC`,
           )
           .all<LoginUserRecord>()
 
@@ -891,7 +948,8 @@ export default {
         }
 
         const mobile = normalizeMobile(payload.mobile)
-        const role: LoginUserRole = payload.role === 'sysadmin' ? 'sysadmin' : 'user'
+        const role: LoginUserRole =
+          payload.role === 'sysadmin' || payload.role === 'maintainer' ? payload.role : 'user'
         if (!isValidMobile(mobile)) {
           return errorResponse('手机号格式无效', 400, 'INVALID_MOBILE')
         }
@@ -938,7 +996,9 @@ export default {
 
         const nextMobile = payload.mobile !== undefined ? normalizeMobile(payload.mobile) : target.mobile
         const nextRole: LoginUserRole =
-          payload.role === 'sysadmin' ? 'sysadmin' : payload.role === 'user' ? 'user' : target.role
+          payload.role === 'sysadmin' || payload.role === 'maintainer' || payload.role === 'user'
+            ? payload.role
+            : target.role
         const nextEnabled = payload.enabled === undefined ? target.enabled === 1 : Boolean(payload.enabled)
 
         if (!isValidMobile(nextMobile)) {
@@ -1020,11 +1080,9 @@ export default {
       }
 
       if (request.method === 'PUT' && url.pathname === '/api/family-data') {
-        if (!auth.authenticated) {
-          return errorResponse('未登录，无法写入数据', 401, 'AUTH_REQUIRED')
-        }
-        if (auth.role !== 'sysadmin') {
-          return errorResponse('仅 sysadmin 可写入数据', 403, 'FORBIDDEN')
+        const denied = requireMaintainerOrSysadmin(auth)
+        if (denied) {
+          return denied
         }
 
         const payload = (await request.json()) as { data?: FamilyData }

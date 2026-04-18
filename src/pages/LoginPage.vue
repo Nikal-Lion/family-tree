@@ -13,7 +13,7 @@ type LoginMode = 'user' | 'sysadmin' | 'bootstrap'
 
 const router = useRouter()
 const route = useRoute()
-const { isAuthenticated, ready } = useAuth()
+const { isAuthenticated, ready, resolveDefaultAppPath } = useAuth()
 
 const mode = ref<LoginMode>('user')
 const pending = ref(false)
@@ -29,9 +29,10 @@ const bootstrapConfirmPassword = ref('')
 const pageReady = computed(() => ready.value)
 
 function resolveRedirectPath(): string {
-  const redirectRaw = typeof route.query.redirect === 'string' ? route.query.redirect : '/app'
+  const redirectRaw =
+    typeof route.query.redirect === 'string' ? route.query.redirect : resolveDefaultAppPath()
   if (!redirectRaw.startsWith('/')) {
-    return '/app'
+    return resolveDefaultAppPath()
   }
   return redirectRaw
 }
@@ -116,11 +117,11 @@ onMounted(async () => {
   <div class="login-page">
     <section v-if="pageReady" class="login-card">
       <h1>家族云谱登录</h1>
-      <p class="login-subtitle">登录后可访问家族树与管理功能</p>
+      <p class="login-subtitle">登录后可按角色访问总览、维护与系统管理页面</p>
 
       <div class="mode-switch">
         <button class="btn-ghost" :class="{ active: mode === 'user' }" type="button" @click="mode = 'user'">
-          普通用户
+          用户/维护人员
         </button>
         <button
           class="btn-ghost"
@@ -145,6 +146,7 @@ onMounted(async () => {
           <span>手机号</span>
           <input v-model="userMobile" type="tel" placeholder="请输入手机号" @keydown.enter="handleUserLogin" />
         </label>
+        <p class="mode-tip">普通用户和维护人员均使用手机号登录。</p>
         <button class="btn-primary login-submit" type="button" :disabled="pending" @click="handleUserLogin">
           {{ pending ? '登录中...' : '登录' }}
         </button>
@@ -245,6 +247,12 @@ onMounted(async () => {
 .login-submit {
   width: 100%;
   margin-top: 6px;
+}
+
+.mode-tip {
+  margin: 2px 0 10px;
+  color: #6e6a5e;
+  font-size: 0.86em;
 }
 
 .auth-error {

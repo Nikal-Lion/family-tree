@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 CREATE TABLE IF NOT EXISTS login_users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   mobile TEXT NOT NULL UNIQUE,
-  role TEXT NOT NULL CHECK(role IN ('user', 'sysadmin')) DEFAULT 'user',
+  role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

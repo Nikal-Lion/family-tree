@@ -65,7 +65,7 @@ export const metadata = sqliteTable(
 export const loginUsers = sqliteTable('login_users', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   mobile: text('mobile').notNull().unique(),
-  role: text('role', { enum: ['user', 'sysadmin'] }).default('user').notNull(),
+  role: text('role', { enum: ['user', 'maintainer', 'sysadmin'] }).default('user').notNull(),
   enabled: integer('enabled').default(1).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),

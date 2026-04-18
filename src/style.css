@@ -73,6 +73,37 @@ select {
   flex-wrap: wrap;
 }
 
+.top-actions-readonly {
+  align-items: center;
+}
+
+.readonly-tip {
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.workspace-nav {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workspace-nav-item {
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fffef7;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.workspace-nav-item-active {
+  background: #fffef7;
+  color: #2d5e2c;
+  border-color: #fffef7;
+}
+
 .hidden-input {
   display: none;
 }
@@ -82,6 +113,12 @@ select {
   gap: 14px;
   flex: 1;
   min-width: 0;
+}
+
+.system-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .status-panel {
@@ -662,6 +699,15 @@ select {
 
   .main-layout {
     flex-direction: column;
+  }
+
+  .workspace-nav {
+    width: 100%;
+  }
+
+  .workspace-nav-item {
+    flex: 1;
+    min-width: 0;
   }
 
   .right-pane {

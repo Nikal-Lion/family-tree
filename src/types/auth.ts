@@ -1,6 +1,6 @@
-export type UserRole = 'anonymous' | 'user' | 'sysadmin'
+export type UserRole = 'anonymous' | 'user' | 'maintainer' | 'sysadmin'
 
-export type LoginUserRole = 'user' | 'sysadmin'
+export type LoginUserRole = 'user' | 'maintainer' | 'sysadmin'
 
 export interface LoginUser {
   id: number

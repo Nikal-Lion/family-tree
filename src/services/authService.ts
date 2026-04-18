@@ -162,13 +162,28 @@ export async function logout(): Promise<void> {
 
 export function useAuth() {
   const isAuthenticated = computed(() => role.value !== 'anonymous')
+  const isMaintainer = computed(() => role.value === 'maintainer')
   const isSysadmin = computed(() => role.value === 'sysadmin')
+  const canMaintain = computed(() => role.value === 'maintainer' || role.value === 'sysadmin')
+
+  function resolveDefaultAppPath(): string {
+    if (role.value === 'sysadmin' || role.value === 'maintainer') {
+      return '/app/manage'
+    }
+    if (role.value === 'user') {
+      return '/app/overview'
+    }
+    return '/login'
+  }
 
   return {
     role: readonly(role),
     user: readonly(user),
     ready: readonly(ready),
     isAuthenticated: readonly(isAuthenticated),
+    isMaintainer: readonly(isMaintainer),
     isSysadmin: readonly(isSysadmin),
+    canMaintain: readonly(canMaintain),
+    resolveDefaultAppPath,
   }
 }

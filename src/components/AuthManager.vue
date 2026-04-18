@@ -15,7 +15,7 @@ const emit = defineEmits<{
 
 void initAuthSession()
 
-const { role, user, isSysadmin } = useAuth()
+const { role, user } = useAuth()
 
 type AuthView = 'idle' | 'user-login' | 'sysadmin-login' | 'bootstrap-sysadmin'
 
@@ -31,6 +31,7 @@ const pending = ref(false)
 
 const roleLabel = computed(() => {
   if (role.value === 'sysadmin') return '系统管理员'
+  if (role.value === 'maintainer') return '数据维护人员'
   if (role.value === 'user') return '普通用户'
   return '未登录'
 })
@@ -142,7 +143,7 @@ async function handleLogout(): Promise<void> {
     </template>
 
     <template v-else>
-      <button class="btn-ghost btn-sm" type="button" @click="openUserLogin">用户登录</button>
+      <button class="btn-ghost btn-sm" type="button" @click="openUserLogin">用户/维护登录</button>
       <button class="btn-primary btn-sm" type="button" @click="openSysadminLogin">sysadmin 登录</button>
     </template>
 
@@ -161,7 +162,7 @@ async function handleLogout(): Promise<void> {
       <div v-if="view !== 'idle'" class="auth-overlay" @click.self="closeDialog">
         <div class="auth-dialog">
           <template v-if="view === 'user-login'">
-            <h3>普通用户登录</h3>
+            <h3>用户/维护人员登录</h3>
             <p class="auth-hint">输入手机号即可登录。账号需存在于 login_users 表。</p>
             <label class="field">
               <span>手机号</span>
@@ -276,6 +277,11 @@ async function handleLogout(): Promise<void> {
 .role-user {
   background: rgba(42, 96, 150, 0.16);
   color: #24537f;
+}
+
+.role-maintainer {
+  background: rgba(119, 97, 38, 0.18);
+  color: #7e5d1e;
 }
 
 .role-anonymous {
