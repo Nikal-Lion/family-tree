@@ -16,3 +16,4 @@ secret_name = "family-secret"
 [vars]
 ALLOWED_ORIGIN = "*"
 API_TOKEN = ""
+SESSION_TTL_HOURS = "24"

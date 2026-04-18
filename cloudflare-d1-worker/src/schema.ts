@@ -58,3 +58,28 @@ export const metadata = sqliteTable(
     pk: primaryKey({ columns: [table.key] }),
   }),
 )
+
+/**
+ * Login Users 表 - 登录用户账号（手机号 + 角色）
+ */
+export const loginUsers = sqliteTable('login_users', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  mobile: text('mobile').notNull().unique(),
+  role: text('role', { enum: ['user', 'sysadmin'] }).default('user').notNull(),
+  enabled: integer('enabled').default(1).notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+})
+
+/**
+ * Auth Sessions 表 - 登录会话令牌
+ */
+export const authSessions = sqliteTable('auth_sessions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  tokenHash: text('token_hash').notNull().unique(),
+  userId: integer('user_id').references(() => loginUsers.id, { onDelete: 'cascade' }).notNull(),
+  expiresAt: text('expires_at').notNull(),
+  revokedAt: text('revoked_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+})

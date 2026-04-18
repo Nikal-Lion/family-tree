@@ -36,7 +36,8 @@
         }
       ],
       "vars": {
-        "API_TOKEN": ""
+        "API_TOKEN": "",
+        "SESSION_TTL_HOURS": "24"
       }
     }
   }
