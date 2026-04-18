@@ -2,7 +2,6 @@
 
 interface ImportMetaEnv {
 	readonly VITE_D1_API_BASE_URL?: string
-	readonly VITE_D1_API_TOKEN?: string
 }
 
 interface ImportMeta {

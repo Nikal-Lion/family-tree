@@ -1,7 +1,9 @@
 interface Env {
   DB: D1Database
   API_TOKEN?: string
-  SYSADMIN_PASSWORD_HASH?: string
+  ALLOW_LEGACY_API_TOKEN_AUTH?: string
+  SYSADMIN_PASSWORD_PBKDF2?: string
+  SYSADMIN_PASSWORD_PBKDF2_NEXT?: string
   SESSION_TTL_HOURS?: string
 }
 
@@ -172,6 +174,104 @@ async function sha256Hex(text: string): Promise<string> {
     .join('')
 }
 
+function hexToBytes(hex: string): Uint8Array | null {
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length % 2 !== 0) {
+    return null
+  }
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = Number.parseInt(hex.slice(i, i + 2), 16)
+  }
+  return bytes
+}
+
+function timingSafeEqualHex(leftHex: string, rightHex: string): boolean {
+  if (!leftHex || !rightHex || leftHex.length !== rightHex.length) {
+    return false
+  }
+
+  let diff = 0
+  for (let i = 0; i < leftHex.length; i += 1) {
+    diff |= leftHex.charCodeAt(i) ^ rightHex.charCodeAt(i)
+  }
+  return diff === 0
+}
+
+interface SysadminPbkdf2Hash {
+  iterations: number
+  saltHex: string
+  hashHex: string
+  hashLengthBytes: number
+}
+
+function parseSysadminPbkdf2Hash(raw: string): SysadminPbkdf2Hash | null {
+  const trimmed = raw.trim().toLowerCase()
+  if (!trimmed) {
+    return null
+  }
+
+  const parts = trimmed.split('$')
+  if (parts.length !== 4) {
+    return null
+  }
+
+  const [algorithm, iterationText, saltHex, hashHex] = parts
+  if (algorithm !== 'pbkdf2_sha256') {
+    return null
+  }
+
+  const iterations = Number(iterationText)
+  if (!Number.isInteger(iterations) || iterations < 100_000 || iterations > 5_000_000) {
+    return null
+  }
+
+  const saltBytes = hexToBytes(saltHex)
+  const hashBytes = hexToBytes(hashHex)
+  if (!saltBytes || !hashBytes || saltBytes.length < 16 || hashBytes.length < 16) {
+    return null
+  }
+
+  return {
+    iterations,
+    saltHex,
+    hashHex,
+    hashLengthBytes: hashBytes.length,
+  }
+}
+
+async function derivePbkdf2Sha256Hex(
+  password: string,
+  saltHex: string,
+  iterations: number,
+  hashLengthBytes: number,
+): Promise<string> {
+  const salt = hexToBytes(saltHex)
+  if (!salt) {
+    throw new Error('PBKDF2 salt 格式无效')
+  }
+
+  const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      iterations,
+      salt,
+    },
+    keyMaterial,
+    hashLengthBytes * 8,
+  )
+
+  return Array.from(new Uint8Array(bits))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  const normalized = (value || '').trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
+
 function generateSessionToken(): string {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
@@ -244,14 +344,39 @@ async function createSessionForUser(
 }
 
 async function verifySysadminPassword(password: string, env: Env): Promise<boolean> {
-  const expectedHash = (env.SYSADMIN_PASSWORD_HASH || '').trim().toLowerCase()
-  if (!expectedHash) {
-    const error = new Error('SYSADMIN_PASSWORD_HASH is not configured')
-    ;(error as Error & { code?: string }).code = 'SYSADMIN_PASSWORD_HASH_MISSING'
-    throw error
+  const pbkdf2RawValues = [
+    { key: 'SYSADMIN_PASSWORD_PBKDF2', value: (env.SYSADMIN_PASSWORD_PBKDF2 || '').trim() },
+    { key: 'SYSADMIN_PASSWORD_PBKDF2_NEXT', value: (env.SYSADMIN_PASSWORD_PBKDF2_NEXT || '').trim() },
+  ]
+
+  const pbkdf2Hashes: SysadminPbkdf2Hash[] = []
+  for (const entry of pbkdf2RawValues) {
+    if (!entry.value) {
+      continue
+    }
+
+    const parsed = parseSysadminPbkdf2Hash(entry.value)
+    if (!parsed) {
+      const error = new Error(`${entry.key} format invalid; expected pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>`)
+      ;(error as Error & { code?: string }).code = 'SYSADMIN_PASSWORD_PBKDF2_INVALID'
+      throw error
+    }
+    pbkdf2Hashes.push(parsed)
   }
-  const actual = await sha256Hex(password)
-  return actual === expectedHash
+
+  if (pbkdf2Hashes.length > 0) {
+    for (const hash of pbkdf2Hashes) {
+      const derived = await derivePbkdf2Sha256Hex(password, hash.saltHex, hash.iterations, hash.hashLengthBytes)
+      if (timingSafeEqualHex(derived, hash.hashHex)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  const error = new Error('SYSADMIN_PASSWORD_PBKDF2 is not configured')
+  ;(error as Error & { code?: string }).code = 'SYSADMIN_PASSWORD_PBKDF2_MISSING'
+  throw error
 }
 
 async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
@@ -267,7 +392,8 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
   }
 
   const expectedLegacyToken = (env.API_TOKEN || '').trim()
-  if (expectedLegacyToken && token === expectedLegacyToken) {
+  const allowLegacyTokenAuth = isTruthyEnv(env.ALLOW_LEGACY_API_TOKEN_AUTH)
+  if (allowLegacyTokenAuth && expectedLegacyToken && token === expectedLegacyToken) {
     return {
       authenticated: true,
       role: 'sysadmin',

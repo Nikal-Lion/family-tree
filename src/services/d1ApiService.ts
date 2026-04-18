@@ -1,7 +1,6 @@
 import type { LoginUser, LoginUserRole } from '../types/auth'
 import type { FamilyData } from '../types/member'
 
-const LEGACY_API_TOKEN = import.meta.env.VITE_D1_API_TOKEN?.trim()
 const API_BASE_URL = import.meta.env.VITE_D1_API_BASE_URL?.trim()
 
 let sessionToken: string | null = null
@@ -38,11 +37,6 @@ function buildHeaders(options?: { includeAuth?: boolean; extra?: HeadersInit }):
 
   if (sessionToken) {
     headers.set('Authorization', `Bearer ${sessionToken}`)
-    return headers
-  }
-
-  if (LEGACY_API_TOKEN) {
-    headers.set('Authorization', `Bearer ${LEGACY_API_TOKEN}`)
   }
 
   return headers
@@ -86,7 +80,7 @@ export function setSessionToken(token: string | null): void {
 
 export function getD1ApiDiagnosticsConfig(): { tokenConfigured: boolean } {
   return {
-    tokenConfigured: Boolean(sessionToken || LEGACY_API_TOKEN),
+    tokenConfigured: Boolean(sessionToken),
   }
 }
 
@@ -105,7 +99,7 @@ export async function runD1SelfCheck(): Promise<D1SelfCheckResult> {
         ok: false,
         status: 'error',
         checkedAt,
-        tokenConfigured: Boolean(sessionToken || LEGACY_API_TOKEN),
+        tokenConfigured: Boolean(sessionToken),
         httpStatus: response.status,
         message: await parseError(response),
         memberCount: 0,
@@ -122,7 +116,7 @@ export async function runD1SelfCheck(): Promise<D1SelfCheckResult> {
       ok: true,
       status: data ? 'ok' : 'warning',
       checkedAt,
-      tokenConfigured: Boolean(sessionToken || LEGACY_API_TOKEN),
+      tokenConfigured: Boolean(sessionToken),
       httpStatus: response.status,
       message: data ? '已连接到 D1，且成功读取到云端数据。' : '已连接到 D1，但数据库当前为空。',
       memberCount: data?.members.length ?? 0,
@@ -135,7 +129,7 @@ export async function runD1SelfCheck(): Promise<D1SelfCheckResult> {
       ok: false,
       status: 'error',
       checkedAt,
-      tokenConfigured: Boolean(sessionToken || LEGACY_API_TOKEN),
+      tokenConfigured: Boolean(sessionToken),
       httpStatus: null,
       message: error instanceof Error ? error.message : '无法连接到 D1 Worker。',
       memberCount: 0,
