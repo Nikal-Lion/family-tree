@@ -633,7 +633,10 @@ export default {
           return errorResponse('sysadmin 密码不能为空', 400, 'PASSWORD_REQUIRED')
         }
 
-        const existingSysadminCount = await countSysadmins(env.DB)
+        const existingSysadminResult = await env.DB
+          .prepare("SELECT COUNT(*) AS count FROM login_users WHERE role = 'sysadmin'")
+          .all<{ count: number | string }>()
+        const existingSysadminCount = Number(existingSysadminResult.results?.[0]?.count ?? 0)
         if (existingSysadminCount > 0) {
           return errorResponse('sysadmin 已初始化', 409, 'SYSADMIN_EXISTS')
         }
