@@ -867,6 +867,9 @@ export default {
       }
 
       if (request.method === 'GET' && url.pathname === '/api/family-data') {
+        if (!auth.authenticated) {
+          return errorResponse('未登录，无法读取数据', 401, 'AUTH_REQUIRED')
+        }
         const data = await readFamilyData(env.DB)
         return jsonResponse({ data })
       }
