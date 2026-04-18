@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
-  hasAdminPassword,
-  setupAdminPassword,
-  loginAsAdmin,
-  changeAdminPassword,
+  initializeFirstSysadmin,
+  initAuthSession,
+  loginAsUserByMobile,
+  loginWithSysadminPassword,
   logout,
   useAuth,
 } from '../services/authService'
@@ -13,40 +13,51 @@ const emit = defineEmits<{
   notify: [message: string, type: 'success' | 'error' | 'info']
 }>()
 
-const { role, isAdmin } = useAuth()
+void initAuthSession()
 
-type AuthView = 'idle' | 'login' | 'setup' | 'change-password'
+const { role, user, isSysadmin } = useAuth()
+
+type AuthView = 'idle' | 'user-login' | 'sysadmin-login' | 'bootstrap-sysadmin'
 
 const view = ref<AuthView>('idle')
-const passwordInput = ref('')
-const oldPasswordInput = ref('')
-const newPasswordInput = ref('')
-const confirmPasswordInput = ref('')
+const userMobileInput = ref('')
+const sysadminMobileInput = ref('')
+const sysadminPasswordInput = ref('')
+const bootstrapMobileInput = ref('')
+const bootstrapPasswordInput = ref('')
+const bootstrapConfirmPasswordInput = ref('')
 const errorMessage = ref('')
 const pending = ref(false)
 
-const needsSetup = computed(() => !hasAdminPassword())
-const roleLabel = computed(() => (isAdmin.value ? '管理员' : '浏览者'))
+const roleLabel = computed(() => {
+  if (role.value === 'sysadmin') return '系统管理员'
+  if (role.value === 'user') return '普通用户'
+  return '未登录'
+})
 
-function openLogin(): void {
-  if (needsSetup.value) {
-    view.value = 'setup'
-  } else {
-    view.value = 'login'
-  }
-  passwordInput.value = ''
-  oldPasswordInput.value = ''
-  newPasswordInput.value = ''
-  confirmPasswordInput.value = ''
+function resetForms(): void {
+  userMobileInput.value = ''
+  sysadminMobileInput.value = ''
+  sysadminPasswordInput.value = ''
+  bootstrapMobileInput.value = ''
+  bootstrapPasswordInput.value = ''
+  bootstrapConfirmPasswordInput.value = ''
   errorMessage.value = ''
 }
 
-function openChangePassword(): void {
-  view.value = 'change-password'
-  oldPasswordInput.value = ''
-  newPasswordInput.value = ''
-  confirmPasswordInput.value = ''
-  errorMessage.value = ''
+function openUserLogin(): void {
+  view.value = 'user-login'
+  resetForms()
+}
+
+function openSysadminLogin(): void {
+  view.value = 'sysadmin-login'
+  resetForms()
+}
+
+function openBootstrapSysadmin(): void {
+  view.value = 'bootstrap-sysadmin'
+  resetForms()
 }
 
 function closeDialog(): void {
@@ -54,18 +65,54 @@ function closeDialog(): void {
   errorMessage.value = ''
 }
 
-async function handleSetup(): Promise<void> {
+async function handleUserLogin(): Promise<void> {
+  if (pending.value) return
+  pending.value = true
+  errorMessage.value = ''
+
+  try {
+    const result = await loginAsUserByMobile(userMobileInput.value)
+    if (!result.ok) {
+      errorMessage.value = result.message
+      return
+    }
+    emit('notify', result.message, 'success')
+    closeDialog()
+  } finally {
+    pending.value = false
+  }
+}
+
+async function handleSysadminLogin(): Promise<void> {
+  if (pending.value) return
+  pending.value = true
+  errorMessage.value = ''
+
+  try {
+    const result = await loginWithSysadminPassword(sysadminMobileInput.value, sysadminPasswordInput.value)
+    if (!result.ok) {
+      errorMessage.value = result.message
+      return
+    }
+    emit('notify', result.message, 'success')
+    closeDialog()
+  } finally {
+    pending.value = false
+  }
+}
+
+async function handleBootstrapSysadmin(): Promise<void> {
   if (pending.value) return
   errorMessage.value = ''
 
-  if (passwordInput.value !== confirmPasswordInput.value) {
+  if (bootstrapPasswordInput.value !== bootstrapConfirmPasswordInput.value) {
     errorMessage.value = '两次输入的密码不一致'
     return
   }
 
   pending.value = true
   try {
-    const result = await setupAdminPassword(passwordInput.value)
+    const result = await initializeFirstSysadmin(bootstrapMobileInput.value, bootstrapPasswordInput.value)
     if (!result.ok) {
       errorMessage.value = result.message
       return
@@ -77,159 +124,124 @@ async function handleSetup(): Promise<void> {
   }
 }
 
-async function handleLogin(): Promise<void> {
-  if (pending.value) return
-  errorMessage.value = ''
-  pending.value = true
-  try {
-    const result = await loginAsAdmin(passwordInput.value)
-    if (!result.ok) {
-      errorMessage.value = result.message
-      return
-    }
-    emit('notify', result.message, 'success')
-    closeDialog()
-  } finally {
-    pending.value = false
-  }
-}
-
-async function handleChangePassword(): Promise<void> {
-  if (pending.value) return
-  errorMessage.value = ''
-
-  if (newPasswordInput.value !== confirmPasswordInput.value) {
-    errorMessage.value = '两次输入的新密码不一致'
-    return
-  }
-
-  pending.value = true
-  try {
-    const result = await changeAdminPassword(oldPasswordInput.value, newPasswordInput.value)
-    if (!result.ok) {
-      errorMessage.value = result.message
-      return
-    }
-    emit('notify', result.message, 'success')
-    closeDialog()
-  } finally {
-    pending.value = false
-  }
-}
-
-function handleLogout(): void {
-  logout()
-  emit('notify', '已退出管理员身份', 'info')
+async function handleLogout(): Promise<void> {
+  await logout()
+  emit('notify', '已退出当前登录', 'info')
 }
 </script>
 
 <template>
   <div class="auth-bar">
-    <span class="auth-role" :class="isAdmin ? 'role-admin' : 'role-viewer'">
+    <span class="auth-role" :class="`role-${role}`">
       {{ roleLabel }}
     </span>
+    <span v-if="user" class="auth-mobile">{{ user.mobile }}</span>
 
-    <template v-if="isAdmin">
-      <button class="btn-ghost btn-sm" type="button" @click="openChangePassword">修改密码</button>
-      <button class="btn-ghost btn-sm" type="button" @click="handleLogout">退出管理</button>
+    <template v-if="role !== 'anonymous'">
+      <button class="btn-ghost btn-sm" type="button" @click="handleLogout">退出登录</button>
     </template>
+
     <template v-else>
-      <button class="btn-primary btn-sm" type="button" @click="openLogin">
-        {{ needsSetup ? '设置管理密码' : '管理员登录' }}
-      </button>
+      <button class="btn-ghost btn-sm" type="button" @click="openUserLogin">用户登录</button>
+      <button class="btn-primary btn-sm" type="button" @click="openSysadminLogin">sysadmin 登录</button>
     </template>
+
+    <button
+      v-if="role === 'anonymous'"
+      class="btn-ghost btn-sm"
+      type="button"
+      @click="openBootstrapSysadmin"
+    >
+      初始化 sysadmin
+    </button>
   </div>
 
-  <!-- Dialog overlay -->
   <teleport to="body">
     <transition name="auth-fade">
       <div v-if="view !== 'idle'" class="auth-overlay" @click.self="closeDialog">
         <div class="auth-dialog">
-          <!-- Setup password -->
-          <template v-if="view === 'setup'">
-            <h3>首次设置管理员密码</h3>
-            <p class="auth-hint">设置密码后，只有管理员才能编辑族谱数据。浏览者可自由查看。</p>
+          <template v-if="view === 'user-login'">
+            <h3>普通用户登录</h3>
+            <p class="auth-hint">输入手机号即可登录。账号需存在于 login_users 表。</p>
             <label class="field">
-              <span>管理员密码</span>
+              <span>手机号</span>
               <input
-                v-model="passwordInput"
-                type="password"
-                placeholder="请输入密码（至少 4 位）"
-                @keydown.enter="handleSetup"
-              />
-            </label>
-            <label class="field">
-              <span>确认密码</span>
-              <input
-                v-model="confirmPasswordInput"
-                type="password"
-                placeholder="再次输入密码"
-                @keydown.enter="handleSetup"
+                v-model="userMobileInput"
+                type="tel"
+                placeholder="请输入手机号"
+                @keydown.enter="handleUserLogin"
               />
             </label>
             <p v-if="errorMessage" class="auth-error">{{ errorMessage }}</p>
             <div class="btn-row">
-              <button class="btn-primary" type="button" :disabled="pending" @click="handleSetup">
-                {{ pending ? '设置中...' : '设置密码' }}
+              <button class="btn-primary" type="button" :disabled="pending" @click="handleUserLogin">
+                {{ pending ? '登录中...' : '登录' }}
               </button>
               <button class="btn-ghost" type="button" @click="closeDialog">取消</button>
             </div>
           </template>
 
-          <!-- Login -->
-          <template v-if="view === 'login'">
-            <h3>管理员登录</h3>
-            <p class="auth-hint">输入管理员密码后即可编辑族谱数据。</p>
+          <template v-if="view === 'sysadmin-login'">
+            <h3>sysadmin 登录</h3>
+            <p class="auth-hint">sysadmin 需要手机号和密码，密码由服务端 Secret 校验。</p>
+            <label class="field">
+              <span>手机号</span>
+              <input
+                v-model="sysadminMobileInput"
+                type="tel"
+                placeholder="请输入 sysadmin 手机号"
+              />
+            </label>
             <label class="field">
               <span>密码</span>
               <input
-                v-model="passwordInput"
+                v-model="sysadminPasswordInput"
                 type="password"
-                placeholder="请输入管理员密码"
-                @keydown.enter="handleLogin"
+                placeholder="请输入 sysadmin 密码"
+                @keydown.enter="handleSysadminLogin"
               />
             </label>
             <p v-if="errorMessage" class="auth-error">{{ errorMessage }}</p>
             <div class="btn-row">
-              <button class="btn-primary" type="button" :disabled="pending" @click="handleLogin">
+              <button class="btn-primary" type="button" :disabled="pending" @click="handleSysadminLogin">
                 {{ pending ? '验证中...' : '登录' }}
               </button>
               <button class="btn-ghost" type="button" @click="closeDialog">取消</button>
             </div>
           </template>
 
-          <!-- Change password -->
-          <template v-if="view === 'change-password'">
-            <h3>修改管理员密码</h3>
+          <template v-if="view === 'bootstrap-sysadmin'">
+            <h3>初始化 sysadmin</h3>
+            <p class="auth-hint">仅当系统尚未存在 sysadmin 时可成功。成功后自动登录。</p>
             <label class="field">
-              <span>旧密码</span>
+              <span>手机号</span>
               <input
-                v-model="oldPasswordInput"
-                type="password"
-                placeholder="请输入当前密码"
+                v-model="bootstrapMobileInput"
+                type="tel"
+                placeholder="请输入 sysadmin 手机号"
               />
             </label>
             <label class="field">
-              <span>新密码</span>
+              <span>密码</span>
               <input
-                v-model="newPasswordInput"
+                v-model="bootstrapPasswordInput"
                 type="password"
-                placeholder="请输入新密码（至少 4 位）"
+                placeholder="请输入 sysadmin 密码"
               />
             </label>
             <label class="field">
-              <span>确认新密码</span>
+              <span>确认密码</span>
               <input
-                v-model="confirmPasswordInput"
+                v-model="bootstrapConfirmPasswordInput"
                 type="password"
-                placeholder="再次输入新密码"
-                @keydown.enter="handleChangePassword"
+                placeholder="请再次输入密码"
+                @keydown.enter="handleBootstrapSysadmin"
               />
             </label>
             <p v-if="errorMessage" class="auth-error">{{ errorMessage }}</p>
             <div class="btn-row">
-              <button class="btn-primary" type="button" :disabled="pending" @click="handleChangePassword">
-                {{ pending ? '修改中...' : '确认修改' }}
+              <button class="btn-primary" type="button" :disabled="pending" @click="handleBootstrapSysadmin">
+                {{ pending ? '初始化中...' : '初始化并登录' }}
               </button>
               <button class="btn-ghost" type="button" @click="closeDialog">取消</button>
             </div>
@@ -245,6 +257,7 @@ function handleLogout(): void {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .auth-role {
@@ -255,14 +268,24 @@ function handleLogout(): void {
   letter-spacing: 0.5px;
 }
 
-.role-admin {
+.role-sysadmin {
   background: rgba(45, 94, 44, 0.18);
   color: #2d5e2c;
 }
 
-.role-viewer {
+.role-user {
+  background: rgba(42, 96, 150, 0.16);
+  color: #24537f;
+}
+
+.role-anonymous {
   background: rgba(182, 122, 68, 0.16);
   color: #8a5b30;
+}
+
+.auth-mobile {
+  font-size: 0.8em;
+  opacity: 0.92;
 }
 
 .btn-sm {
@@ -287,7 +310,7 @@ function handleLogout(): void {
   border-radius: 16px;
   padding: 24px;
   width: 100%;
-  max-width: 380px;
+  max-width: 420px;
   box-shadow: 0 16px 48px rgba(69, 49, 26, 0.22);
 }
 
