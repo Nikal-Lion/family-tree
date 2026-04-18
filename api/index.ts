@@ -246,7 +246,9 @@ async function createSessionForUser(
 async function verifySysadminPassword(password: string, env: Env): Promise<boolean> {
   const expectedHash = (env.SYSADMIN_PASSWORD_HASH || '').trim().toLowerCase()
   if (!expectedHash) {
-    return false
+    const error = new Error('SYSADMIN_PASSWORD_HASH is not configured')
+    ;(error as Error & { code?: string }).code = 'SYSADMIN_PASSWORD_HASH_MISSING'
+    throw error
   }
   const actual = await sha256Hex(password)
   return actual === expectedHash
