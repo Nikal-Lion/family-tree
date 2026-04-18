@@ -584,33 +584,51 @@ async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
     return
   }
 
-  await db.exec(`
-PRAGMA foreign_keys = OFF;
-CREATE TABLE IF NOT EXISTS login_users__new (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  mobile TEXT NOT NULL UNIQUE,
-  role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-INSERT INTO login_users__new (id, mobile, role, enabled, created_at, updated_at)
-SELECT
-  id,
-  mobile,
-  CASE
-    WHEN role IN ('user', 'maintainer', 'sysadmin') THEN role
-    ELSE 'user'
-  END,
-  enabled,
-  created_at,
-  updated_at
-FROM login_users;
-DROP TABLE login_users;
-ALTER TABLE login_users__new RENAME TO login_users;
-CREATE INDEX IF NOT EXISTS idx_login_users_role_enabled ON login_users(role, enabled);
-PRAGMA foreign_keys = ON;
-`)
+  // D1 runtime does not reliably support PRAGMA toggles in exec(), so run a pure SQL rebuild.
+  await db.batch([
+    db.prepare('DROP TABLE IF EXISTS auth_sessions__new'),
+    db.prepare('DROP TABLE IF EXISTS login_users__new'),
+    db.prepare(`CREATE TABLE login_users__new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mobile TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE auth_sessions__new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_hash TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES login_users__new(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`INSERT INTO login_users__new (id, mobile, role, enabled, created_at, updated_at)
+      SELECT
+        id,
+        mobile,
+        CASE
+          WHEN role IN ('user', 'maintainer', 'sysadmin') THEN role
+          ELSE 'user'
+        END,
+        enabled,
+        created_at,
+        updated_at
+      FROM login_users`),
+    db.prepare(`INSERT INTO auth_sessions__new (id, token_hash, user_id, expires_at, revoked_at, created_at, updated_at)
+      SELECT id, token_hash, user_id, expires_at, revoked_at, created_at, updated_at
+      FROM auth_sessions`),
+    db.prepare('DROP TABLE auth_sessions'),
+    db.prepare('DROP TABLE login_users'),
+    db.prepare('ALTER TABLE login_users__new RENAME TO login_users'),
+    db.prepare('ALTER TABLE auth_sessions__new RENAME TO auth_sessions'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_login_users_role_enabled ON login_users(role, enabled)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at)'),
+  ])
 }
 
 async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
