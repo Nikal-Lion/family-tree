@@ -204,6 +204,9 @@ interface SysadminPbkdf2Hash {
   hashLengthBytes: number
 }
 
+const PBKDF2_MIN_ITERATIONS = 100_000
+const PBKDF2_MAX_ITERATIONS = 100_000
+
 function parseSysadminPbkdf2Hash(raw: string): SysadminPbkdf2Hash | null {
   const trimmed = raw.trim().toLowerCase()
   if (!trimmed) {
@@ -221,7 +224,7 @@ function parseSysadminPbkdf2Hash(raw: string): SysadminPbkdf2Hash | null {
   }
 
   const iterations = Number(iterationText)
-  if (!Number.isInteger(iterations) || iterations < 100_000 || iterations > 5_000_000) {
+  if (!Number.isInteger(iterations) || iterations < PBKDF2_MIN_ITERATIONS || iterations > PBKDF2_MAX_ITERATIONS) {
     return null
   }
 
@@ -357,7 +360,9 @@ async function verifySysadminPassword(password: string, env: Env): Promise<boole
 
     const parsed = parseSysadminPbkdf2Hash(entry.value)
     if (!parsed) {
-      const error = new Error(`${entry.key} format invalid; expected pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>`)
+      const error = new Error(
+        `${entry.key} format invalid; expected pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex> and iterations must be ${PBKDF2_MIN_ITERATIONS}`,
+      )
       ;(error as Error & { code?: string }).code = 'SYSADMIN_PASSWORD_PBKDF2_INVALID'
       throw error
     }
@@ -366,7 +371,18 @@ async function verifySysadminPassword(password: string, env: Env): Promise<boole
 
   if (pbkdf2Hashes.length > 0) {
     for (const hash of pbkdf2Hashes) {
-      const derived = await derivePbkdf2Sha256Hex(password, hash.saltHex, hash.iterations, hash.hashLengthBytes)
+      let derived = ''
+      try {
+        derived = await derivePbkdf2Sha256Hex(password, hash.saltHex, hash.iterations, hash.hashLengthBytes)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ''
+        if (message.toLowerCase().includes('iteration counts above')) {
+          const runtimeError = new Error(`PBKDF2 iterations exceed runtime support; use ${PBKDF2_MAX_ITERATIONS}`)
+          ;(runtimeError as Error & { code?: string }).code = 'SYSADMIN_PASSWORD_PBKDF2_ITERATION_LIMIT'
+          throw runtimeError
+        }
+        throw error
+      }
       if (timingSafeEqualHex(derived, hash.hashHex)) {
         return true
       }

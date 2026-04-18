@@ -72,17 +72,19 @@ PBKDF2 secret format:
 pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>
 ```
 
+说明：当前 Worker 运行时支持的迭代次数上限为 `100000`，请使用 `100000`。
+
 PBKDF2 配置示例（可直接放到 Cloudflare Secrets）：
 
 ```text
-SYSADMIN_PASSWORD_PBKDF2=pbkdf2_sha256$210000$8f9a2b7c1e4d6f0a9b3c5d7e1a2c4f6b$7d1d35f8317f6c35e64a8ab0a1776b95d45e8fe03bf2db756f85fd2e2e9f82d5
-SYSADMIN_PASSWORD_PBKDF2_NEXT=pbkdf2_sha256$210000$4e2a8c1d5b7f9a3c6d1e0f2a4b8c7d5e$5538fd743d9f565cf8f8d5250f44f21931a71f67727d3f7f8de92f83a844f482
+SYSADMIN_PASSWORD_PBKDF2=pbkdf2_sha256$100000$8f9a2b7c1e4d6f0a9b3c5d7e1a2c4f6b$de3f3bbf7ff778ecb7eeb2456fb32476643c8b4f9d9e8e83c4f6d66ce5f0f668
+SYSADMIN_PASSWORD_PBKDF2_NEXT=pbkdf2_sha256$100000$4e2a8c1d5b7f9a3c6d1e0f2a4b8c7d5e$0e0ab2e1aef54f1bf521f70d9fcdfc860e3de01559ac998f94f9dcefa88f26db
 ```
 
 生成 PBKDF2 字符串示例（Node.js）：
 
 ```bash
-node -e "const crypto=require('node:crypto');const password='ChangeMe!';const iterations=210000;const salt=crypto.randomBytes(16);const hash=crypto.pbkdf2Sync(password,salt,iterations,32,'sha256');console.log(`pbkdf2_sha256$${iterations}$${salt.toString('hex')}$${hash.toString('hex')}`)"
+node -e "const crypto=require('node:crypto');const password='ChangeMe!';const iterations=100000;const salt=crypto.randomBytes(16);const hash=crypto.pbkdf2Sync(password,salt,iterations,32,'sha256');console.log(`pbkdf2_sha256$${iterations}$${salt.toString('hex')}$${hash.toString('hex')}`)"
 ```
 
 ### Rotation procedure
