@@ -1,5 +1,10 @@
 # 📚 项目文档索引
 
+> 归档说明（2026-04-18）
+>
+> 本索引主要覆盖 Drizzle/D1 迁移专题文档。
+> 若要查看当前产品功能与里程碑状态，请优先阅读 `README.md`、`README_CN.md` 与 `docs/stage2-plan.MD`。
+
 完整的 Drizzle ORM 迁移和 D1 配置文档。
 
 ## 🚀 快速导航

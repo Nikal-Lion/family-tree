@@ -1,5 +1,10 @@
 # Family Tree 项目 - Drizzle ORM 迁移完成总结
 
+> 归档说明（2026-04-18）
+>
+> 本文档是 Drizzle/D1 迁移阶段的历史快照，部分状态描述已过期。
+> 当前项目功能与里程碑状态请以 `README.md`、`README_CN.md` 与 `docs/stage2-plan.MD` 为准。
+
 ## 📊 项目当前状态
 
 ### ✅ 已完成
