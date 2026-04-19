@@ -615,7 +615,7 @@ async function handleImport(event: Event) {
       return
     }
 
-    const result = store.importDataFromMarkdown(text)
+    const result = await store.importDataFromMarkdown(text)
     if (!result.ok) {
       notifyError(result.message ?? 'Markdown 导入失败')
     } else {
@@ -647,7 +647,7 @@ async function handleImport(event: Event) {
   }
 
   const text = await file.text()
-  const result = store.importDataFromJson(text)
+  const result = await store.importDataFromJson(text)
   if (!result.ok) {
     notifyError(result.message ?? '导入失败')
   } else {

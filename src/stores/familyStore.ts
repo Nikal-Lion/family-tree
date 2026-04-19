@@ -307,11 +307,12 @@ function syncCoreRelationsFromMembers(): void {
 
 ensureBidirectionalSpouses()
 
-function persist(): void {
+function buildPersistPayload(): FamilyData {
   ensureBidirectionalSpouses()
   syncCoreRelationsFromMembers()
   state.members.sort((a, b) => a.id - b.id)
-  const payload: FamilyData = {
+
+  return {
     schemaVersion: schemaVersion.value,
     members: state.members,
     tracks: state.tracks,
@@ -328,9 +329,22 @@ function persist(): void {
     nextTemporalId: state.nextTemporalId,
     nextBurialId: state.nextBurialId,
   }
+}
 
+function enqueuePersist(payload: FamilyData): Promise<void> {
   persistQueue = persistQueue
+    .catch((error) => {
+      console.error('保存数据失败', error)
+    })
     .then(() => saveFamilyData(payload))
+
+  return persistQueue
+}
+
+function persist(): void {
+  const payload = buildPersistPayload()
+
+  void enqueuePersist(payload)
     .catch((error) => {
       console.error('保存数据失败', error)
     })
@@ -560,12 +574,12 @@ function deleteMember(id: number): ActionResult {
   return { ok: true, message: `已删除 ${deletionIds.size} 位成员` }
 }
 
-function importDataFromJson(raw: string): ActionResult {
+async function importDataFromJson(raw: string): Promise<ActionResult> {
   try {
     const imported = parseImportedJson(raw)
     applyLoadedData(imported)
     ready.value = true
-    persist()
+    await enqueuePersist(buildPersistPayload())
     return { ok: true, message: '导入成功' }
   } catch (error) {
     return {
@@ -595,13 +609,13 @@ function previewDataFromMarkdown(raw: string): MarkdownImportPreviewResult {
   }
 }
 
-function importDataFromMarkdown(raw: string): ActionResult {
+async function importDataFromMarkdown(raw: string): Promise<ActionResult> {
   try {
     const imported = parsePartDataMarkdown(raw)
     const warnings = analyzeFamilyDataImport(imported)
     applyLoadedData(imported)
     ready.value = true
-    persist()
+    await enqueuePersist(buildPersistPayload())
     return {
       ok: true,
       message:
