@@ -1,10 +1,15 @@
 import {
   APP_SCHEMA_VERSION,
+  type BurialRecord,
   type FamilyData,
   type FamilyEvent,
   type FamilyEventType,
+  type KinshipRelation,
   type Member,
+  type NameAlias,
   type Track,
+  type TemporalExpression,
+  type UncertaintyFlag,
 } from '../types/member'
 import {
   exportD1BackupBinary,
@@ -16,6 +21,21 @@ import {
 export const STORAGE_KEY = 'family_tree_app_data'
 const STORAGE_MIGRATED_KEY = 'family_tree_storage_migrated'
 const EVENT_TYPES: FamilyEventType[] = ['婚', '丧', '嫁', '娶', '生', '卒', '其他']
+const UNCERTAINTY_FLAGS: UncertaintyFlag[] = ['missing', 'estimated', 'conflicting', 'unverified']
+const NAME_ALIAS_TYPES = ['primary', 'given', 'courtesy', 'art', 'taboo', 'alias', 'other']
+const KINSHIP_RELATION_TYPES = [
+  'father',
+  'mother',
+  'spouse',
+  'step-parent',
+  'adoptive-parent',
+  'adopted-child',
+  'successor',
+  'other',
+]
+const KINSHIP_RELATION_STATUSES = ['active', 'ended', 'uncertain']
+const TEMPORAL_CALENDAR_TYPES = ['gregorian', 'lunar-era', 'ganzhi', 'mixed', 'unknown']
+const TEMPORAL_PRECISIONS = ['year', 'month', 'day', 'hour', 'unknown']
 
 const defaultMembers: Member[] = [
   { id: 1, name: '始祖', parentId: null, gender: '男', spouseIds: [], birthDate: '', photoUrl: '', biography: '' },
@@ -28,9 +48,17 @@ const defaultData: FamilyData = {
   members: defaultMembers,
   tracks: [],
   events: [],
+  aliases: [],
+  relations: [],
+  temporals: [],
+  burials: [],
   nextId: 4,
   nextTrackId: 1,
   nextEventId: 1,
+  nextAliasId: 1,
+  nextRelationId: 1,
+  nextTemporalId: 1,
+  nextBurialId: 1,
 }
 
 function cloneDefaultData(): FamilyData {
@@ -39,9 +67,17 @@ function cloneDefaultData(): FamilyData {
     members: defaultData.members.map((member) => ({ ...member, spouseIds: [...member.spouseIds] })),
     tracks: [],
     events: [],
+    aliases: [],
+    relations: [],
+    temporals: [],
+    burials: [],
     nextId: defaultData.nextId,
     nextTrackId: defaultData.nextTrackId,
     nextEventId: defaultData.nextEventId,
+    nextAliasId: defaultData.nextAliasId,
+    nextRelationId: defaultData.nextRelationId,
+    nextTemporalId: defaultData.nextTemporalId,
+    nextBurialId: defaultData.nextBurialId,
   }
 }
 
@@ -140,6 +176,15 @@ function isMember(value: unknown): value is Member {
   const birthDateOk = m.birthDate === undefined || typeof m.birthDate === 'string'
   const photoUrlOk = m.photoUrl === undefined || typeof m.photoUrl === 'string'
   const biographyOk = m.biography === undefined || typeof m.biography === 'string'
+  const generationLabelRawOk = m.generationLabelRaw === undefined || typeof m.generationLabelRaw === 'string'
+  const lineageBranchOk = m.lineageBranch === undefined || typeof m.lineageBranch === 'string'
+  const rawNotesOk = m.rawNotes === undefined || typeof m.rawNotes === 'string'
+  const uncertaintyFlagsOk =
+    m.uncertaintyFlags === undefined ||
+    (Array.isArray(m.uncertaintyFlags) &&
+      m.uncertaintyFlags.every((flag) =>
+        typeof flag === 'string' && UNCERTAINTY_FLAGS.includes(flag as UncertaintyFlag),
+      ))
 
   return (
     typeof m.id === 'number' &&
@@ -149,8 +194,150 @@ function isMember(value: unknown): value is Member {
     spouseOk &&
     birthDateOk &&
     photoUrlOk &&
-    biographyOk
+    biographyOk &&
+    generationLabelRawOk &&
+    lineageBranchOk &&
+    rawNotesOk &&
+    uncertaintyFlagsOk
   )
+}
+
+function isNameAlias(value: unknown): value is NameAlias {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const alias = value as Partial<NameAlias>
+  const typeOk = typeof alias.type === 'string' && NAME_ALIAS_TYPES.includes(alias.type)
+  return (
+    typeof alias.id === 'number' &&
+    typeof alias.memberId === 'number' &&
+    typeof alias.name === 'string' &&
+    typeOk &&
+    typeof alias.isPreferred === 'boolean' &&
+    (alias.note === undefined || typeof alias.note === 'string') &&
+    (alias.rawText === undefined || typeof alias.rawText === 'string')
+  )
+}
+
+function isKinshipRelation(value: unknown): value is KinshipRelation {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const relation = value as Partial<KinshipRelation>
+  const typeOk = typeof relation.type === 'string' && KINSHIP_RELATION_TYPES.includes(relation.type)
+  const statusOk =
+    typeof relation.status === 'string' && KINSHIP_RELATION_STATUSES.includes(relation.status)
+
+  return (
+    typeof relation.id === 'number' &&
+    typeof relation.fromMemberId === 'number' &&
+    typeof relation.toMemberId === 'number' &&
+    typeOk &&
+    statusOk &&
+    (relation.temporalId === null || typeof relation.temporalId === 'number') &&
+    (relation.note === undefined || typeof relation.note === 'string') &&
+    (relation.rawText === undefined || typeof relation.rawText === 'string')
+  )
+}
+
+function isTemporalExpression(value: unknown): value is TemporalExpression {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const temporal = value as Partial<TemporalExpression>
+  const calendarOk =
+    typeof temporal.calendarType === 'string' && TEMPORAL_CALENDAR_TYPES.includes(temporal.calendarType)
+  const precisionOk =
+    typeof temporal.precision === 'string' && TEMPORAL_PRECISIONS.includes(temporal.precision)
+
+  return (
+    typeof temporal.id === 'number' &&
+    (temporal.memberId === null || typeof temporal.memberId === 'number') &&
+    typeof temporal.label === 'string' &&
+    typeof temporal.rawText === 'string' &&
+    calendarOk &&
+    (temporal.normalizedDate === undefined || typeof temporal.normalizedDate === 'string') &&
+    precisionOk &&
+    typeof temporal.confidence === 'number'
+  )
+}
+
+function isBurialRecord(value: unknown): value is BurialRecord {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const burial = value as Partial<BurialRecord>
+  return (
+    typeof burial.id === 'number' &&
+    typeof burial.memberId === 'number' &&
+    (burial.temporalId === null || typeof burial.temporalId === 'number') &&
+    typeof burial.placeRaw === 'string' &&
+    (burial.mountainDirection === undefined || typeof burial.mountainDirection === 'string') &&
+    (burial.fenjin === undefined || typeof burial.fenjin === 'string') &&
+    (burial.note === undefined || typeof burial.note === 'string') &&
+    (burial.rawText === undefined || typeof burial.rawText === 'string')
+  )
+}
+
+function normalizeFamilyDataPayload(parsed: Partial<FamilyData>): FamilyData {
+  const members = Array.isArray(parsed.members)
+    ? parsed.members.filter(isMember).map((member) => ({
+        ...member,
+        spouseIds: Array.isArray(member.spouseIds) ? member.spouseIds : [],
+        birthDate: member.birthDate ?? '',
+        photoUrl: member.photoUrl ?? '',
+        biography: member.biography ?? '',
+        generationLabelRaw: member.generationLabelRaw ?? '',
+        lineageBranch: member.lineageBranch ?? '',
+        rawNotes: member.rawNotes ?? '',
+        uncertaintyFlags: Array.isArray(member.uncertaintyFlags)
+          ? member.uncertaintyFlags.filter((flag) => UNCERTAINTY_FLAGS.includes(flag))
+          : [],
+      }))
+    : []
+
+  if (members.length === 0) {
+    return cloneDefaultData()
+  }
+
+  const tracks = Array.isArray(parsed.tracks) ? parsed.tracks.filter(isTrack) : []
+  const events = Array.isArray(parsed.events)
+    ? parsed.events.filter(isEvent).map((event) => ({ ...event, description: event.description ?? '' }))
+    : []
+  const aliases = Array.isArray(parsed.aliases) ? parsed.aliases.filter(isNameAlias) : []
+  const relations = Array.isArray(parsed.relations) ? parsed.relations.filter(isKinshipRelation) : []
+  const temporals = Array.isArray(parsed.temporals) ? parsed.temporals.filter(isTemporalExpression) : []
+  const burials = Array.isArray(parsed.burials) ? parsed.burials.filter(isBurialRecord) : []
+
+  const nextId = typeof parsed.nextId === 'number' ? parsed.nextId : 1
+  const nextTrackId = typeof parsed.nextTrackId === 'number' ? parsed.nextTrackId : 1
+  const nextEventId = typeof parsed.nextEventId === 'number' ? parsed.nextEventId : 1
+  const nextAliasId = typeof parsed.nextAliasId === 'number' ? parsed.nextAliasId : 1
+  const nextRelationId = typeof parsed.nextRelationId === 'number' ? parsed.nextRelationId : 1
+  const nextTemporalId = typeof parsed.nextTemporalId === 'number' ? parsed.nextTemporalId : 1
+  const nextBurialId = typeof parsed.nextBurialId === 'number' ? parsed.nextBurialId : 1
+
+  return {
+    schemaVersion: APP_SCHEMA_VERSION,
+    members: normalizeMemberSpouses(members),
+    tracks,
+    events,
+    aliases,
+    relations,
+    temporals,
+    burials,
+    nextId: Math.max(nextId, ...members.map((m) => m.id + 1)),
+    nextTrackId: Math.max(nextTrackId, ...tracks.map((track) => track.id + 1), 1),
+    nextEventId: Math.max(nextEventId, ...events.map((event) => event.id + 1), 1),
+    nextAliasId: Math.max(nextAliasId, ...aliases.map((alias) => alias.id + 1), 1),
+    nextRelationId: Math.max(nextRelationId, ...relations.map((relation) => relation.id + 1), 1),
+    nextTemporalId: Math.max(nextTemporalId, ...temporals.map((temporal) => temporal.id + 1), 1),
+    nextBurialId: Math.max(nextBurialId, ...burials.map((burial) => burial.id + 1), 1),
+  }
 }
 
 function loadFamilyDataFromLocalStorage(): FamilyData {
@@ -160,41 +347,12 @@ function loadFamilyDataFromLocalStorage(): FamilyData {
       return cloneDefaultData()
     }
 
-    const parsed = JSON.parse(raw) as Partial<FamilyData>
-    const members = Array.isArray(parsed.members)
-      ? parsed.members.filter(isMember).map((member) => ({
-          ...member,
-          spouseIds: Array.isArray(member.spouseIds) ? member.spouseIds : [],
-          birthDate: member.birthDate ?? '',
-          photoUrl: member.photoUrl ?? '',
-          biography: member.biography ?? '',
-        }))
-      : []
-    const tracks = Array.isArray(parsed.tracks) ? parsed.tracks.filter(isTrack) : []
-    const events = Array.isArray(parsed.events)
-      ? parsed.events.filter(isEvent).map((event) => ({ ...event, description: event.description ?? '' }))
-      : []
-    const nextId = typeof parsed.nextId === 'number' ? parsed.nextId : 1
-    const nextTrackId = typeof parsed.nextTrackId === 'number' ? parsed.nextTrackId : 1
-    const nextEventId = typeof parsed.nextEventId === 'number' ? parsed.nextEventId : 1
-
-    if (members.length === 0) {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') {
       return cloneDefaultData()
     }
 
-    const computedNextId = Math.max(nextId, ...members.map((m) => m.id + 1))
-    const computedNextTrackId = Math.max(nextTrackId, ...tracks.map((t) => t.id + 1), 1)
-    const computedNextEventId = Math.max(nextEventId, ...events.map((e) => e.id + 1), 1)
-
-    return {
-      schemaVersion: APP_SCHEMA_VERSION,
-      members: normalizeMemberSpouses(members),
-      tracks,
-      events,
-      nextId: computedNextId,
-      nextTrackId: computedNextTrackId,
-      nextEventId: computedNextEventId,
-    }
+    return normalizeFamilyDataPayload(parsed as Partial<FamilyData>)
   } catch {
     return cloneDefaultData()
   }
@@ -225,7 +383,7 @@ export async function initializeStorage(): Promise<FamilyData> {
   try {
     const d1Data = await loadFamilyDataFromD1()
     if (d1Data) {
-      return d1Data
+      return normalizeFamilyDataPayload(d1Data)
     }
 
     const hasLocalData = hasLocalPersistedPayload()
@@ -257,5 +415,5 @@ export async function importSqliteData(binary: Uint8Array): Promise<FamilyData> 
   const imported = await importD1BackupBinary(binary)
   markMigratedToSqlite()
   clearLegacyLocalStorageData()
-  return imported
+  return normalizeFamilyDataPayload(imported)
 }

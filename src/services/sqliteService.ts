@@ -1,6 +1,6 @@
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js'
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url'
-import type { FamilyData, FamilyEvent, Member, Track } from '../types/member'
+import { APP_SCHEMA_VERSION, type FamilyData, type FamilyEvent, type Member, type Track } from '../types/member'
 
 const SQLITE_DB_NAME = 'family-tree-sqlite'
 const SQLITE_STORE_NAME = 'dbfiles'
@@ -274,13 +274,21 @@ function toFamilyData(database: Database): FamilyData {
   const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
 
   return {
-    schemaVersion: readMetaNumber(database, 'schema_version', 2),
+    schemaVersion: readMetaNumber(database, 'schema_version', APP_SCHEMA_VERSION),
     members,
     events,
     tracks,
+    aliases: [],
+    relations: [],
+    temporals: [],
+    burials: [],
     nextId: Math.max(readMetaNumber(database, 'next_id', maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(readMetaNumber(database, 'next_track_id', maxTrackId + 1), maxTrackId + 1),
     nextEventId: Math.max(readMetaNumber(database, 'next_event_id', maxEventId + 1), maxEventId + 1),
+    nextAliasId: Math.max(readMetaNumber(database, 'next_alias_id', 1), 1),
+    nextRelationId: Math.max(readMetaNumber(database, 'next_relation_id', 1), 1),
+    nextTemporalId: Math.max(readMetaNumber(database, 'next_temporal_id', 1), 1),
+    nextBurialId: Math.max(readMetaNumber(database, 'next_burial_id', 1), 1),
   }
 }
 
@@ -424,6 +432,10 @@ export async function saveFamilyDataToSqlite(data: FamilyData): Promise<void> {
     metaStmt.run(['next_id', String(data.nextId)])
     metaStmt.run(['next_track_id', String(data.nextTrackId)])
     metaStmt.run(['next_event_id', String(data.nextEventId)])
+    metaStmt.run(['next_alias_id', String(data.nextAliasId)])
+    metaStmt.run(['next_relation_id', String(data.nextRelationId)])
+    metaStmt.run(['next_temporal_id', String(data.nextTemporalId)])
+    metaStmt.run(['next_burial_id', String(data.nextBurialId)])
     metaStmt.run(['last_write_at', new Date().toISOString()])
     metaStmt.free()
 

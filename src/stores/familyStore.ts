@@ -4,7 +4,19 @@ import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
 import { canAssignParent, validateName } from '../services/validators'
-import type { FamilyData, FamilyEvent, FamilyEventInput, Member, MemberInput, Track } from '../types/member'
+import {
+  APP_SCHEMA_VERSION,
+  type BurialRecord,
+  type FamilyData,
+  type FamilyEvent,
+  type FamilyEventInput,
+  type KinshipRelation,
+  type Member,
+  type MemberInput,
+  type NameAlias,
+  type TemporalExpression,
+  type Track,
+} from '../types/member'
 import type { OcrImportOptions, TempMember } from '../types/ocr'
 
 interface ActionResult {
@@ -16,21 +28,37 @@ const state = reactive<{
   members: Member[]
   tracks: Track[]
   events: FamilyEvent[]
+  aliases: NameAlias[]
+  relations: KinshipRelation[]
+  temporals: TemporalExpression[]
+  burials: BurialRecord[]
   nextId: number
   nextTrackId: number
   nextEventId: number
+  nextAliasId: number
+  nextRelationId: number
+  nextTemporalId: number
+  nextBurialId: number
   selectedId: number | null
 }>({
   members: [],
   tracks: [],
   events: [],
+  aliases: [],
+  relations: [],
+  temporals: [],
+  burials: [],
   nextId: 1,
   nextTrackId: 1,
   nextEventId: 1,
+  nextAliasId: 1,
+  nextRelationId: 1,
+  nextTemporalId: 1,
+  nextBurialId: 1,
   selectedId: null,
 })
 
-const schemaVersion = ref(2)
+const schemaVersion = ref(APP_SCHEMA_VERSION)
 const ready = ref(false)
 let initPromise: Promise<void> | null = null
 let persistQueue: Promise<void> = Promise.resolve()
@@ -123,9 +151,17 @@ function persist(): void {
     members: state.members,
     tracks: state.tracks,
     events: state.events,
+    aliases: state.aliases,
+    relations: state.relations,
+    temporals: state.temporals,
+    burials: state.burials,
     nextId: state.nextId,
     nextTrackId: state.nextTrackId,
     nextEventId: state.nextEventId,
+    nextAliasId: state.nextAliasId,
+    nextRelationId: state.nextRelationId,
+    nextTemporalId: state.nextTemporalId,
+    nextBurialId: state.nextBurialId,
   }
 
   persistQueue = persistQueue
@@ -140,9 +176,17 @@ function applyLoadedData(data: FamilyData, options?: { preserveSelectedId?: bool
   state.members = [...data.members].sort((a, b) => a.id - b.id)
   state.tracks = [...data.tracks].sort((a, b) => a.id - b.id)
   state.events = [...(data.events ?? [])].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+  state.aliases = [...(data.aliases ?? [])].sort((a, b) => a.id - b.id)
+  state.relations = [...(data.relations ?? [])].sort((a, b) => a.id - b.id)
+  state.temporals = [...(data.temporals ?? [])].sort((a, b) => a.id - b.id)
+  state.burials = [...(data.burials ?? [])].sort((a, b) => a.id - b.id)
   state.nextId = data.nextId
   state.nextTrackId = data.nextTrackId
   state.nextEventId = data.nextEventId ?? 1
+  state.nextAliasId = data.nextAliasId ?? 1
+  state.nextRelationId = data.nextRelationId ?? 1
+  state.nextTemporalId = data.nextTemporalId ?? 1
+  state.nextBurialId = data.nextBurialId ?? 1
   const nextSelectedId = options?.preserveSelectedId ? state.selectedId : null
   state.selectedId =
     nextSelectedId !== null && data.members.some((member) => member.id === nextSelectedId)
@@ -319,9 +363,17 @@ function importDataFromJson(raw: string): ActionResult {
     const imported = parseImportedJson(raw)
     state.members = imported.members.sort((a, b) => a.id - b.id)
     state.tracks = imported.tracks.sort((a, b) => a.id - b.id)
+    state.aliases = imported.aliases.sort((a, b) => a.id - b.id)
+    state.relations = imported.relations.sort((a, b) => a.id - b.id)
+    state.temporals = imported.temporals.sort((a, b) => a.id - b.id)
+    state.burials = imported.burials.sort((a, b) => a.id - b.id)
     state.nextId = imported.nextId
     state.nextTrackId = imported.nextTrackId
     state.nextEventId = imported.nextEventId
+    state.nextAliasId = imported.nextAliasId
+    state.nextRelationId = imported.nextRelationId
+    state.nextTemporalId = imported.nextTemporalId
+    state.nextBurialId = imported.nextBurialId
     state.selectedId = imported.members[0]?.id ?? null
     state.events = imported.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
     ensureBidirectionalSpouses()
@@ -628,9 +680,17 @@ export function useFamilyStore() {
       members: state.members,
       tracks: state.tracks,
       events: state.events,
+      aliases: state.aliases,
+      relations: state.relations,
+      temporals: state.temporals,
+      burials: state.burials,
       nextId: state.nextId,
       nextTrackId: state.nextTrackId,
       nextEventId: state.nextEventId,
+      nextAliasId: state.nextAliasId,
+      nextRelationId: state.nextRelationId,
+      nextTemporalId: state.nextTemporalId,
+      nextBurialId: state.nextBurialId,
     }),
   }
 }
