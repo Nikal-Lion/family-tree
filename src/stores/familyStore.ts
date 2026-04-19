@@ -845,6 +845,9 @@ export function useFamilyStore() {
   const members = computed(() => state.members)
   const tracks = computed(() => state.tracks)
   const events = computed(() => state.events)
+  const relations = computed(() => state.relations)
+  const temporals = computed(() => state.temporals)
+  const burials = computed(() => state.burials)
   const selectedId = computed(() => state.selectedId)
   const selectedMember = computed(() => getMemberById(state.selectedId))
 
@@ -852,6 +855,9 @@ export function useFamilyStore() {
     members,
     tracks,
     events,
+    relations,
+    temporals,
+    burials,
     selectedId,
     selectedMember,
     ready: computed(() => ready.value),

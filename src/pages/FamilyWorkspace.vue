@@ -238,7 +238,26 @@ const editingMember = computed(() => {
 const members = computed(() => store.members.value)
 const tracks = computed(() => store.tracks.value)
 const events = computed(() => store.events.value)
+const relations = computed(() => store.relations.value)
+const temporals = computed(() => store.temporals.value)
+const burials = computed(() => store.burials.value)
 const selectedMember = computed(() => store.selectedMember.value)
+
+const selectedRelations = computed(() => {
+  const id = store.selectedId.value
+  if (id === null) {
+    return []
+  }
+  return relations.value.filter((relation) => relation.fromMemberId === id || relation.toMemberId === id)
+})
+
+const selectedBurials = computed(() => {
+  const id = store.selectedId.value
+  if (id === null) {
+    return []
+  }
+  return burials.value.filter((burial) => burial.memberId === id)
+})
 
 const generationMap = computed(() => computeGenerations(members.value))
 
@@ -351,6 +370,11 @@ function findSpouseNames(spouseIds: number[]): string {
   return spouseIds
     .map((id) => members.value.find((member) => member.id === id)?.name ?? `成员#${id}`)
     .join('、')
+}
+
+function resolveMemberName(id: number): string {
+  const target = members.value.find((member) => member.id === id)
+  return target?.name ?? `成员#${id}`
 }
 
 function handleSubmit(payload: MemberInput, id?: number) {
@@ -711,6 +735,10 @@ async function handleImport(event: Event) {
           :find-parent-name="findParentName"
           :find-spouse-names="findSpouseNames"
           :generation="selectedGeneration"
+          :relations="selectedRelations"
+          :temporals="temporals"
+          :burials="selectedBurials"
+          :resolve-member-name="resolveMemberName"
           :readonly="isViewerMode"
           @edit="handleEdit"
           @remove="handleRemove"

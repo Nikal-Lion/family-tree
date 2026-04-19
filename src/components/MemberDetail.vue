@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import type { Member } from '../types/member'
+import { computed } from 'vue'
+import type { BurialRecord, KinshipRelation, Member, TemporalExpression } from '../types/member'
 
 const props = defineProps<{
   member: Member | null
   findParentName: (id: number | null) => string
   findSpouseNames: (ids: number[]) => string
   generation: number | null
+  relations: KinshipRelation[]
+  temporals: TemporalExpression[]
+  burials: BurialRecord[]
+  resolveMemberName: (id: number) => string
   readonly?: boolean
 }>()
 
@@ -14,6 +19,65 @@ const emit = defineEmits<{
   remove: [id: number]
   addChild: [parentId: number]
 }>()
+
+const relationTypeText: Record<KinshipRelation['type'], string> = {
+  father: '父系',
+  mother: '母系',
+  spouse: '婚配',
+  'step-parent': '继亲',
+  'adoptive-parent': '收养',
+  'adopted-child': '过继',
+  successor: '承嗣',
+  other: '其他',
+}
+
+const temporalMap = computed(() => {
+  return new Map(props.temporals.map((temporal) => [temporal.id, temporal]))
+})
+
+const memberTemporals = computed(() => {
+  if (!props.member) {
+    return [] as TemporalExpression[]
+  }
+
+  const relevantTemporalIds = new Set<number>()
+  for (const relation of props.relations) {
+    if (relation.temporalId !== null) {
+      relevantTemporalIds.add(relation.temporalId)
+    }
+  }
+  for (const burial of props.burials) {
+    if (burial.temporalId !== null) {
+      relevantTemporalIds.add(burial.temporalId)
+    }
+  }
+
+  return props.temporals.filter(
+    (temporal) => temporal.memberId === props.member?.id || relevantTemporalIds.has(temporal.id),
+  )
+})
+
+function getTemporalText(temporalId: number | null): string {
+  if (temporalId === null) {
+    return '未标注时间'
+  }
+  const temporal = temporalMap.value.get(temporalId)
+  if (!temporal) {
+    return `时间#${temporalId}`
+  }
+  if (temporal.normalizedDate) {
+    return `${temporal.label}：${temporal.normalizedDate}`
+  }
+  return `${temporal.label}：${temporal.rawText}`
+}
+
+function getRelationText(relation: KinshipRelation, memberId: number): string {
+  const relationLabel = relationTypeText[relation.type] ?? relation.type
+  if (relation.fromMemberId === memberId) {
+    return `${relationLabel} -> ${props.resolveMemberName(relation.toMemberId)}`
+  }
+  return `${relationLabel} <- ${props.resolveMemberName(relation.fromMemberId)}`
+}
 </script>
 
 <template>
@@ -41,6 +105,43 @@ const emit = defineEmits<{
         alt="成员照片"
         loading="lazy"
       />
+    </div>
+
+    <div v-if="member" class="detail-grid">
+      <p><span>关系记录</span>{{ relations.length }}</p>
+      <p><span>纪年记录</span>{{ memberTemporals.length }}</p>
+      <p><span>墓葬记录</span>{{ burials.length }}</p>
+    </div>
+
+    <div v-if="member && relations.length > 0" class="detail-section">
+      <h4>关系明细</h4>
+      <ul>
+        <li v-for="relation in relations" :key="relation.id">
+          {{ getRelationText(relation, member.id) }}
+          （{{ getTemporalText(relation.temporalId) }}）
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="member && memberTemporals.length > 0" class="detail-section">
+      <h4>纪年明细</h4>
+      <ul>
+        <li v-for="temporal in memberTemporals" :key="temporal.id">
+          {{ temporal.label }}：{{ temporal.rawText }}
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="member && burials.length > 0" class="detail-section">
+      <h4>墓葬明细</h4>
+      <ul>
+        <li v-for="burial in burials" :key="burial.id">
+          {{ burial.placeRaw }}
+          <span v-if="burial.mountainDirection">，山向 {{ burial.mountainDirection }}</span>
+          <span v-if="burial.fenjin">，分金 {{ burial.fenjin }}</span>
+          （{{ getTemporalText(burial.temporalId) }}）
+        </li>
+      </ul>
     </div>
 
     <p v-else class="empty-tip">暂无成员，请先新增族人。</p>
