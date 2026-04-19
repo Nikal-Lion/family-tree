@@ -34,6 +34,10 @@ interface FamilyData {
     birthDate?: string
     photoUrl?: string
     biography?: string
+    generationLabelRaw?: string
+    lineageBranch?: string
+    rawNotes?: string
+    uncertaintyFlags?: Array<'missing' | 'estimated' | 'conflicting' | 'unverified'>
   }>
   events: Array<{
     id: number
@@ -56,9 +60,69 @@ interface FamilyData {
     createdAt: string
     updatedAt: string
   }>
+  aliases: Array<{
+    id: number
+    memberId: number
+    name: string
+    type: 'primary' | 'given' | 'courtesy' | 'art' | 'taboo' | 'alias' | 'other'
+    isPreferred: boolean
+    note?: string
+    rawText?: string
+  }>
+  relations: Array<{
+    id: number
+    fromMemberId: number
+    toMemberId: number
+    type: 'father' | 'mother' | 'spouse' | 'step-parent' | 'adoptive-parent' | 'adopted-child' | 'successor' | 'other'
+    status: 'active' | 'ended' | 'uncertain'
+    temporalId: number | null
+    note?: string
+    rawText?: string
+  }>
+  temporals: Array<{
+    id: number
+    memberId: number | null
+    label: string
+    rawText: string
+    calendarType: 'gregorian' | 'lunar-era' | 'ganzhi' | 'mixed' | 'unknown'
+    normalizedDate?: string
+    precision: 'year' | 'month' | 'day' | 'hour' | 'unknown'
+    confidence: number
+  }>
+  burials: Array<{
+    id: number
+    memberId: number
+    temporalId: number | null
+    placeRaw: string
+    mountainDirection?: string
+    fenjin?: string
+    note?: string
+    rawText?: string
+  }>
   nextId: number
   nextTrackId: number
   nextEventId: number
+  nextAliasId: number
+  nextRelationId: number
+  nextTemporalId: number
+  nextBurialId: number
+}
+
+interface MemberProfileExtension {
+  generationLabelRaw?: string
+  lineageBranch?: string
+  rawNotes?: string
+  uncertaintyFlags?: Array<'missing' | 'estimated' | 'conflicting' | 'unverified'>
+}
+
+function normalizeUncertaintyFlags(value: unknown): Array<'missing' | 'estimated' | 'conflicting' | 'unverified'> {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const allowed = ['missing', 'estimated', 'conflicting', 'unverified'] as const
+  return value.filter(
+    (flag): flag is (typeof allowed)[number] => typeof flag === 'string' && allowed.includes(flag as (typeof allowed)[number]),
+  )
 }
 
 /**
@@ -258,15 +322,39 @@ async function readFamilyData(env: Env): Promise<FamilyData | null> {
   const maxMemberId = members.length > 0 ? Math.max(...members.map((m) => m.id)) : 0
   const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
   const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
+  const aliases = parseJson<FamilyData['aliases']>(meta.get('aliases_json'), [])
+  const relations = parseJson<FamilyData['relations']>(meta.get('relations_json'), [])
+  const temporals = parseJson<FamilyData['temporals']>(meta.get('temporals_json'), [])
+  const burials = parseJson<FamilyData['burials']>(meta.get('burials_json'), [])
+  const memberProfiles = parseJson<Record<string, MemberProfileExtension>>(meta.get('member_profiles_json'), {})
+
+  const membersWithExtensions = members.map((member) => {
+    const extension = memberProfiles[String(member.id)]
+    return {
+      ...member,
+      generationLabelRaw: typeof extension?.generationLabelRaw === 'string' ? extension.generationLabelRaw : '',
+      lineageBranch: typeof extension?.lineageBranch === 'string' ? extension.lineageBranch : '',
+      rawNotes: typeof extension?.rawNotes === 'string' ? extension.rawNotes : '',
+      uncertaintyFlags: normalizeUncertaintyFlags(extension?.uncertaintyFlags),
+    }
+  })
 
   return {
-    schemaVersion: toInt(meta.get('schema_version'), 2),
-    members,
+    schemaVersion: toInt(meta.get('schema_version'), 3),
+    members: membersWithExtensions,
     events,
     tracks,
+    aliases,
+    relations,
+    temporals,
+    burials,
     nextId: Math.max(toInt(meta.get('next_id'), maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(toInt(meta.get('next_track_id'), maxTrackId + 1), maxTrackId + 1),
     nextEventId: Math.max(toInt(meta.get('next_event_id'), maxEventId + 1), maxEventId + 1),
+    nextAliasId: Math.max(toInt(meta.get('next_alias_id'), aliases.length + 1), aliases.length + 1),
+    nextRelationId: Math.max(toInt(meta.get('next_relation_id'), relations.length + 1), relations.length + 1),
+    nextTemporalId: Math.max(toInt(meta.get('next_temporal_id'), temporals.length + 1), temporals.length + 1),
+    nextBurialId: Math.max(toInt(meta.get('next_burial_id'), burials.length + 1), burials.length + 1),
   }
 }
 
@@ -354,6 +442,30 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
     { key: 'next_id', value: String(data.nextId) },
     { key: 'next_track_id', value: String(data.nextTrackId) },
     { key: 'next_event_id', value: String(data.nextEventId) },
+    { key: 'next_alias_id', value: String(data.nextAliasId) },
+    { key: 'next_relation_id', value: String(data.nextRelationId) },
+    { key: 'next_temporal_id', value: String(data.nextTemporalId) },
+    { key: 'next_burial_id', value: String(data.nextBurialId) },
+    { key: 'aliases_json', value: JSON.stringify(data.aliases ?? []) },
+    { key: 'relations_json', value: JSON.stringify(data.relations ?? []) },
+    { key: 'temporals_json', value: JSON.stringify(data.temporals ?? []) },
+    { key: 'burials_json', value: JSON.stringify(data.burials ?? []) },
+    {
+      key: 'member_profiles_json',
+      value: JSON.stringify(
+        Object.fromEntries(
+          (data.members ?? []).map((member) => [
+            String(member.id),
+            {
+              generationLabelRaw: member.generationLabelRaw ?? '',
+              lineageBranch: member.lineageBranch ?? '',
+              rawNotes: member.rawNotes ?? '',
+              uncertaintyFlags: normalizeUncertaintyFlags(member.uncertaintyFlags),
+            },
+          ]),
+        ),
+      ),
+    },
     { key: 'last_sync_time', value: new Date().toISOString() },
   ]
 

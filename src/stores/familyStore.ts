@@ -345,6 +345,11 @@ function deleteMember(id: number): ActionResult {
   const deletionIds = new Set(collectDescendants(id))
   state.members = state.members.filter((member) => !deletionIds.has(member.id))
   state.events = state.events.filter((event) => event.memberId === null || !deletionIds.has(event.memberId))
+  state.tracks = state.tracks.map((track) =>
+    track.memberId !== null && deletionIds.has(track.memberId)
+      ? { ...track, memberId: null, updatedAt: new Date().toISOString() }
+      : track,
+  )
   ensureBidirectionalSpouses()
 
   if (state.members.length === 0) {

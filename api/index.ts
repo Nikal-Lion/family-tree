@@ -35,6 +35,51 @@ interface TrackStats {
   elevationGainMeters: number | null
 }
 
+type UncertaintyFlag = 'missing' | 'estimated' | 'conflicting' | 'unverified'
+
+interface NameAlias {
+  id: number
+  memberId: number
+  name: string
+  type: 'primary' | 'given' | 'courtesy' | 'art' | 'taboo' | 'alias' | 'other'
+  isPreferred: boolean
+  note?: string
+  rawText?: string
+}
+
+interface KinshipRelation {
+  id: number
+  fromMemberId: number
+  toMemberId: number
+  type: 'father' | 'mother' | 'spouse' | 'step-parent' | 'adoptive-parent' | 'adopted-child' | 'successor' | 'other'
+  status: 'active' | 'ended' | 'uncertain'
+  temporalId: number | null
+  note?: string
+  rawText?: string
+}
+
+interface TemporalExpression {
+  id: number
+  memberId: number | null
+  label: string
+  rawText: string
+  calendarType: 'gregorian' | 'lunar-era' | 'ganzhi' | 'mixed' | 'unknown'
+  normalizedDate?: string
+  precision: 'year' | 'month' | 'day' | 'hour' | 'unknown'
+  confidence: number
+}
+
+interface BurialRecord {
+  id: number
+  memberId: number
+  temporalId: number | null
+  placeRaw: string
+  mountainDirection?: string
+  fenjin?: string
+  note?: string
+  rawText?: string
+}
+
 interface FamilyData {
   schemaVersion: number
   members: Array<{
@@ -46,6 +91,10 @@ interface FamilyData {
     birthDate?: string
     photoUrl?: string
     biography?: string
+    generationLabelRaw?: string
+    lineageBranch?: string
+    rawNotes?: string
+    uncertaintyFlags?: UncertaintyFlag[]
   }>
   events: Array<{
     id: number
@@ -68,9 +117,33 @@ interface FamilyData {
     createdAt: string
     updatedAt: string
   }>
+  aliases: NameAlias[]
+  relations: KinshipRelation[]
+  temporals: TemporalExpression[]
+  burials: BurialRecord[]
   nextId: number
   nextTrackId: number
   nextEventId: number
+  nextAliasId: number
+  nextRelationId: number
+  nextTemporalId: number
+  nextBurialId: number
+}
+
+interface MemberProfileExtension {
+  generationLabelRaw?: string
+  lineageBranch?: string
+  rawNotes?: string
+  uncertaintyFlags?: UncertaintyFlag[]
+}
+
+function normalizeUncertaintyFlags(value: unknown): UncertaintyFlag[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const allowed: UncertaintyFlag[] = ['missing', 'estimated', 'conflicting', 'unverified']
+  return value.filter((flag): flag is UncertaintyFlag => typeof flag === 'string' && allowed.includes(flag as UncertaintyFlag))
 }
 
 type LoginUserRole = 'user' | 'maintainer' | 'sysadmin'
@@ -715,15 +788,39 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
   const maxMemberId = members.length > 0 ? Math.max(...members.map((m) => m.id)) : 0
   const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
   const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
+  const aliases = parseJson<NameAlias[]>(meta.get('aliases_json'), [])
+  const relations = parseJson<KinshipRelation[]>(meta.get('relations_json'), [])
+  const temporals = parseJson<TemporalExpression[]>(meta.get('temporals_json'), [])
+  const burials = parseJson<BurialRecord[]>(meta.get('burials_json'), [])
+  const memberProfiles = parseJson<Record<string, MemberProfileExtension>>(meta.get('member_profiles_json'), {})
+
+  const membersWithExtensions = members.map((member) => {
+    const extension = memberProfiles[String(member.id)]
+    return {
+      ...member,
+      generationLabelRaw: typeof extension?.generationLabelRaw === 'string' ? extension.generationLabelRaw : '',
+      lineageBranch: typeof extension?.lineageBranch === 'string' ? extension.lineageBranch : '',
+      rawNotes: typeof extension?.rawNotes === 'string' ? extension.rawNotes : '',
+      uncertaintyFlags: normalizeUncertaintyFlags(extension?.uncertaintyFlags),
+    }
+  })
 
   return {
-    schemaVersion: toInt(meta.get('schema_version'), 2),
-    members,
+    schemaVersion: toInt(meta.get('schema_version'), 3),
+    members: membersWithExtensions,
     events,
     tracks,
+    aliases,
+    relations,
+    temporals,
+    burials,
     nextId: Math.max(toInt(meta.get('next_id'), maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(toInt(meta.get('next_track_id'), maxTrackId + 1), maxTrackId + 1),
     nextEventId: Math.max(toInt(meta.get('next_event_id'), maxEventId + 1), maxEventId + 1),
+    nextAliasId: Math.max(toInt(meta.get('next_alias_id'), aliases.length + 1), aliases.length + 1),
+    nextRelationId: Math.max(toInt(meta.get('next_relation_id'), relations.length + 1), relations.length + 1),
+    nextTemporalId: Math.max(toInt(meta.get('next_temporal_id'), temporals.length + 1), temporals.length + 1),
+    nextBurialId: Math.max(toInt(meta.get('next_burial_id'), burials.length + 1), burials.length + 1),
   }
 }
 
@@ -803,6 +900,30 @@ async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> 
     ['next_id', String(data.nextId)],
     ['next_track_id', String(data.nextTrackId)],
     ['next_event_id', String(data.nextEventId)],
+    ['next_alias_id', String(data.nextAliasId)],
+    ['next_relation_id', String(data.nextRelationId)],
+    ['next_temporal_id', String(data.nextTemporalId)],
+    ['next_burial_id', String(data.nextBurialId)],
+    ['aliases_json', JSON.stringify(data.aliases ?? [])],
+    ['relations_json', JSON.stringify(data.relations ?? [])],
+    ['temporals_json', JSON.stringify(data.temporals ?? [])],
+    ['burials_json', JSON.stringify(data.burials ?? [])],
+    [
+      'member_profiles_json',
+      JSON.stringify(
+        Object.fromEntries(
+          (data.members ?? []).map((member) => [
+            String(member.id),
+            {
+              generationLabelRaw: member.generationLabelRaw ?? '',
+              lineageBranch: member.lineageBranch ?? '',
+              rawNotes: member.rawNotes ?? '',
+              uncertaintyFlags: normalizeUncertaintyFlags(member.uncertaintyFlags),
+            },
+          ]),
+        ),
+      ),
+    ],
     ['last_sync_time', new Date().toISOString()],
   ]
 
