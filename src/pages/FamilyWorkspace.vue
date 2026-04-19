@@ -238,10 +238,19 @@ const editingMember = computed(() => {
 const members = computed(() => store.members.value)
 const tracks = computed(() => store.tracks.value)
 const events = computed(() => store.events.value)
+const aliases = computed(() => store.aliases.value)
 const relations = computed(() => store.relations.value)
 const temporals = computed(() => store.temporals.value)
 const burials = computed(() => store.burials.value)
 const selectedMember = computed(() => store.selectedMember.value)
+
+const selectedAliases = computed(() => {
+  const id = store.selectedId.value
+  if (id === null) {
+    return []
+  }
+  return aliases.value.filter((alias) => alias.memberId === id)
+})
 
 const selectedRelations = computed(() => {
   const id = store.selectedId.value
@@ -735,6 +744,7 @@ async function handleImport(event: Event) {
           :find-parent-name="findParentName"
           :find-spouse-names="findSpouseNames"
           :generation="selectedGeneration"
+          :aliases="selectedAliases"
           :relations="selectedRelations"
           :temporals="temporals"
           :burials="selectedBurials"

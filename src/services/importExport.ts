@@ -35,8 +35,8 @@ function isMember(value: unknown): value is Member {
   }
 
   const member = value as Partial<Member>
-  const genderOk = member.gender === '男' || member.gender === '女'
-  const parentOk = member.parentId === null || typeof member.parentId === 'number'
+  const genderOk = member.gender === undefined || member.gender === '男' || member.gender === '女'
+  const parentOk = member.parentId === undefined || member.parentId === null || typeof member.parentId === 'number'
   const spouseOk =
     member.spouseIds === undefined ||
     (Array.isArray(member.spouseIds) && member.spouseIds.every((id) => typeof id === 'number'))
@@ -249,13 +249,19 @@ export function parseImportedJson(raw: string): FamilyData {
   }
 
   const obj = parsed as Partial<FamilyData>
-  if (obj.schemaVersion !== APP_SCHEMA_VERSION) {
-    throw new Error(`导入失败：仅支持 schemaVersion=${APP_SCHEMA_VERSION} 的数据文件`)
+  const sourceSchemaVersion =
+    typeof obj.schemaVersion === 'number' ? obj.schemaVersion : APP_SCHEMA_VERSION - 1
+  if (sourceSchemaVersion !== APP_SCHEMA_VERSION && sourceSchemaVersion !== APP_SCHEMA_VERSION - 1) {
+    throw new Error(
+      `导入失败：仅支持 schemaVersion=${APP_SCHEMA_VERSION - 1} 或 schemaVersion=${APP_SCHEMA_VERSION} 的数据文件`,
+    )
   }
 
   const members = Array.isArray(obj.members)
     ? obj.members.filter(isMember).map((member) => ({
         ...member,
+        gender: (member.gender === '女' ? '女' : '男') as Member['gender'],
+        parentId: typeof member.parentId === 'number' ? member.parentId : null,
         spouseIds: Array.isArray(member.spouseIds) ? member.spouseIds : [],
         birthDate: member.birthDate ?? '',
         photoUrl: member.photoUrl ?? '',

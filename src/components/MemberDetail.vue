@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { BurialRecord, KinshipRelation, Member, TemporalExpression } from '../types/member'
+import type {
+  BurialRecord,
+  KinshipRelation,
+  Member,
+  NameAlias,
+  TemporalExpression,
+} from '../types/member'
 
 const props = defineProps<{
   member: Member | null
   findParentName: (id: number | null) => string
   findSpouseNames: (ids: number[]) => string
   generation: number | null
+  aliases: NameAlias[]
   relations: KinshipRelation[]
   temporals: TemporalExpression[]
   burials: BurialRecord[]
@@ -30,6 +37,23 @@ const relationTypeText: Record<KinshipRelation['type'], string> = {
   successor: '承嗣',
   other: '其他',
 }
+
+const aliasTypeText: Record<NameAlias['type'], string> = {
+  primary: '主名',
+  given: '讳名',
+  courtesy: '字',
+  art: '号',
+  taboo: '避讳名',
+  alias: '别名',
+  other: '其他',
+}
+
+const memberAliases = computed(() => {
+  if (!props.member) {
+    return [] as NameAlias[]
+  }
+  return props.aliases.filter((alias) => alias.memberId === props.member?.id)
+})
 
 const temporalMap = computed(() => {
   return new Map(props.temporals.map((temporal) => [temporal.id, temporal]))
@@ -108,9 +132,20 @@ function getRelationText(relation: KinshipRelation, memberId: number): string {
     </div>
 
     <div v-if="member" class="detail-grid">
+      <p><span>别名记录</span>{{ memberAliases.length }}</p>
       <p><span>关系记录</span>{{ relations.length }}</p>
       <p><span>纪年记录</span>{{ memberTemporals.length }}</p>
       <p><span>墓葬记录</span>{{ burials.length }}</p>
+    </div>
+
+    <div v-if="member && memberAliases.length > 0" class="detail-section">
+      <h4>别名明细</h4>
+      <ul>
+        <li v-for="alias in memberAliases" :key="alias.id">
+          {{ alias.name }}（{{ aliasTypeText[alias.type] ?? alias.type }}）
+          <span v-if="alias.note">，{{ alias.note }}</span>
+        </li>
+      </ul>
     </div>
 
     <div v-if="member && relations.length > 0" class="detail-section">
@@ -144,7 +179,7 @@ function getRelationText(relation: KinshipRelation, memberId: number): string {
       </ul>
     </div>
 
-    <p v-else class="empty-tip">暂无成员，请先新增族人。</p>
+    <p v-if="!member" class="empty-tip">暂无成员，请先新增族人。</p>
 
     <div v-if="member && !readonly" class="btn-row">
       <button class="btn-primary" type="button" @click="emit('edit', member.id)">编辑</button>
