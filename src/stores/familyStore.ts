@@ -1,5 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import { parseImportedJson } from '../services/importExport'
+import { parsePartDataMarkdown } from '../services/partDataImport'
 import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
@@ -582,6 +583,24 @@ function importDataFromJson(raw: string): ActionResult {
   }
 }
 
+function importDataFromMarkdown(raw: string): ActionResult {
+  try {
+    const imported = parsePartDataMarkdown(raw)
+    applyLoadedData(imported)
+    ready.value = true
+    persist()
+    return {
+      ok: true,
+      message: `Markdown 导入成功，共识别 ${imported.members.length} 位成员`,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Markdown 导入失败',
+    }
+  }
+}
+
 function replaceData(data: FamilyData): void {
   applyLoadedData(data)
   ready.value = true
@@ -881,6 +900,7 @@ export function useFamilyStore() {
     deleteEvent,
     importOcrMembers,
     importDataFromJson,
+    importDataFromMarkdown,
     replaceData,
     exportData: () => ({
       schemaVersion: schemaVersion.value,

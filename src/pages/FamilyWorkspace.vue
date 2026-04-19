@@ -605,6 +605,19 @@ async function handleImport(event: Event) {
     return
   }
 
+  if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown')) {
+    const text = await file.text()
+    const result = store.importDataFromMarkdown(text)
+    if (!result.ok) {
+      notifyError(result.message ?? 'Markdown 导入失败')
+    } else {
+      editingId.value = null
+      notifySuccess(result.message ?? 'Markdown 导入成功')
+    }
+    input.value = ''
+    return
+  }
+
   const text = await file.text()
   const result = store.importDataFromJson(text)
   if (!result.ok) {
@@ -643,7 +656,7 @@ async function handleImport(event: Event) {
       </nav>
 
       <div v-if="canShowManageActions" class="top-actions">
-        <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite</button>
+        <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite/Markdown</button>
         <button class="btn-primary" type="button" @click="handleExport">导出 JSON</button>
         <button class="btn-ghost" type="button" @click="handleExportSqlite">导出 SQLite</button>
         <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
@@ -657,7 +670,7 @@ async function handleImport(event: Event) {
       <input
         ref="fileInputRef"
         type="file"
-        accept="application/json,.sqlite,.db"
+        accept="application/json,text/markdown,.md,.markdown,.sqlite,.db"
         class="hidden-input"
         @change="handleImport"
       />
