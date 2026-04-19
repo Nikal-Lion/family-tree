@@ -495,6 +495,124 @@ async function readFamilyData(env: Env): Promise<FamilyData | null> {
   }
 }
 
+function orderMembersForInsert(members: FamilyData['members']): FamilyData['members'] {
+  const pending = new Map<number, FamilyData['members'][number]>()
+  for (const member of members) {
+    pending.set(member.id, member)
+  }
+
+  const ordered: FamilyData['members'] = []
+  const inserted = new Set<number>()
+
+  while (pending.size > 0) {
+    let progressed = false
+    for (const [id, member] of Array.from(pending.entries())) {
+      if (member.parentId === null || inserted.has(member.parentId)) {
+        ordered.push(member)
+        inserted.add(id)
+        pending.delete(id)
+        progressed = true
+      }
+    }
+
+    if (progressed) {
+      continue
+    }
+
+    // Break any unresolved parent chain/cycle to keep writes valid.
+    for (const [id, member] of Array.from(pending.entries())) {
+      ordered.push({
+        ...member,
+        parentId: null,
+      })
+      inserted.add(id)
+      pending.delete(id)
+    }
+  }
+
+  return ordered
+}
+
+function normalizeFamilyDataForWrite(data: FamilyData): FamilyData {
+  const memberIdSet = new Set<number>((data.members ?? []).map((member) => member.id))
+
+  const normalizedMembers = (data.members ?? []).map((member) => {
+    const isValidParentId =
+      typeof member.parentId === 'number' && member.parentId !== member.id && memberIdSet.has(member.parentId)
+
+    return {
+      ...member,
+      parentId: isValidParentId ? member.parentId : null,
+    }
+  })
+
+  const orderedMembers = orderMembersForInsert(normalizedMembers)
+  const orderedMemberIdSet = new Set<number>(orderedMembers.map((member) => member.id))
+
+  const normalizedEvents = (data.events ?? []).map((event) => ({
+    ...event,
+    memberId:
+      typeof event.memberId === 'number' && orderedMemberIdSet.has(event.memberId)
+        ? event.memberId
+        : null,
+  }))
+
+  const normalizedTracks = (data.tracks ?? []).map((track) => ({
+    ...track,
+    memberId:
+      typeof track.memberId === 'number' && orderedMemberIdSet.has(track.memberId)
+        ? track.memberId
+        : null,
+  }))
+
+  const normalizedTemporals = (data.temporals ?? []).map((temporal) => ({
+    ...temporal,
+    memberId:
+      typeof temporal.memberId === 'number' && orderedMemberIdSet.has(temporal.memberId)
+        ? temporal.memberId
+        : null,
+  }))
+  const temporalIdSet = new Set<number>(normalizedTemporals.map((temporal) => temporal.id))
+
+  const normalizedAliases = (data.aliases ?? []).filter((alias) => orderedMemberIdSet.has(alias.memberId))
+
+  const normalizedRelations = (data.relations ?? [])
+    .filter(
+      (relation) =>
+        relation.fromMemberId !== relation.toMemberId &&
+        orderedMemberIdSet.has(relation.fromMemberId) &&
+        orderedMemberIdSet.has(relation.toMemberId),
+    )
+    .map((relation) => ({
+      ...relation,
+      temporalId:
+        typeof relation.temporalId === 'number' && temporalIdSet.has(relation.temporalId)
+          ? relation.temporalId
+          : null,
+    }))
+
+  const normalizedBurials = (data.burials ?? [])
+    .filter((burial) => orderedMemberIdSet.has(burial.memberId))
+    .map((burial) => ({
+      ...burial,
+      temporalId:
+        typeof burial.temporalId === 'number' && temporalIdSet.has(burial.temporalId)
+          ? burial.temporalId
+          : null,
+    }))
+
+  return {
+    ...data,
+    members: orderedMembers,
+    events: normalizedEvents,
+    tracks: normalizedTracks,
+    aliases: normalizedAliases,
+    relations: normalizedRelations,
+    temporals: normalizedTemporals,
+    burials: normalizedBurials,
+  }
+}
+
 /**
  * 将完整的家族数据写入数据库
  * 使用 Drizzle ORM 进行事务性操作：
@@ -507,6 +625,7 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
 
   const db = getDb(env)
   const nowTs = Math.floor(Date.now() / 1000)
+  const normalizedData = normalizeFamilyDataForWrite(data)
 
   // 执行删除操作
   await db.delete(schema.kinshipRelations).run()
@@ -519,11 +638,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
   await db.delete(schema.members).run()
 
   // 批量插入成员
-  if (data.members.length > 0) {
+  if (normalizedData.members.length > 0) {
     await db
       .insert(schema.members)
       .values(
-        data.members.map((member) => ({
+        normalizedData.members.map((member) => ({
           id: member.id,
           name: member.name,
           parentId: member.parentId,
@@ -540,11 +659,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
   }
 
   // 批量插入事件
-  if (data.events && data.events.length > 0) {
+  if (normalizedData.events && normalizedData.events.length > 0) {
     await db
       .insert(schema.familyEvents)
       .values(
-        data.events.map((event) => ({
+        normalizedData.events.map((event) => ({
           id: event.id,
           memberId: event.memberId,
           type: event.type,
@@ -558,11 +677,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
       .run()
   }
 
-  if (data.temporals && data.temporals.length > 0) {
+  if (normalizedData.temporals && normalizedData.temporals.length > 0) {
     await db
       .insert(schema.temporalExpressions)
       .values(
-        data.temporals.map((temporal) => ({
+        normalizedData.temporals.map((temporal) => ({
           id: temporal.id,
           memberId: temporal.memberId,
           label: temporal.label,
@@ -576,11 +695,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
       .run()
   }
 
-  if (data.aliases && data.aliases.length > 0) {
+  if (normalizedData.aliases && normalizedData.aliases.length > 0) {
     await db
       .insert(schema.nameAliases)
       .values(
-        data.aliases.map((alias) => ({
+        normalizedData.aliases.map((alias) => ({
           id: alias.id,
           memberId: alias.memberId,
           name: alias.name,
@@ -593,11 +712,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
       .run()
   }
 
-  if (data.relations && data.relations.length > 0) {
+  if (normalizedData.relations && normalizedData.relations.length > 0) {
     await db
       .insert(schema.kinshipRelations)
       .values(
-        data.relations.map((relation) => ({
+        normalizedData.relations.map((relation) => ({
           id: relation.id,
           fromMemberId: relation.fromMemberId,
           toMemberId: relation.toMemberId,
@@ -611,11 +730,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
       .run()
   }
 
-  if (data.burials && data.burials.length > 0) {
+  if (normalizedData.burials && normalizedData.burials.length > 0) {
     await db
       .insert(schema.burialRecords)
       .values(
-        data.burials.map((burial) => ({
+        normalizedData.burials.map((burial) => ({
           id: burial.id,
           memberId: burial.memberId,
           temporalId: burial.temporalId,
@@ -629,11 +748,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
       .run()
   }
 
-  if (data.members && data.members.length > 0) {
+  if (normalizedData.members && normalizedData.members.length > 0) {
     await db
       .insert(schema.memberProfiles)
       .values(
-        data.members.map((member) => ({
+        normalizedData.members.map((member) => ({
           memberId: member.id,
           generationLabelRaw: member.generationLabelRaw || null,
           lineageBranch: member.lineageBranch || null,
@@ -645,11 +764,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
   }
 
   // 批量插入轨迹
-  if (data.tracks && data.tracks.length > 0) {
+  if (normalizedData.tracks && normalizedData.tracks.length > 0) {
     await db
       .insert(schema.tracks)
       .values(
-        data.tracks.map((track) => ({
+        normalizedData.tracks.map((track) => ({
           id: track.id,
           name: track.name,
           memberId: track.memberId,
@@ -666,23 +785,23 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
 
   // 更新元数据
   const metadataUpdates = [
-    { key: 'schema_version', value: String(data.schemaVersion) },
-    { key: 'next_id', value: String(data.nextId) },
-    { key: 'next_track_id', value: String(data.nextTrackId) },
-    { key: 'next_event_id', value: String(data.nextEventId) },
-    { key: 'next_alias_id', value: String(data.nextAliasId) },
-    { key: 'next_relation_id', value: String(data.nextRelationId) },
-    { key: 'next_temporal_id', value: String(data.nextTemporalId) },
-    { key: 'next_burial_id', value: String(data.nextBurialId) },
-    { key: 'aliases_json', value: JSON.stringify(data.aliases ?? []) },
-    { key: 'relations_json', value: JSON.stringify(data.relations ?? []) },
-    { key: 'temporals_json', value: JSON.stringify(data.temporals ?? []) },
-    { key: 'burials_json', value: JSON.stringify(data.burials ?? []) },
+    { key: 'schema_version', value: String(normalizedData.schemaVersion) },
+    { key: 'next_id', value: String(normalizedData.nextId) },
+    { key: 'next_track_id', value: String(normalizedData.nextTrackId) },
+    { key: 'next_event_id', value: String(normalizedData.nextEventId) },
+    { key: 'next_alias_id', value: String(normalizedData.nextAliasId) },
+    { key: 'next_relation_id', value: String(normalizedData.nextRelationId) },
+    { key: 'next_temporal_id', value: String(normalizedData.nextTemporalId) },
+    { key: 'next_burial_id', value: String(normalizedData.nextBurialId) },
+    { key: 'aliases_json', value: JSON.stringify(normalizedData.aliases ?? []) },
+    { key: 'relations_json', value: JSON.stringify(normalizedData.relations ?? []) },
+    { key: 'temporals_json', value: JSON.stringify(normalizedData.temporals ?? []) },
+    { key: 'burials_json', value: JSON.stringify(normalizedData.burials ?? []) },
     {
       key: 'member_profiles_json',
       value: JSON.stringify(
         Object.fromEntries(
-          (data.members ?? []).map((member) => [
+          (normalizedData.members ?? []).map((member) => [
             String(member.id),
             {
               generationLabelRaw: member.generationLabelRaw ?? '',
