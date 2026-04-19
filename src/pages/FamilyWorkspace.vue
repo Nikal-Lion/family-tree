@@ -584,13 +584,54 @@ async function handleImport(event: Event) {
     return
   }
 
+  const lowerName = file.name.toLowerCase()
+
+  if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown')) {
+    const text = await file.text()
+    const preview = store.previewDataFromMarkdown(text)
+    if (!preview.ok) {
+      notifyError(preview.message ?? 'Markdown 预览失败')
+      input.value = ''
+      return
+    }
+
+    const summary = preview.summary
+    const summaryText = summary
+      ? `成员 ${summary.memberCount}，始祖分支 ${summary.rootCount}，别名 ${summary.aliasCount}，时间表达 ${summary.temporalCount}，葬地 ${summary.burialCount}`
+      : '未生成统计信息'
+    const warningPreview =
+      preview.warnings.length > 0
+        ? preview.warnings
+            .slice(0, 4)
+            .map((item, index) => `${index + 1}. ${item}`)
+            .join('\n')
+        : '未检测到明显结构风险'
+
+    const confirmCover = window.confirm(
+      `Markdown 预览结果：\n${summaryText}\n\n风险提示（最多展示 4 条）：\n${warningPreview}\n\n导入将覆盖当前数据，是否继续？`,
+    )
+    if (!confirmCover) {
+      input.value = ''
+      return
+    }
+
+    const result = store.importDataFromMarkdown(text)
+    if (!result.ok) {
+      notifyError(result.message ?? 'Markdown 导入失败')
+    } else {
+      editingId.value = null
+      notifySuccess(result.message ?? 'Markdown 导入成功')
+    }
+    input.value = ''
+    return
+  }
+
   const confirmCover = window.confirm('导入将覆盖当前数据，是否继续？')
   if (!confirmCover) {
     input.value = ''
     return
   }
 
-  const lowerName = file.name.toLowerCase()
   if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
     try {
       const buffer = await file.arrayBuffer()
@@ -600,19 +641,6 @@ async function handleImport(event: Event) {
       notifySuccess('SQLite 导入成功')
     } catch (error) {
       notifyError(error instanceof Error ? error.message : 'SQLite 导入失败')
-    }
-    input.value = ''
-    return
-  }
-
-  if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown')) {
-    const text = await file.text()
-    const result = store.importDataFromMarkdown(text)
-    if (!result.ok) {
-      notifyError(result.message ?? 'Markdown 导入失败')
-    } else {
-      editingId.value = null
-      notifySuccess(result.message ?? 'Markdown 导入成功')
     }
     input.value = ''
     return

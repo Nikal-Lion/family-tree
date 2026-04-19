@@ -1,4 +1,5 @@
 import { computed, reactive, ref } from 'vue'
+import { analyzeFamilyDataImport, summarizeFamilyDataImport, type FamilyDataImportSummary } from '../services/importDiagnostics'
 import { parseImportedJson } from '../services/importExport'
 import { parsePartDataMarkdown } from '../services/partDataImport'
 import { loadFamilyDataFromD1 } from '../services/d1ApiService'
@@ -24,6 +25,13 @@ import type { OcrImportOptions, TempMember } from '../types/ocr'
 interface ActionResult {
   ok: boolean
   message?: string
+}
+
+interface MarkdownImportPreviewResult {
+  ok: boolean
+  message?: string
+  summary?: FamilyDataImportSummary
+  warnings: string[]
 }
 
 const state = reactive<{
@@ -555,24 +563,8 @@ function deleteMember(id: number): ActionResult {
 function importDataFromJson(raw: string): ActionResult {
   try {
     const imported = parseImportedJson(raw)
-    state.members = imported.members.sort((a, b) => a.id - b.id)
-    state.tracks = imported.tracks.sort((a, b) => a.id - b.id)
-    state.aliases = imported.aliases.sort((a, b) => a.id - b.id)
-    state.relations = imported.relations.sort((a, b) => a.id - b.id)
-    state.temporals = imported.temporals.sort((a, b) => a.id - b.id)
-    state.burials = imported.burials.sort((a, b) => a.id - b.id)
-    state.nextId = imported.nextId
-    state.nextTrackId = imported.nextTrackId
-    state.nextEventId = imported.nextEventId
-    state.nextAliasId = imported.nextAliasId
-    state.nextRelationId = imported.nextRelationId
-    state.nextTemporalId = imported.nextTemporalId
-    state.nextBurialId = imported.nextBurialId
-    state.selectedId = imported.members[0]?.id ?? null
-    state.events = imported.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
-    applyRelationsToMembers()
-    ensureBidirectionalSpouses()
-    syncCoreRelationsFromMembers()
+    applyLoadedData(imported)
+    ready.value = true
     persist()
     return { ok: true, message: '导入成功' }
   } catch (error) {
@@ -583,15 +575,39 @@ function importDataFromJson(raw: string): ActionResult {
   }
 }
 
+function previewDataFromMarkdown(raw: string): MarkdownImportPreviewResult {
+  try {
+    const imported = parsePartDataMarkdown(raw)
+    const summary = summarizeFamilyDataImport(imported)
+    const warnings = analyzeFamilyDataImport(imported)
+    return {
+      ok: true,
+      message: `解析成功：识别 ${summary.memberCount} 位成员`,
+      summary,
+      warnings,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Markdown 预览失败',
+      warnings: [],
+    }
+  }
+}
+
 function importDataFromMarkdown(raw: string): ActionResult {
   try {
     const imported = parsePartDataMarkdown(raw)
+    const warnings = analyzeFamilyDataImport(imported)
     applyLoadedData(imported)
     ready.value = true
     persist()
     return {
       ok: true,
-      message: `Markdown 导入成功，共识别 ${imported.members.length} 位成员`,
+      message:
+        warnings.length > 0
+          ? `Markdown 导入成功，共识别 ${imported.members.length} 位成员，检测到 ${warnings.length} 条风险提示`
+          : `Markdown 导入成功，共识别 ${imported.members.length} 位成员`,
     }
   } catch (error) {
     return {
@@ -900,6 +916,7 @@ export function useFamilyStore() {
     deleteEvent,
     importOcrMembers,
     importDataFromJson,
+    previewDataFromMarkdown,
     importDataFromMarkdown,
     replaceData,
     exportData: () => ({

@@ -31,6 +31,7 @@ interface BuilderState {
   nextTemporalId: number
   nextBurialId: number
   memberByScopedName: Map<string, number>
+  memberByParentScopedName: Map<string, number>
   temporalDedup: Set<string>
   burialDedup: Set<string>
 }
@@ -75,6 +76,10 @@ function buildMemberScopeKey(name: string, generationLabel: string): string {
   return `${name}|${generationLabel || '未知世代'}`
 }
 
+function buildMemberParentScopeKey(name: string, generationLabel: string, parentHintName: string): string {
+  return `${name}|${generationLabel || '未知世代'}|父:${parentHintName}`
+}
+
 function createMember(state: BuilderState, name: string, gender: Gender, sourceLine: string): Member {
   const member: Member = {
     id: state.nextId,
@@ -100,30 +105,107 @@ function findMemberById(state: BuilderState, id: number): Member | undefined {
   return state.members.find((member) => member.id === id)
 }
 
+function findMemberNameById(state: BuilderState, id: number | null): string {
+  if (id === null) {
+    return ''
+  }
+  const member = findMemberById(state, id)
+  return member?.name ?? ''
+}
+
+function setScopedMemberCache(
+  state: BuilderState,
+  member: Member,
+  generationLabel: string,
+  parentHintName?: string,
+): void {
+  state.memberByScopedName.set(buildMemberScopeKey(member.name, generationLabel), member.id)
+  const normalizedParent = normalizeName(parentHintName ?? '')
+  if (normalizedParent) {
+    state.memberByParentScopedName.set(
+      buildMemberParentScopeKey(member.name, generationLabel, normalizedParent),
+      member.id,
+    )
+  }
+}
+
 function getOrCreateMember(
   state: BuilderState,
   name: string,
-  options: { gender?: Gender; generationLabel?: string; sourceLine: string },
+  options: { gender?: Gender; generationLabel?: string; sourceLine: string; parentHintName?: string },
 ): Member {
   const normalizedName = normalizeName(name)
   const generationLabel = options.generationLabel ?? state.generationLabel
+  const parentHintName = normalizeName(options.parentHintName ?? '')
+
+  if (parentHintName) {
+    const parentScopedKey = buildMemberParentScopeKey(normalizedName, generationLabel, parentHintName)
+    const existingByParentScope = state.memberByParentScopedName.get(parentScopedKey)
+    if (typeof existingByParentScope === 'number') {
+      const existing = findMemberById(state, existingByParentScope)
+      if (existing) {
+        if (existing.rawNotes && !existing.rawNotes.includes(options.sourceLine)) {
+          existing.rawNotes = `${existing.rawNotes}\n${options.sourceLine}`
+        }
+        return existing
+      }
+    }
+  }
+
   const key = buildMemberScopeKey(normalizedName, generationLabel)
   const existingByScope = state.memberByScopedName.get(key)
   if (typeof existingByScope === 'number') {
     const existing = findMemberById(state, existingByScope)
     if (existing) {
-      if (existing.rawNotes && !existing.rawNotes.includes(options.sourceLine)) {
-        existing.rawNotes = `${existing.rawNotes}\n${options.sourceLine}`
+      if (parentHintName) {
+        const parentName = findMemberNameById(state, existing.parentId)
+        if (existing.parentId !== null && parentName !== parentHintName) {
+          // The same name exists in this generation but with another parent.
+          // Continue searching and potentially create a new member.
+        } else {
+          if (existing.rawNotes && !existing.rawNotes.includes(options.sourceLine)) {
+            existing.rawNotes = `${existing.rawNotes}\n${options.sourceLine}`
+          }
+          setScopedMemberCache(state, existing, generationLabel, parentHintName)
+          return existing
+        }
+      } else {
+        if (existing.rawNotes && !existing.rawNotes.includes(options.sourceLine)) {
+          existing.rawNotes = `${existing.rawNotes}\n${options.sourceLine}`
+        }
+        return existing
       }
-      return existing
+    }
+  }
+
+  if (parentHintName) {
+    const candidates = state.members.filter(
+      (member) => member.name === normalizedName && member.generationLabelRaw === generationLabel,
+    )
+    const matched = candidates.find((member) => findMemberNameById(state, member.parentId) === parentHintName)
+    if (matched) {
+      if (matched.rawNotes && !matched.rawNotes.includes(options.sourceLine)) {
+        matched.rawNotes = `${matched.rawNotes}\n${options.sourceLine}`
+      }
+      setScopedMemberCache(state, matched, generationLabel, parentHintName)
+      return matched
+    }
+
+    if (candidates.length === 1 && candidates[0].parentId === null) {
+      const only = candidates[0]
+      if (only.rawNotes && !only.rawNotes.includes(options.sourceLine)) {
+        only.rawNotes = `${only.rawNotes}\n${options.sourceLine}`
+      }
+      setScopedMemberCache(state, only, generationLabel, parentHintName)
+      return only
     }
   }
 
   const existingByName = state.members.find(
     (member) => member.name === normalizedName && member.generationLabelRaw === generationLabel,
   )
-  if (existingByName) {
-    state.memberByScopedName.set(key, existingByName.id)
+  if (existingByName && !parentHintName) {
+    setScopedMemberCache(state, existingByName, generationLabel)
     if (existingByName.rawNotes && !existingByName.rawNotes.includes(options.sourceLine)) {
       existingByName.rawNotes = `${existingByName.rawNotes}\n${options.sourceLine}`
     }
@@ -132,8 +214,14 @@ function getOrCreateMember(
 
   const created = createMember(state, normalizedName, options.gender ?? '男', options.sourceLine)
   created.generationLabelRaw = generationLabel
-  state.memberByScopedName.set(key, created.id)
+  setScopedMemberCache(state, created, generationLabel, parentHintName)
   return created
+}
+
+function attachParent(member: Member, parent: Member, state: BuilderState): void {
+  member.parentId = parent.id
+  const generationLabel = member.generationLabelRaw ?? state.generationLabel
+  setScopedMemberCache(state, member, generationLabel, parent.name)
 }
 
 function appendSpouse(member: Member, spouseId: number): void {
@@ -374,6 +462,7 @@ function createEmptyState(): BuilderState {
     nextTemporalId: 1,
     nextBurialId: 1,
     memberByScopedName: new Map<string, number>(),
+    memberByParentScopedName: new Map<string, number>(),
     temporalDedup: new Set<string>(),
     burialDedup: new Set<string>(),
   }
@@ -409,23 +498,24 @@ export function parsePartDataMarkdown(raw: string): FamilyData {
       continue
     }
 
+    const fatherName = extractFatherName(line, subjectName)
     const member = getOrCreateMember(state, subjectName, {
       gender: inferSubjectGender(subjectName),
       sourceLine: line,
+      parentHintName: fatherName || undefined,
     })
 
     if (!member.biography || member.biography.length < line.length) {
       member.biography = line
     }
 
-    const fatherName = extractFatherName(line, subjectName)
     if (isLikelyPersonName(fatherName) && fatherName !== subjectName) {
       const father = getOrCreateMember(state, fatherName, {
         gender: '男',
         sourceLine: line,
       })
       if (member.id !== father.id) {
-        member.parentId = father.id
+        attachParent(member, father, state)
       }
     }
 
@@ -445,9 +535,10 @@ export function parsePartDataMarkdown(raw: string): FamilyData {
       const child = getOrCreateMember(state, childName, {
         gender: '男',
         sourceLine: line,
+        parentHintName: subjectName,
       })
       if (child.id !== member.id && child.parentId === null) {
-        child.parentId = member.id
+        attachParent(child, member, state)
       }
     }
 
