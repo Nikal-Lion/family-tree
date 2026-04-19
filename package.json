@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "clean:wrangler": "node -e \"import('node:fs').then(fs=>fs.rmSync('.wrangler',{recursive:true,force:true}))\"",
-    "prebuild": "npm run clean:wrangler",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "npm run build && wrangler dev",
+    "preview": "npm run build && wrangler dev --remote",
+    "preview:local": "npm run build && wrangler dev",
     "predeploy": "npm run clean:wrangler",
     "deploy": "npm run build && wrangler deploy"
   },

@@ -1294,6 +1294,13 @@ export default {
 
         const user = await findLoginUserByMobile(env.DB, mobile)
         if (!user || user.enabled !== 1) {
+          const totalUsers = await env.DB
+            .prepare('SELECT COUNT(1) AS count FROM login_users')
+            .all<{ count: number }>()
+          const userCount = toInt(totalUsers.results?.[0]?.count, 0)
+          if (userCount === 0) {
+            return errorResponse('当前数据库尚无登录账号，请先初始化 sysadmin 或切换到远程 D1', 401, 'LOGIN_USERS_EMPTY')
+          }
           return errorResponse('登录失败：手机号不存在或已禁用', 401, 'LOGIN_FAILED')
         }
 
