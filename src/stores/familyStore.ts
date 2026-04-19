@@ -16,6 +16,7 @@ import {
   type NameAlias,
   type TemporalExpression,
   type Track,
+  type UncertaintyFlag,
 } from '../types/member'
 import type { OcrImportOptions, TempMember } from '../types/ocr'
 
@@ -63,6 +64,13 @@ const ready = ref(false)
 let initPromise: Promise<void> | null = null
 let persistQueue: Promise<void> = Promise.resolve()
 let syncPromise: Promise<boolean> | null = null
+const CORE_RELATION_TYPES = new Set<KinshipRelation['type']>(['father', 'spouse'])
+const ALLOWED_UNCERTAINTY_FLAGS = new Set<UncertaintyFlag>([
+  'missing',
+  'estimated',
+  'conflicting',
+  'unverified',
+])
 
 function uniqueNumbers(values: number[]): number[] {
   return [...new Set(values)]
@@ -142,9 +150,157 @@ function applySpouseLinks(memberId: number, nextSpouseIds: number[], prevSpouseI
   }
 }
 
+function createRelationKey(type: KinshipRelation['type'], fromMemberId: number, toMemberId: number): string {
+  return `${type}:${fromMemberId}:${toMemberId}`
+}
+
+function applyRelationsToMembers(): void {
+  if (state.relations.length === 0 || state.members.length === 0) {
+    return
+  }
+
+  const memberIds = new Set(state.members.map((member) => member.id))
+  const fatherByChild = new Map<number, number>()
+  const spousesByMember = new Map<number, Set<number>>()
+  let hasFatherRelations = false
+  let hasSpouseRelations = false
+
+  for (const relation of state.relations) {
+    if (
+      !memberIds.has(relation.fromMemberId) ||
+      !memberIds.has(relation.toMemberId) ||
+      relation.fromMemberId === relation.toMemberId
+    ) {
+      continue
+    }
+
+    if (relation.type === 'father') {
+      hasFatherRelations = true
+      if (!fatherByChild.has(relation.fromMemberId)) {
+        fatherByChild.set(relation.fromMemberId, relation.toMemberId)
+      }
+      continue
+    }
+
+    if (relation.type === 'spouse') {
+      hasSpouseRelations = true
+      const set = spousesByMember.get(relation.fromMemberId) ?? new Set<number>()
+      set.add(relation.toMemberId)
+      spousesByMember.set(relation.fromMemberId, set)
+    }
+  }
+
+  if (hasFatherRelations) {
+    for (const member of state.members) {
+      member.parentId = fatherByChild.get(member.id) ?? null
+    }
+  }
+
+  if (hasSpouseRelations) {
+    for (const member of state.members) {
+      const nextSpouseIds = [...(spousesByMember.get(member.id) ?? new Set<number>())]
+      member.spouseIds = normalizeSpouseIds(nextSpouseIds, member.id)
+    }
+  }
+}
+
+function syncCoreRelationsFromMembers(): void {
+  const memberIds = new Set(state.members.map((member) => member.id))
+  const existingCoreByKey = new Map<string, KinshipRelation>()
+  const preservedRelations: KinshipRelation[] = []
+
+  for (const relation of state.relations) {
+    if (
+      !memberIds.has(relation.fromMemberId) ||
+      !memberIds.has(relation.toMemberId) ||
+      relation.fromMemberId === relation.toMemberId
+    ) {
+      continue
+    }
+
+    if (CORE_RELATION_TYPES.has(relation.type)) {
+      existingCoreByKey.set(createRelationKey(relation.type, relation.fromMemberId, relation.toMemberId), relation)
+      continue
+    }
+
+    preservedRelations.push({
+      ...relation,
+      temporalId: relation.temporalId ?? null,
+      status: relation.status ?? 'active',
+    })
+  }
+
+  const derivedCoreRelations: KinshipRelation[] = []
+  const derivedKeys = new Set<string>()
+  for (const member of state.members) {
+    if (member.parentId !== null && memberIds.has(member.parentId)) {
+      const key = createRelationKey('father', member.id, member.parentId)
+      if (!derivedKeys.has(key)) {
+        derivedCoreRelations.push({
+          id: 0,
+          fromMemberId: member.id,
+          toMemberId: member.parentId,
+          type: 'father',
+          status: 'active',
+          temporalId: null,
+          note: '',
+          rawText: '',
+        })
+        derivedKeys.add(key)
+      }
+    }
+
+    for (const spouseId of member.spouseIds) {
+      if (!memberIds.has(spouseId) || spouseId === member.id) {
+        continue
+      }
+      const key = createRelationKey('spouse', member.id, spouseId)
+      if (!derivedKeys.has(key)) {
+        derivedCoreRelations.push({
+          id: 0,
+          fromMemberId: member.id,
+          toMemberId: spouseId,
+          type: 'spouse',
+          status: 'active',
+          temporalId: null,
+          note: '',
+          rawText: '',
+        })
+        derivedKeys.add(key)
+      }
+    }
+  }
+
+  let nextRelationId = Math.max(state.nextRelationId, 1)
+  const normalizedCoreRelations = derivedCoreRelations.map((relation) => {
+    const key = createRelationKey(relation.type, relation.fromMemberId, relation.toMemberId)
+    const existing = existingCoreByKey.get(key)
+    if (!existing) {
+      const assigned = { ...relation, id: nextRelationId }
+      nextRelationId += 1
+      return assigned
+    }
+
+    return {
+      ...relation,
+      id: existing.id,
+      status: existing.status ?? relation.status,
+      temporalId: existing.temporalId ?? null,
+      note: existing.note ?? '',
+      rawText: existing.rawText ?? '',
+    }
+  })
+
+  state.relations = [...preservedRelations, ...normalizedCoreRelations].sort((a, b) => a.id - b.id)
+  const maxRelationId = state.relations.length > 0 ? Math.max(...state.relations.map((relation) => relation.id)) : 0
+  state.nextRelationId = Math.max(nextRelationId, maxRelationId + 1, 1)
+}
+
 ensureBidirectionalSpouses()
 
 function persist(): void {
+  ensureBidirectionalSpouses()
+  syncCoreRelationsFromMembers()
   state.members.sort((a, b) => a.id - b.id)
   const payload: FamilyData = {
     schemaVersion: schemaVersion.value,
@@ -192,11 +348,17 @@ function applyLoadedData(data: FamilyData, options?: { preserveSelectedId?: bool
     nextSelectedId !== null && data.members.some((member) => member.id === nextSelectedId)
       ? nextSelectedId
       : data.members[0]?.id ?? null
+  applyRelationsToMembers()
   ensureBidirectionalSpouses()
+  syncCoreRelationsFromMembers()
 }
 
 function normalizeProfileText(value: string): string {
   return value.trim()
+}
+
+function normalizeUncertaintyFlagsInput(values: MemberInput['uncertaintyFlags']): Member['uncertaintyFlags'] {
+  return [...new Set(values.filter((flag) => ALLOWED_UNCERTAINTY_FLAGS.has(flag)))]
 }
 
 async function init(): Promise<void> {
@@ -268,6 +430,10 @@ function addMember(input: MemberInput): ActionResult {
     birthDate: normalizeProfileText(input.birthDate),
     photoUrl: normalizeProfileText(input.photoUrl),
     biography: normalizeProfileText(input.biography),
+    generationLabelRaw: normalizeProfileText(input.generationLabelRaw),
+    lineageBranch: normalizeProfileText(input.lineageBranch),
+    rawNotes: normalizeProfileText(input.rawNotes),
+    uncertaintyFlags: normalizeUncertaintyFlagsInput(input.uncertaintyFlags),
   }
 
   state.nextId += 1
@@ -303,6 +469,10 @@ function updateMember(id: number, input: MemberInput): ActionResult {
   target.birthDate = normalizeProfileText(input.birthDate)
   target.photoUrl = normalizeProfileText(input.photoUrl)
   target.biography = normalizeProfileText(input.biography)
+  target.generationLabelRaw = normalizeProfileText(input.generationLabelRaw)
+  target.lineageBranch = normalizeProfileText(input.lineageBranch)
+  target.rawNotes = normalizeProfileText(input.rawNotes)
+  target.uncertaintyFlags = normalizeUncertaintyFlagsInput(input.uncertaintyFlags)
   applySpouseLinks(id, input.spouseIds, previousSpouseIds)
   ensureBidirectionalSpouses()
   persist()
@@ -343,6 +513,11 @@ function deleteMember(id: number): ActionResult {
   }
 
   const deletionIds = new Set(collectDescendants(id))
+  const deletedTemporalIds = new Set(
+    state.temporals
+      .filter((temporal) => temporal.memberId !== null && deletionIds.has(temporal.memberId))
+      .map((temporal) => temporal.id),
+  )
   state.members = state.members.filter((member) => !deletionIds.has(member.id))
   state.events = state.events.filter((event) => event.memberId === null || !deletionIds.has(event.memberId))
   state.tracks = state.tracks.map((track) =>
@@ -350,7 +525,20 @@ function deleteMember(id: number): ActionResult {
       ? { ...track, memberId: null, updatedAt: new Date().toISOString() }
       : track,
   )
+  state.aliases = state.aliases.filter((alias) => !deletionIds.has(alias.memberId))
+  state.temporals = state.temporals.filter(
+    (temporal) => temporal.memberId === null || !deletionIds.has(temporal.memberId),
+  )
+  state.burials = state.burials.filter((burial) => !deletionIds.has(burial.memberId))
+  state.relations = state.relations
+    .filter((relation) => !deletionIds.has(relation.fromMemberId) && !deletionIds.has(relation.toMemberId))
+    .map((relation) =>
+      relation.temporalId !== null && deletedTemporalIds.has(relation.temporalId)
+        ? { ...relation, temporalId: null }
+        : relation,
+    )
   ensureBidirectionalSpouses()
+  syncCoreRelationsFromMembers()
 
   if (state.members.length === 0) {
     state.selectedId = null
@@ -381,7 +569,9 @@ function importDataFromJson(raw: string): ActionResult {
     state.nextBurialId = imported.nextBurialId
     state.selectedId = imported.members[0]?.id ?? null
     state.events = imported.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+    applyRelationsToMembers()
     ensureBidirectionalSpouses()
+    syncCoreRelationsFromMembers()
     persist()
     return { ok: true, message: '导入成功' }
   } catch (error) {
@@ -592,6 +782,10 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
       birthDate: '',
       photoUrl: '',
       biography: '',
+      generationLabelRaw: '',
+      lineageBranch: '',
+      rawNotes: '',
+      uncertaintyFlags: [],
     }
 
     state.nextId += 1

@@ -95,6 +95,10 @@ const formModel = ref<MemberInput>({
   birthDate: '',
   photoUrl: '',
   biography: '',
+  generationLabelRaw: '',
+  lineageBranch: '',
+  rawNotes: '',
+  uncertaintyFlags: [],
 })
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
@@ -402,6 +406,10 @@ function handleAddChild(parentId: number) {
     birthDate: '',
     photoUrl: '',
     biography: '',
+    generationLabelRaw: '',
+    lineageBranch: '',
+    rawNotes: '',
+    uncertaintyFlags: [],
   }
   notifyInfo('已自动填充父亲，请输入子女姓名后保存')
 }

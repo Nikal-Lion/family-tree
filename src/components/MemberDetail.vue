@@ -30,6 +30,10 @@ const emit = defineEmits<{
       <p><span>出生</span>{{ member.birthDate || '未填写' }}</p>
       <p><span>照片</span>{{ member.photoUrl || '未填写' }}</p>
       <p><span>生平</span>{{ member.biography || '未填写' }}</p>
+      <p><span>世代原文</span>{{ member.generationLabelRaw || '未填写' }}</p>
+      <p><span>分支标记</span>{{ member.lineageBranch || '未填写' }}</p>
+      <p><span>谱文备注</span>{{ member.rawNotes || '未填写' }}</p>
+      <p><span>不确定标记</span>{{ (member.uncertaintyFlags ?? []).length > 0 ? member.uncertaintyFlags?.join('、') : '无' }}</p>
       <img
         v-if="member.photoUrl"
         class="member-photo"

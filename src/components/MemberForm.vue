@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import type { Gender, Member, MemberInput } from '../types/member'
+import type { Gender, Member, MemberInput, UncertaintyFlag } from '../types/member'
 
 const props = defineProps<{
   members: Member[]
@@ -22,8 +22,19 @@ const form = defineModel<MemberInput>('form', {
     birthDate: '',
     photoUrl: '',
     biography: '',
+    generationLabelRaw: '',
+    lineageBranch: '',
+    rawNotes: '',
+    uncertaintyFlags: [],
   },
 })
+
+const uncertaintyFlagOptions: Array<{ value: UncertaintyFlag; label: string }> = [
+  { value: 'missing', label: '信息缺失' },
+  { value: 'estimated', label: '推定信息' },
+  { value: 'conflicting', label: '信息冲突' },
+  { value: 'unverified', label: '待核验' },
+]
 
 const modeTitle = computed(() => (props.editingMember ? '编辑族人' : '新增族人'))
 
@@ -53,6 +64,10 @@ watch(
         birthDate: member.birthDate ?? '',
         photoUrl: member.photoUrl ?? '',
         biography: member.biography ?? '',
+        generationLabelRaw: member.generationLabelRaw ?? '',
+        lineageBranch: member.lineageBranch ?? '',
+        rawNotes: member.rawNotes ?? '',
+        uncertaintyFlags: [...(member.uncertaintyFlags ?? [])],
       }
       return
     }
@@ -65,10 +80,33 @@ watch(
       birthDate: '',
       photoUrl: '',
       biography: '',
+      generationLabelRaw: '',
+      lineageBranch: '',
+      rawNotes: '',
+      uncertaintyFlags: [],
     }
   },
   { immediate: true },
 )
+
+function toggleUncertaintyFlag(flag: UncertaintyFlag, checked: boolean) {
+  const next = new Set(form.value.uncertaintyFlags)
+  if (checked) {
+    next.add(flag)
+  } else {
+    next.delete(flag)
+  }
+
+  form.value = {
+    ...form.value,
+    uncertaintyFlags: [...next],
+  }
+}
+
+function handleUncertaintyFlagChange(flag: UncertaintyFlag, event: Event) {
+  const target = event.target as HTMLInputElement | null
+  toggleUncertaintyFlag(flag, target?.checked ?? false)
+}
 
 function handleSpouseChange(event: Event) {
   const target = event.target as HTMLSelectElement
@@ -158,6 +196,39 @@ function submitForm() {
       <span>生平</span>
       <textarea v-model="form.biography" rows="3" placeholder="可记录人物生平简介"></textarea>
     </label>
+
+    <label class="field">
+      <span>世代原文</span>
+      <input v-model="form.generationLabelRaw" type="text" placeholder="如：二十四世" />
+    </label>
+
+    <label class="field">
+      <span>分支标记</span>
+      <input v-model="form.lineageBranch" type="text" placeholder="如：长房/三房" />
+    </label>
+
+    <label class="field">
+      <span>谱文备注</span>
+      <textarea v-model="form.rawNotes" rows="3" placeholder="保留纸质谱文原句、纪年或墓葬描述"></textarea>
+    </label>
+
+    <div class="field">
+      <span>不确定标记</span>
+      <div class="flag-options">
+        <label
+          v-for="item in uncertaintyFlagOptions"
+          :key="item.value"
+          class="flag-option"
+        >
+          <input
+            type="checkbox"
+            :checked="form.uncertaintyFlags.includes(item.value)"
+            @change="handleUncertaintyFlagChange(item.value, $event)"
+          />
+          <span>{{ item.label }}</span>
+        </label>
+      </div>
+    </div>
 
     <div class="btn-row">
       <button type="button" class="btn-primary" @click="submitForm">保存</button>

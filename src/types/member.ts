@@ -143,6 +143,10 @@ export interface MemberInput {
   birthDate: string
   photoUrl: string
   biography: string
+  generationLabelRaw: string
+  lineageBranch: string
+  rawNotes: string
+  uncertaintyFlags: UncertaintyFlag[]
 }
 
 export interface FamilyEventInput {
