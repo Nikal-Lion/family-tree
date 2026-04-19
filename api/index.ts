@@ -618,6 +618,60 @@ async function ensureSchema(db: D1Database): Promise<void> {
       key TEXT PRIMARY KEY,
       value TEXT
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS member_profiles (
+      member_id INTEGER PRIMARY KEY,
+      generation_label_raw TEXT,
+      lineage_branch TEXT,
+      raw_notes TEXT,
+      uncertainty_flags_json TEXT DEFAULT '[]',
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS name_aliases (
+      id INTEGER PRIMARY KEY,
+      member_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      is_preferred INTEGER NOT NULL DEFAULT 0,
+      note TEXT,
+      raw_text TEXT,
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS temporal_expressions (
+      id INTEGER PRIMARY KEY,
+      member_id INTEGER,
+      label TEXT NOT NULL,
+      raw_text TEXT NOT NULL,
+      calendar_type TEXT NOT NULL,
+      normalized_date TEXT,
+      precision TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 1,
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS kinship_relations (
+      id INTEGER PRIMARY KEY,
+      from_member_id INTEGER NOT NULL,
+      to_member_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      temporal_id INTEGER,
+      note TEXT,
+      raw_text TEXT,
+      FOREIGN KEY (from_member_id) REFERENCES members(id) ON DELETE CASCADE,
+      FOREIGN KEY (to_member_id) REFERENCES members(id) ON DELETE CASCADE,
+      FOREIGN KEY (temporal_id) REFERENCES temporal_expressions(id) ON DELETE SET NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS burial_records (
+      id INTEGER PRIMARY KEY,
+      member_id INTEGER NOT NULL,
+      temporal_id INTEGER,
+      place_raw TEXT NOT NULL,
+      mountain_direction TEXT,
+      fenjin TEXT,
+      note TEXT,
+      raw_text TEXT,
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+      FOREIGN KEY (temporal_id) REFERENCES temporal_expressions(id) ON DELETE SET NULL
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS login_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mobile TEXT NOT NULL UNIQUE,
@@ -639,6 +693,13 @@ async function ensureSchema(db: D1Database): Promise<void> {
     db.prepare('CREATE INDEX IF NOT EXISTS idx_events_member_id ON family_events(member_id)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_events_date ON family_events(date)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_tracks_member_id ON tracks(member_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_aliases_member_id ON name_aliases(member_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_temporals_member_id ON temporal_expressions(member_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_relations_from_member_id ON kinship_relations(from_member_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_relations_to_member_id ON kinship_relations(to_member_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_relations_temporal_id ON kinship_relations(temporal_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_burials_member_id ON burial_records(member_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_burials_temporal_id ON burial_records(temporal_id)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_login_users_role_enabled ON login_users(role, enabled)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at)'),
@@ -779,6 +840,71 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     updatedAt: row.updated_at,
   }))
 
+  const profileRows = await db
+    .prepare('SELECT member_id, generation_label_raw, lineage_branch, raw_notes, uncertainty_flags_json FROM member_profiles')
+    .all<{
+      member_id: number
+      generation_label_raw: string | null
+      lineage_branch: string | null
+      raw_notes: string | null
+      uncertainty_flags_json: string | null
+    }>()
+
+  const aliasRows = await db
+    .prepare('SELECT id, member_id, name, type, is_preferred, note, raw_text FROM name_aliases ORDER BY id')
+    .all<{
+      id: number
+      member_id: number
+      name: string
+      type: NameAlias['type']
+      is_preferred: number
+      note: string | null
+      raw_text: string | null
+    }>()
+
+  const temporalRows = await db
+    .prepare(
+      'SELECT id, member_id, label, raw_text, calendar_type, normalized_date, precision, confidence FROM temporal_expressions ORDER BY id',
+    )
+    .all<{
+      id: number
+      member_id: number | null
+      label: string
+      raw_text: string
+      calendar_type: TemporalExpression['calendarType']
+      normalized_date: string | null
+      precision: TemporalExpression['precision']
+      confidence: number
+    }>()
+
+  const relationRows = await db
+    .prepare(
+      'SELECT id, from_member_id, to_member_id, type, status, temporal_id, note, raw_text FROM kinship_relations ORDER BY id',
+    )
+    .all<{
+      id: number
+      from_member_id: number
+      to_member_id: number
+      type: KinshipRelation['type']
+      status: KinshipRelation['status']
+      temporal_id: number | null
+      note: string | null
+      raw_text: string | null
+    }>()
+
+  const burialRows = await db
+    .prepare('SELECT id, member_id, temporal_id, place_raw, mountain_direction, fenjin, note, raw_text FROM burial_records ORDER BY id')
+    .all<{
+      id: number
+      member_id: number
+      temporal_id: number | null
+      place_raw: string
+      mountain_direction: string | null
+      fenjin: string | null
+      note: string | null
+      raw_text: string | null
+    }>()
+
   const metaRows = await db.prepare('SELECT key, value FROM metadata').all<{ key: string; value: string }>()
   const meta = new Map<string, string>()
   for (const row of metaRows.results ?? []) {
@@ -788,11 +914,67 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
   const maxMemberId = members.length > 0 ? Math.max(...members.map((m) => m.id)) : 0
   const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
   const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
-  const aliases = parseJson<NameAlias[]>(meta.get('aliases_json'), [])
-  const relations = parseJson<KinshipRelation[]>(meta.get('relations_json'), [])
-  const temporals = parseJson<TemporalExpression[]>(meta.get('temporals_json'), [])
-  const burials = parseJson<BurialRecord[]>(meta.get('burials_json'), [])
-  const memberProfiles = parseJson<Record<string, MemberProfileExtension>>(meta.get('member_profiles_json'), {})
+  const aliasesFromTable: NameAlias[] = (aliasRows.results ?? []).map((row) => ({
+    id: row.id,
+    memberId: row.member_id,
+    name: row.name,
+    type: row.type,
+    isPreferred: row.is_preferred === 1,
+    note: row.note || '',
+    rawText: row.raw_text || '',
+  }))
+  const relationsFromTable: KinshipRelation[] = (relationRows.results ?? []).map((row) => ({
+    id: row.id,
+    fromMemberId: row.from_member_id,
+    toMemberId: row.to_member_id,
+    type: row.type,
+    status: row.status,
+    temporalId: row.temporal_id,
+    note: row.note || '',
+    rawText: row.raw_text || '',
+  }))
+  const temporalsFromTable: TemporalExpression[] = (temporalRows.results ?? []).map((row) => ({
+    id: row.id,
+    memberId: row.member_id,
+    label: row.label,
+    rawText: row.raw_text,
+    calendarType: row.calendar_type,
+    normalizedDate: row.normalized_date || '',
+    precision: row.precision,
+    confidence: Number.isFinite(row.confidence) ? row.confidence : 1,
+  }))
+  const burialsFromTable: BurialRecord[] = (burialRows.results ?? []).map((row) => ({
+    id: row.id,
+    memberId: row.member_id,
+    temporalId: row.temporal_id,
+    placeRaw: row.place_raw,
+    mountainDirection: row.mountain_direction || '',
+    fenjin: row.fenjin || '',
+    note: row.note || '',
+    rawText: row.raw_text || '',
+  }))
+  const aliases = aliasesFromTable.length > 0 ? aliasesFromTable : parseJson<NameAlias[]>(meta.get('aliases_json'), [])
+  const relations =
+    relationsFromTable.length > 0 ? relationsFromTable : parseJson<KinshipRelation[]>(meta.get('relations_json'), [])
+  const temporals =
+    temporalsFromTable.length > 0 ? temporalsFromTable : parseJson<TemporalExpression[]>(meta.get('temporals_json'), [])
+  const burials = burialsFromTable.length > 0 ? burialsFromTable : parseJson<BurialRecord[]>(meta.get('burials_json'), [])
+
+  const memberProfilesFromTable: Record<string, MemberProfileExtension> = Object.fromEntries(
+    (profileRows.results ?? []).map((row) => [
+      String(row.member_id),
+      {
+        generationLabelRaw: row.generation_label_raw || '',
+        lineageBranch: row.lineage_branch || '',
+        rawNotes: row.raw_notes || '',
+        uncertaintyFlags: normalizeUncertaintyFlags(parseJson(row.uncertainty_flags_json, [])),
+      },
+    ]),
+  )
+  const memberProfiles =
+    Object.keys(memberProfilesFromTable).length > 0
+      ? memberProfilesFromTable
+      : parseJson<Record<string, MemberProfileExtension>>(meta.get('member_profiles_json'), {})
 
   const membersWithExtensions = members.map((member) => {
     const extension = memberProfiles[String(member.id)]
@@ -804,6 +986,11 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
       uncertaintyFlags: normalizeUncertaintyFlags(extension?.uncertaintyFlags),
     }
   })
+
+  const maxAliasId = aliases.length > 0 ? Math.max(...aliases.map((item) => item.id)) : 0
+  const maxRelationId = relations.length > 0 ? Math.max(...relations.map((item) => item.id)) : 0
+  const maxTemporalId = temporals.length > 0 ? Math.max(...temporals.map((item) => item.id)) : 0
+  const maxBurialId = burials.length > 0 ? Math.max(...burials.map((item) => item.id)) : 0
 
   return {
     schemaVersion: toInt(meta.get('schema_version'), 3),
@@ -817,10 +1004,10 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     nextId: Math.max(toInt(meta.get('next_id'), maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(toInt(meta.get('next_track_id'), maxTrackId + 1), maxTrackId + 1),
     nextEventId: Math.max(toInt(meta.get('next_event_id'), maxEventId + 1), maxEventId + 1),
-    nextAliasId: Math.max(toInt(meta.get('next_alias_id'), aliases.length + 1), aliases.length + 1),
-    nextRelationId: Math.max(toInt(meta.get('next_relation_id'), relations.length + 1), relations.length + 1),
-    nextTemporalId: Math.max(toInt(meta.get('next_temporal_id'), temporals.length + 1), temporals.length + 1),
-    nextBurialId: Math.max(toInt(meta.get('next_burial_id'), burials.length + 1), burials.length + 1),
+    nextAliasId: Math.max(toInt(meta.get('next_alias_id'), maxAliasId + 1), maxAliasId + 1),
+    nextRelationId: Math.max(toInt(meta.get('next_relation_id'), maxRelationId + 1), maxRelationId + 1),
+    nextTemporalId: Math.max(toInt(meta.get('next_temporal_id'), maxTemporalId + 1), maxTemporalId + 1),
+    nextBurialId: Math.max(toInt(meta.get('next_burial_id'), maxBurialId + 1), maxBurialId + 1),
   }
 }
 
@@ -830,6 +1017,11 @@ async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> 
   const nowTs = Math.floor(Date.now() / 1000)
 
   const statements: D1PreparedStatement[] = [
+    db.prepare('DELETE FROM kinship_relations'),
+    db.prepare('DELETE FROM burial_records'),
+    db.prepare('DELETE FROM temporal_expressions'),
+    db.prepare('DELETE FROM name_aliases'),
+    db.prepare('DELETE FROM member_profiles'),
     db.prepare('DELETE FROM tracks'),
     db.prepare('DELETE FROM family_events'),
     db.prepare('DELETE FROM members'),
@@ -871,6 +1063,97 @@ async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> 
           event.description || null,
           event.createdAt,
           event.updatedAt,
+        ),
+    )
+  }
+
+  for (const temporal of data.temporals ?? []) {
+    statements.push(
+      db
+        .prepare(
+          'INSERT INTO temporal_expressions (id, member_id, label, raw_text, calendar_type, normalized_date, precision, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          temporal.id,
+          temporal.memberId,
+          temporal.label,
+          temporal.rawText,
+          temporal.calendarType,
+          temporal.normalizedDate || null,
+          temporal.precision,
+          temporal.confidence,
+        ),
+    )
+  }
+
+  for (const alias of data.aliases ?? []) {
+    statements.push(
+      db
+        .prepare(
+          'INSERT INTO name_aliases (id, member_id, name, type, is_preferred, note, raw_text) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          alias.id,
+          alias.memberId,
+          alias.name,
+          alias.type,
+          alias.isPreferred ? 1 : 0,
+          alias.note || null,
+          alias.rawText || null,
+        ),
+    )
+  }
+
+  for (const relation of data.relations ?? []) {
+    statements.push(
+      db
+        .prepare(
+          'INSERT INTO kinship_relations (id, from_member_id, to_member_id, type, status, temporal_id, note, raw_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          relation.id,
+          relation.fromMemberId,
+          relation.toMemberId,
+          relation.type,
+          relation.status || 'active',
+          relation.temporalId,
+          relation.note || null,
+          relation.rawText || null,
+        ),
+    )
+  }
+
+  for (const burial of data.burials ?? []) {
+    statements.push(
+      db
+        .prepare(
+          'INSERT INTO burial_records (id, member_id, temporal_id, place_raw, mountain_direction, fenjin, note, raw_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          burial.id,
+          burial.memberId,
+          burial.temporalId,
+          burial.placeRaw,
+          burial.mountainDirection || null,
+          burial.fenjin || null,
+          burial.note || null,
+          burial.rawText || null,
+        ),
+    )
+  }
+
+  for (const member of data.members ?? []) {
+    statements.push(
+      db
+        .prepare(
+          'INSERT INTO member_profiles (member_id, generation_label_raw, lineage_branch, raw_notes, uncertainty_flags_json) VALUES (?, ?, ?, ?, ?)',
+        )
+        .bind(
+          member.id,
+          member.generationLabelRaw || null,
+          member.lineageBranch || null,
+          member.rawNotes || null,
+          JSON.stringify(normalizeUncertaintyFlags(member.uncertaintyFlags)),
         ),
     )
   }

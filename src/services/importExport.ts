@@ -249,6 +249,10 @@ export function parseImportedJson(raw: string): FamilyData {
   }
 
   const obj = parsed as Partial<FamilyData>
+  if (obj.schemaVersion !== APP_SCHEMA_VERSION) {
+    throw new Error(`导入失败：仅支持 schemaVersion=${APP_SCHEMA_VERSION} 的数据文件`)
+  }
+
   const members = Array.isArray(obj.members)
     ? obj.members.filter(isMember).map((member) => ({
         ...member,

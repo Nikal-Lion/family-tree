@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text, primaryKey } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, integer, real, text, primaryKey } from 'drizzle-orm/sqlite-core'
 
 /**
  * Members 表 - 存储家族成员信息
@@ -43,6 +43,72 @@ export const tracks = sqliteTable('tracks', {
   statsJson: text('stats_json').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+})
+
+/**
+ * Member Profiles 表 - 成员扩展档案字段
+ */
+export const memberProfiles = sqliteTable('member_profiles', {
+  memberId: integer('member_id').primaryKey().references(() => members.id, { onDelete: 'cascade' }),
+  generationLabelRaw: text('generation_label_raw'),
+  lineageBranch: text('lineage_branch'),
+  rawNotes: text('raw_notes'),
+  uncertaintyFlagsJson: text('uncertainty_flags_json').default('[]').notNull(),
+})
+
+/**
+ * Name Aliases 表 - 成员名称别名体系
+ */
+export const nameAliases = sqliteTable('name_aliases', {
+  id: integer('id').primaryKey(),
+  memberId: integer('member_id').references(() => members.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
+  type: text('type').notNull(),
+  isPreferred: integer('is_preferred').default(0).notNull(),
+  note: text('note'),
+  rawText: text('raw_text'),
+})
+
+/**
+ * Temporal Expressions 表 - 纪年/时间表达
+ */
+export const temporalExpressions = sqliteTable('temporal_expressions', {
+  id: integer('id').primaryKey(),
+  memberId: integer('member_id').references(() => members.id, { onDelete: 'cascade' }),
+  label: text('label').notNull(),
+  rawText: text('raw_text').notNull(),
+  calendarType: text('calendar_type').notNull(),
+  normalizedDate: text('normalized_date'),
+  precision: text('precision').notNull(),
+  confidence: real('confidence').default(1).notNull(),
+})
+
+/**
+ * Kinship Relations 表 - 关系边
+ */
+export const kinshipRelations = sqliteTable('kinship_relations', {
+  id: integer('id').primaryKey(),
+  fromMemberId: integer('from_member_id').references(() => members.id, { onDelete: 'cascade' }).notNull(),
+  toMemberId: integer('to_member_id').references(() => members.id, { onDelete: 'cascade' }).notNull(),
+  type: text('type').notNull(),
+  status: text('status').default('active').notNull(),
+  temporalId: integer('temporal_id').references(() => temporalExpressions.id, { onDelete: 'set null' }),
+  note: text('note'),
+  rawText: text('raw_text'),
+})
+
+/**
+ * Burial Records 表 - 墓葬记录
+ */
+export const burialRecords = sqliteTable('burial_records', {
+  id: integer('id').primaryKey(),
+  memberId: integer('member_id').references(() => members.id, { onDelete: 'cascade' }).notNull(),
+  temporalId: integer('temporal_id').references(() => temporalExpressions.id, { onDelete: 'set null' }),
+  placeRaw: text('place_raw').notNull(),
+  mountainDirection: text('mountain_direction'),
+  fenjin: text('fenjin'),
+  note: text('note'),
+  rawText: text('raw_text'),
 })
 
 /**

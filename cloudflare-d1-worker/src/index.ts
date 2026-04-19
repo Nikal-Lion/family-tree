@@ -224,6 +224,75 @@ async function ensureSchema(env: Env): Promise<void> {
         key TEXT PRIMARY KEY,
         value TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS member_profiles (
+        member_id INTEGER PRIMARY KEY,
+        generation_label_raw TEXT,
+        lineage_branch TEXT,
+        raw_notes TEXT,
+        uncertainty_flags_json TEXT DEFAULT '[]',
+        FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS name_aliases (
+        id INTEGER PRIMARY KEY,
+        member_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        is_preferred INTEGER NOT NULL DEFAULT 0,
+        note TEXT,
+        raw_text TEXT,
+        FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS temporal_expressions (
+        id INTEGER PRIMARY KEY,
+        member_id INTEGER,
+        label TEXT NOT NULL,
+        raw_text TEXT NOT NULL,
+        calendar_type TEXT NOT NULL,
+        normalized_date TEXT,
+        precision TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1,
+        FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS kinship_relations (
+        id INTEGER PRIMARY KEY,
+        from_member_id INTEGER NOT NULL,
+        to_member_id INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        temporal_id INTEGER,
+        note TEXT,
+        raw_text TEXT,
+        FOREIGN KEY (from_member_id) REFERENCES members(id) ON DELETE CASCADE,
+        FOREIGN KEY (to_member_id) REFERENCES members(id) ON DELETE CASCADE,
+        FOREIGN KEY (temporal_id) REFERENCES temporal_expressions(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS burial_records (
+        id INTEGER PRIMARY KEY,
+        member_id INTEGER NOT NULL,
+        temporal_id INTEGER,
+        place_raw TEXT NOT NULL,
+        mountain_direction TEXT,
+        fenjin TEXT,
+        note TEXT,
+        raw_text TEXT,
+        FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+        FOREIGN KEY (temporal_id) REFERENCES temporal_expressions(id) ON DELETE SET NULL
+      );
+    `)
+
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_aliases_member_id ON name_aliases(member_id);
+      CREATE INDEX IF NOT EXISTS idx_temporals_member_id ON temporal_expressions(member_id);
+      CREATE INDEX IF NOT EXISTS idx_relations_from_member_id ON kinship_relations(from_member_id);
+      CREATE INDEX IF NOT EXISTS idx_relations_to_member_id ON kinship_relations(to_member_id);
+      CREATE INDEX IF NOT EXISTS idx_relations_temporal_id ON kinship_relations(temporal_id);
+      CREATE INDEX IF NOT EXISTS idx_burials_member_id ON burial_records(member_id);
+      CREATE INDEX IF NOT EXISTS idx_burials_temporal_id ON burial_records(temporal_id);
     `)
   } catch {
     // 如果表已存在，Drizzle 会捕获错误，我们忽略它
@@ -312,6 +381,12 @@ async function readFamilyData(env: Env): Promise<FamilyData | null> {
     updatedAt: row.updatedAt,
   }))
 
+  const profileRows = await db.select().from(schema.memberProfiles).all()
+  const aliasRows = await db.select().from(schema.nameAliases).orderBy(schema.nameAliases.id).all()
+  const temporalRows = await db.select().from(schema.temporalExpressions).orderBy(schema.temporalExpressions.id).all()
+  const relationRows = await db.select().from(schema.kinshipRelations).orderBy(schema.kinshipRelations.id).all()
+  const burialRows = await db.select().from(schema.burialRecords).orderBy(schema.burialRecords.id).all()
+
   // 查询元数据
   const metaRows = await db.select().from(schema.metadata).all()
   const meta = new Map<string, string>()
@@ -322,11 +397,68 @@ async function readFamilyData(env: Env): Promise<FamilyData | null> {
   const maxMemberId = members.length > 0 ? Math.max(...members.map((m) => m.id)) : 0
   const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
   const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
-  const aliases = parseJson<FamilyData['aliases']>(meta.get('aliases_json'), [])
-  const relations = parseJson<FamilyData['relations']>(meta.get('relations_json'), [])
-  const temporals = parseJson<FamilyData['temporals']>(meta.get('temporals_json'), [])
-  const burials = parseJson<FamilyData['burials']>(meta.get('burials_json'), [])
-  const memberProfiles = parseJson<Record<string, MemberProfileExtension>>(meta.get('member_profiles_json'), {})
+  const aliasesFromTable: FamilyData['aliases'] = aliasRows.map((row) => ({
+    id: row.id,
+    memberId: row.memberId,
+    name: row.name,
+    type: row.type as FamilyData['aliases'][number]['type'],
+    isPreferred: row.isPreferred === 1,
+    note: row.note || '',
+    rawText: row.rawText || '',
+  }))
+  const relationsFromTable: FamilyData['relations'] = relationRows.map((row) => ({
+    id: row.id,
+    fromMemberId: row.fromMemberId,
+    toMemberId: row.toMemberId,
+    type: row.type as FamilyData['relations'][number]['type'],
+    status: row.status as FamilyData['relations'][number]['status'],
+    temporalId: row.temporalId,
+    note: row.note || '',
+    rawText: row.rawText || '',
+  }))
+  const temporalsFromTable: FamilyData['temporals'] = temporalRows.map((row) => ({
+    id: row.id,
+    memberId: row.memberId,
+    label: row.label,
+    rawText: row.rawText,
+    calendarType: row.calendarType as FamilyData['temporals'][number]['calendarType'],
+    normalizedDate: row.normalizedDate || '',
+    precision: row.precision as FamilyData['temporals'][number]['precision'],
+    confidence: typeof row.confidence === 'number' ? row.confidence : 1,
+  }))
+  const burialsFromTable: FamilyData['burials'] = burialRows.map((row) => ({
+    id: row.id,
+    memberId: row.memberId,
+    temporalId: row.temporalId,
+    placeRaw: row.placeRaw,
+    mountainDirection: row.mountainDirection || '',
+    fenjin: row.fenjin || '',
+    note: row.note || '',
+    rawText: row.rawText || '',
+  }))
+
+  const aliases = aliasesFromTable.length > 0 ? aliasesFromTable : parseJson<FamilyData['aliases']>(meta.get('aliases_json'), [])
+  const relations =
+    relationsFromTable.length > 0 ? relationsFromTable : parseJson<FamilyData['relations']>(meta.get('relations_json'), [])
+  const temporals =
+    temporalsFromTable.length > 0 ? temporalsFromTable : parseJson<FamilyData['temporals']>(meta.get('temporals_json'), [])
+  const burials = burialsFromTable.length > 0 ? burialsFromTable : parseJson<FamilyData['burials']>(meta.get('burials_json'), [])
+
+  const memberProfilesFromTable: Record<string, MemberProfileExtension> = Object.fromEntries(
+    profileRows.map((row) => [
+      String(row.memberId),
+      {
+        generationLabelRaw: row.generationLabelRaw || '',
+        lineageBranch: row.lineageBranch || '',
+        rawNotes: row.rawNotes || '',
+        uncertaintyFlags: normalizeUncertaintyFlags(parseJson(row.uncertaintyFlagsJson, [])),
+      },
+    ]),
+  )
+  const memberProfiles =
+    Object.keys(memberProfilesFromTable).length > 0
+      ? memberProfilesFromTable
+      : parseJson<Record<string, MemberProfileExtension>>(meta.get('member_profiles_json'), {})
 
   const membersWithExtensions = members.map((member) => {
     const extension = memberProfiles[String(member.id)]
@@ -338,6 +470,11 @@ async function readFamilyData(env: Env): Promise<FamilyData | null> {
       uncertaintyFlags: normalizeUncertaintyFlags(extension?.uncertaintyFlags),
     }
   })
+
+  const maxAliasId = aliases.length > 0 ? Math.max(...aliases.map((item) => item.id)) : 0
+  const maxRelationId = relations.length > 0 ? Math.max(...relations.map((item) => item.id)) : 0
+  const maxTemporalId = temporals.length > 0 ? Math.max(...temporals.map((item) => item.id)) : 0
+  const maxBurialId = burials.length > 0 ? Math.max(...burials.map((item) => item.id)) : 0
 
   return {
     schemaVersion: toInt(meta.get('schema_version'), 3),
@@ -351,10 +488,10 @@ async function readFamilyData(env: Env): Promise<FamilyData | null> {
     nextId: Math.max(toInt(meta.get('next_id'), maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(toInt(meta.get('next_track_id'), maxTrackId + 1), maxTrackId + 1),
     nextEventId: Math.max(toInt(meta.get('next_event_id'), maxEventId + 1), maxEventId + 1),
-    nextAliasId: Math.max(toInt(meta.get('next_alias_id'), aliases.length + 1), aliases.length + 1),
-    nextRelationId: Math.max(toInt(meta.get('next_relation_id'), relations.length + 1), relations.length + 1),
-    nextTemporalId: Math.max(toInt(meta.get('next_temporal_id'), temporals.length + 1), temporals.length + 1),
-    nextBurialId: Math.max(toInt(meta.get('next_burial_id'), burials.length + 1), burials.length + 1),
+    nextAliasId: Math.max(toInt(meta.get('next_alias_id'), maxAliasId + 1), maxAliasId + 1),
+    nextRelationId: Math.max(toInt(meta.get('next_relation_id'), maxRelationId + 1), maxRelationId + 1),
+    nextTemporalId: Math.max(toInt(meta.get('next_temporal_id'), maxTemporalId + 1), maxTemporalId + 1),
+    nextBurialId: Math.max(toInt(meta.get('next_burial_id'), maxBurialId + 1), maxBurialId + 1),
   }
 }
 
@@ -372,6 +509,11 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
   const nowTs = Math.floor(Date.now() / 1000)
 
   // 执行删除操作
+  await db.delete(schema.kinshipRelations).run()
+  await db.delete(schema.burialRecords).run()
+  await db.delete(schema.temporalExpressions).run()
+  await db.delete(schema.nameAliases).run()
+  await db.delete(schema.memberProfiles).run()
   await db.delete(schema.tracks).run()
   await db.delete(schema.familyEvents).run()
   await db.delete(schema.members).run()
@@ -411,6 +553,92 @@ async function writeFamilyData(env: Env, data: FamilyData): Promise<void> {
           description: event.description || null,
           createdAt: event.createdAt,
           updatedAt: event.updatedAt,
+        })),
+      )
+      .run()
+  }
+
+  if (data.temporals && data.temporals.length > 0) {
+    await db
+      .insert(schema.temporalExpressions)
+      .values(
+        data.temporals.map((temporal) => ({
+          id: temporal.id,
+          memberId: temporal.memberId,
+          label: temporal.label,
+          rawText: temporal.rawText,
+          calendarType: temporal.calendarType,
+          normalizedDate: temporal.normalizedDate || null,
+          precision: temporal.precision,
+          confidence: temporal.confidence,
+        })),
+      )
+      .run()
+  }
+
+  if (data.aliases && data.aliases.length > 0) {
+    await db
+      .insert(schema.nameAliases)
+      .values(
+        data.aliases.map((alias) => ({
+          id: alias.id,
+          memberId: alias.memberId,
+          name: alias.name,
+          type: alias.type,
+          isPreferred: alias.isPreferred ? 1 : 0,
+          note: alias.note || null,
+          rawText: alias.rawText || null,
+        })),
+      )
+      .run()
+  }
+
+  if (data.relations && data.relations.length > 0) {
+    await db
+      .insert(schema.kinshipRelations)
+      .values(
+        data.relations.map((relation) => ({
+          id: relation.id,
+          fromMemberId: relation.fromMemberId,
+          toMemberId: relation.toMemberId,
+          type: relation.type,
+          status: relation.status,
+          temporalId: relation.temporalId,
+          note: relation.note || null,
+          rawText: relation.rawText || null,
+        })),
+      )
+      .run()
+  }
+
+  if (data.burials && data.burials.length > 0) {
+    await db
+      .insert(schema.burialRecords)
+      .values(
+        data.burials.map((burial) => ({
+          id: burial.id,
+          memberId: burial.memberId,
+          temporalId: burial.temporalId,
+          placeRaw: burial.placeRaw,
+          mountainDirection: burial.mountainDirection || null,
+          fenjin: burial.fenjin || null,
+          note: burial.note || null,
+          rawText: burial.rawText || null,
+        })),
+      )
+      .run()
+  }
+
+  if (data.members && data.members.length > 0) {
+    await db
+      .insert(schema.memberProfiles)
+      .values(
+        data.members.map((member) => ({
+          memberId: member.id,
+          generationLabelRaw: member.generationLabelRaw || null,
+          lineageBranch: member.lineageBranch || null,
+          rawNotes: member.rawNotes || null,
+          uncertaintyFlagsJson: JSON.stringify(normalizeUncertaintyFlags(member.uncertaintyFlags)),
         })),
       )
       .run()
