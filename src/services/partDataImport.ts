@@ -15,6 +15,19 @@ const STOP_WORDS = new Set([
   '坟',
   '山向',
   '公一脉',
+  '出继',
+  '出嫁',
+  '出嗣',
+  '嗣子',
+  '继子',
+  '生一女',
+  '生二女',
+  '生三女',
+  '生四女',
+  '葬东坑',
+  '葬长汀',
+  '无嗣',
+  '无出',
 ])
 
 type Gender = '男' | '女'
@@ -66,7 +79,14 @@ function isLikelyPersonName(token: string): boolean {
   if (token.endsWith('氏') && token.length <= 2) {
     return false
   }
+  // 拒绝包含墓碑/传记/迁移/出继等关键词的令牌
   if (/无后|失考|幼夭|分金|合葬|山向|往外/.test(token)) {
+    return false
+  }
+  if (/生子|生女|葬[东西南北]|俱住|俱在|嗣祭|无嗣/.test(token)) {
+    return false
+  }
+  if (/[葬坟墓冢茔出继迁徙嫁嗣妣考坑窠坞坐向俱坎]/.test(token)) {
     return false
   }
   return true
@@ -304,7 +324,12 @@ function appendBurial(state: BuilderState, memberId: number, placeRaw: string, r
 function extractSubjectName(line: string): string {
   const match = line.match(/^([\u4e00-\u9fa5]{2,6})(?=[\s，,。:：])/)
   if (match?.[1]) {
-    return normalizeName(match[1])
+    const raw = normalizeName(match[1])
+    // 拒绝以墓碑/传记动词开头的行首文本
+    if (/^[葬迁移徙出继嗣嫁归附]/.test(raw)) {
+      return ''
+    }
+    return raw
   }
   return ''
 }
@@ -351,13 +376,20 @@ function extractChildrenNames(line: string): string[] {
   const childBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]?子)?[:：]\s*([^。；;]+)/g)]
   for (const block of childBlocks) {
     const raw = block[1] ?? ''
-    const candidates = raw.match(/[\u4e00-\u9fa5]{2,6}/g) ?? []
-    for (const candidate of candidates) {
-      const normalized = normalizeName(candidate)
-      if (!isLikelyPersonName(normalized)) {
-        continue
+    // 先按常见标点切分，避免把 「姓名+续文」当成一个长名
+    const tokens = raw
+      .split(/[，,、\s（）()／/《》<>]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
+    for (const token of tokens) {
+      const candidates = token.match(/[\u4e00-\u9fa5]{2,6}/g) ?? []
+      for (const candidate of candidates) {
+        const normalized = normalizeName(candidate)
+        if (!isLikelyPersonName(normalized)) {
+          continue
+        }
+        result.add(normalized)
       }
-      result.add(normalized)
     }
   }
 
