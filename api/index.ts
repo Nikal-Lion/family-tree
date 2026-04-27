@@ -1011,6 +1011,44 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
   }
 }
 
+function orderMembersForInsert(members: FamilyData['members']): FamilyData['members'] {
+  const pending = new Map<number, FamilyData['members'][number]>()
+  for (const member of members) {
+    pending.set(member.id, member)
+  }
+
+  const ordered: FamilyData['members'] = []
+  const inserted = new Set<number>()
+
+  while (pending.size > 0) {
+    let progressed = false
+    for (const [id, member] of Array.from(pending.entries())) {
+      if (member.parentId === null || inserted.has(member.parentId)) {
+        ordered.push(member)
+        inserted.add(id)
+        pending.delete(id)
+        progressed = true
+      }
+    }
+
+    if (progressed) {
+      continue
+    }
+
+    // Break any unresolved parent chain/cycle to keep writes valid.
+    for (const [id, member] of Array.from(pending.entries())) {
+      ordered.push({
+        ...member,
+        parentId: null,
+      })
+      inserted.add(id)
+      pending.delete(id)
+    }
+  }
+
+  return ordered
+}
+
 async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> {
   await ensureSchema(db)
 
@@ -1027,7 +1065,9 @@ async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> 
     db.prepare('DELETE FROM members'),
   ]
 
-  for (const member of data.members) {
+  const orderedMembers = orderMembersForInsert(data.members)
+
+  for (const member of orderedMembers) {
     statements.push(
       db
         .prepare(
