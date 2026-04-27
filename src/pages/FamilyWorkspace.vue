@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AuthManager from '../components/AuthManager.vue'
-import FamilyTreeChart from '../components/FamilyTreeChart.vue'
+import GenerationTreeView from '../components/GenerationTreeView.vue'
 import MemberDetail from '../components/MemberDetail.vue'
 import EventManager from '../components/EventManager.vue'
 import LoginUserManager from '../components/LoginUserManager.vue'
@@ -101,7 +101,6 @@ const formModel = ref<MemberInput>({
   uncertaintyFlags: [],
 })
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
 const searchKeyword = ref('')
 const isBootstrapping = ref(true)
 const bootstrapError = ref('')
@@ -299,7 +298,7 @@ const diagnosticsSummary = computed(() => {
   if (selfCheckPending.value && !diagnostics.value) {
     return '正在向 Cloudflare Worker 发起请求并验证 D1 返回。'
   }
-  return diagnostics.value?.message ?? '点击“重新检测”后，可确认当前页面是否已连接到 D1。'
+  return diagnostics.value?.message ?? '点击"重新检测"后，可确认当前页面是否已连接到 D1。'
 })
 const diagnosticsTimeText = computed(() => formatDisplayTime(diagnostics.value?.checkedAt))
 const diagnosticsHttpStatusText = computed(() => {
@@ -477,11 +476,6 @@ async function handleExportSqlite() {
   } catch (error) {
     notifyError(error instanceof Error ? error.message : '导出 SQLite 失败')
   }
-}
-
-function handleExportTreePng() {
-  treeChartRef.value?.exportAsPng()
-  notifySuccess('族谱树图已导出为 PNG')
 }
 
 function handleTrackUpload(payload: { raw: string; name: string; memberId: number | null }) {
@@ -687,12 +681,10 @@ async function handleImport(event: Event) {
         <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite/Markdown</button>
         <button class="btn-primary" type="button" @click="handleExport">导出 JSON</button>
         <button class="btn-ghost" type="button" @click="handleExportSqlite">导出 SQLite</button>
-        <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
       </div>
 
       <div v-else-if="isOverviewMode" class="top-actions top-actions-readonly">
         <span class="readonly-tip">当前为只读总览页面</span>
-        <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
       </div>
 
       <input
@@ -717,13 +709,7 @@ async function handleImport(event: Event) {
 
     <main v-if="showDataWorkspace && !isBootstrapping && !bootstrapError" class="main-layout">
       <section class="left-pane">
-        <FamilyTreeChart
-          ref="treeChartRef"
-          :members="members"
-          :selected-id="store.selectedId.value"
-          :highlight-ids="highlightedIds"
-          @select="store.selectMember"
-        />
+        <GenerationTreeView />
       </section>
 
       <aside class="right-pane">
