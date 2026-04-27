@@ -344,7 +344,7 @@ function inferSubjectGender(subjectName: string): Gender {
 function extractFatherName(line: string, subjectName: string): string {
   const escapedSubject = subjectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const afterSubject = line.replace(new RegExp(`^${escapedSubject}[\\s，,。:：]*`), '')
-  const directMatch = afterSubject.match(/^([\u4e00-\u9fa5]{2,6})(?:长子|次子|三子|四子|五子|六子|七子|八子|九子|十子|之子)/)
+  const directMatch = afterSubject.match(/^([\u4e00-\u9fa5]{2,6})(?:长子|次子|三子|四子|五子|六子|七子|八子|九子|十子|之子|长女)/)
   if (directMatch?.[1]) {
     return normalizeName(directMatch[1])
   }
