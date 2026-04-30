@@ -7,7 +7,7 @@ import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
 import { canAssignParent, validateName } from '../services/validators'
-import { createSpouse, deleteSpousesByHusband } from '../services/spouseService'
+import { createSpouse, deleteSpouse, deleteSpousesByHusband } from '../services/spouseService'
 import { deleteChildClaimsByParent } from '../services/childClaimService'
 import {
   APP_SCHEMA_VERSION,
@@ -23,7 +23,7 @@ import {
   type Track,
   type UncertaintyFlag,
 } from '../types/member'
-import type { Spouse } from '../types/spouse'
+import type { Spouse, SpouseInput } from '../types/spouse'
 import type { ChildClaim } from '../types/childClaim'
 import type { OcrImportOptions, TempMember } from '../types/ocr'
 
@@ -873,6 +873,25 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
   }
 }
 
+function addSpouseToMember(input: SpouseInput): ActionResult {
+  const memberExists = state.members.some((m) => m.id === input.husbandId)
+  if (!memberExists) {
+    return { ok: false, message: '成员不存在' }
+  }
+  createSpouse(state, input)
+  persist()
+  return { ok: true }
+}
+
+function removeSpouseFromMember(id: number): ActionResult {
+  const removed = deleteSpouse(state, id)
+  if (!removed) {
+    return { ok: false, message: '配偶记录不存在' }
+  }
+  persist()
+  return { ok: true }
+}
+
 export function useFamilyStore() {
   const members = computed(() => state.members)
   const tracks = computed(() => state.tracks)
@@ -922,6 +941,8 @@ export function useFamilyStore() {
     previewPartDataV2,
     importPartDataV2,
     replaceData,
+    addSpouseToMember,
+    removeSpouseFromMember,
     exportData: () => ({
       schemaVersion: schemaVersion.value,
       members: state.members,

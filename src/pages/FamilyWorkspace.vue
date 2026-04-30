@@ -92,7 +92,6 @@ const formModel = ref<MemberInput>({
   name: '',
   parentId: null,
   gender: '男' as Gender,
-  spouseIds: [], // TODO Task 14: spouseIds removed from MemberInput
   birthDate: '',
   photoUrl: '',
   biography: '',
@@ -373,16 +372,6 @@ function findParentName(parentId: number | null): string {
   return parent?.name ?? '未知'
 }
 
-function findSpouseNames(spouseIds: number[]): string {
-  if (spouseIds.length === 0) {
-    return '暂无'
-  }
-
-  return spouseIds
-    .map((id) => members.value.find((member) => member.id === id)?.name ?? `成员#${id}`)
-    .join('、')
-}
-
 function resolveMemberName(id: number): string {
   const target = members.value.find((member) => member.id === id)
   return target?.name ?? `成员#${id}`
@@ -437,7 +426,6 @@ function handleAddChild(parentId: number) {
     name: '',
     parentId,
     gender: '男',
-    spouseIds: [], // TODO Task 14: spouseIds removed from MemberInput
     birthDate: '',
     photoUrl: '',
     biography: '',
@@ -790,7 +778,6 @@ async function handleImport(event: Event) {
         <MemberDetail
           :member="selectedMember"
           :find-parent-name="findParentName"
-          :find-spouse-names="findSpouseNames"
           :generation="selectedGeneration"
           :aliases="selectedAliases"
           :relations="selectedRelations"

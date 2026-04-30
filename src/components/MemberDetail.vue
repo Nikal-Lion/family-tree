@@ -7,11 +7,13 @@ import type {
   NameAlias,
   TemporalExpression,
 } from '../types/member'
+import { useFamilyStore } from '../stores/familyStore'
+import { findSpousesByHusband } from '../services/spouseService'
+import { findChildClaimsByParent } from '../services/childClaimService'
 
 const props = defineProps<{
   member: Member | null
   findParentName: (id: number | null) => string
-  findSpouseNames: (ids: number[]) => string
   generation: number | null
   aliases: NameAlias[]
   relations: KinshipRelation[]
@@ -27,8 +29,15 @@ const emit = defineEmits<{
   addChild: [parentId: number]
 }>()
 
-// TODO Task 14: spouseIds removed from Member — shim until spouse tab is wired
-const memberSpouseIds = computed<number[]>(() => (props.member as any)?.spouseIds ?? [])
+const store = useFamilyStore()
+
+const spouses = computed(() =>
+  props.member ? findSpousesByHusband({ spouses: store.spouses.value }, props.member.id) : [],
+)
+
+const claims = computed(() =>
+  props.member ? findChildClaimsByParent({ childClaims: store.childClaims.value }, props.member.id) : [],
+)
 
 const relationTypeText: Record<KinshipRelation['type'], string> = {
   father: '父系',
@@ -117,7 +126,6 @@ function getRelationText(relation: KinshipRelation, memberId: number): string {
       <p><span>ID</span>{{ member.id }}</p>
       <p><span>世代</span>第 {{ generation ?? '?' }} 代</p>
       <p><span>父亲</span>{{ findParentName(member.parentId) }}</p>
-      <p><span>配偶</span>{{ findSpouseNames(memberSpouseIds) }}</p>
       <p><span>出生</span>{{ member.birthDate || '未填写' }}</p>
       <p><span>照片</span>{{ member.photoUrl || '未填写' }}</p>
       <p><span>生平</span>{{ member.biography || '未填写' }}</p>
@@ -140,6 +148,30 @@ function getRelationText(relation: KinshipRelation, memberId: number): string {
       <p><span>纪年记录</span>{{ memberTemporals.length }}</p>
       <p><span>墓葬记录</span>{{ burials.length }}</p>
     </div>
+
+    <section v-if="member" class="detail-section spouses">
+      <h4>配偶（{{ spouses.length }}）</h4>
+      <ul v-if="spouses.length > 0">
+        <li v-for="s in spouses" :key="s.id">
+          [{{ s.relationLabel }}] {{ s.surname }}氏
+          <span v-if="s.fullName">（{{ s.fullName }}）</span>
+          <span v-if="s.aliases.length">小字 {{ s.aliases.join('/') }}</span>
+        </li>
+      </ul>
+      <p v-else class="empty-tip">暂无配偶记录。</p>
+    </section>
+
+    <section v-if="member" class="detail-section claims">
+      <h4>被声明子女（{{ claims.length }}）</h4>
+      <ul v-if="claims.length > 0">
+        <li v-for="c in claims" :key="c.id">
+          {{ c.ordinalIndex }}. {{ c.claimedName }}
+          <span v-if="c.isAdoptive">（出继）</span>
+          <span :class="`status-${c.status}`">{{ c.status }}</span>
+        </li>
+      </ul>
+      <p v-else class="empty-tip">暂无子女声明记录。</p>
+    </section>
 
     <div v-if="member && memberAliases.length > 0" class="detail-section">
       <h4>别名明细</h4>
@@ -191,3 +223,21 @@ function getRelationText(relation: KinshipRelation, memberId: number): string {
     </div>
   </section>
 </template>
+
+<style scoped>
+.status-matched {
+  color: #2d7a2d;
+  font-size: 0.85em;
+  margin-left: 0.25em;
+}
+.status-missing {
+  color: #c0392b;
+  font-size: 0.85em;
+  margin-left: 0.25em;
+}
+.status-ambiguous {
+  color: #e67e22;
+  font-size: 0.85em;
+  margin-left: 0.25em;
+}
+</style>
