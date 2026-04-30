@@ -1,3 +1,7 @@
+/**
+ * @deprecated 自 V4 起改用 partDataImportV2.ts。
+ * 保留作回滚兜底，下个 minor 版本移除。
+ */
 import { APP_SCHEMA_VERSION, type FamilyData, type Member, type NameAlias, type TemporalExpression, type BurialRecord } from '../types/member'
 
 const STOP_WORDS = new Set([

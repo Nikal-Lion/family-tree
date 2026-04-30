@@ -489,6 +489,9 @@ async function importDataFromJson(raw: string): Promise<ActionResult> {
   }
 }
 
+/**
+ * @deprecated 改用 previewPartDataV2。V1 解析器（partDataImport.ts）将在下个 minor 版本移除。
+ */
 function previewDataFromMarkdown(raw: string): MarkdownImportPreviewResult {
   try {
     const imported = parsePartDataMarkdown(raw)
@@ -509,6 +512,9 @@ function previewDataFromMarkdown(raw: string): MarkdownImportPreviewResult {
   }
 }
 
+/**
+ * @deprecated 改用 importPartDataV2。V1 解析器（partDataImport.ts）将在下个 minor 版本移除。
+ */
 async function importDataFromMarkdown(raw: string): Promise<ActionResult> {
   try {
     const imported = parsePartDataMarkdown(raw)
