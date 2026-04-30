@@ -10,7 +10,10 @@
     "preview": "npm run build && wrangler dev --remote",
     "preview:local": "npm run build && wrangler dev",
     "predeploy": "npm run clean:wrangler",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify:part-data-v2": "tsx scripts/verify-part-data-v2.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.32.0",
@@ -25,9 +28,12 @@
     "@types/node": "^22.13.10",
     "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vitest/coverage-v8": "^4.1.5",
     "drizzle-kit": "^0.20.0",
+    "tsx": "^4.21.0",
     "typescript": "~5.7.3",
     "vite": "^6.2.2",
+    "vitest": "^4.1.5",
     "vue-tsc": "^2.2.8",
     "wrangler": "^4.80.0"
   }
