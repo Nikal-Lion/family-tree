@@ -53,3 +53,73 @@ describe('parsePartDataMarkdownV2 - 配偶解析', () => {
     expect(result.spouses.map((s) => s.surname)).toEqual(['刘', '黄', '罗'])
   })
 })
+
+describe('parsePartDataMarkdownV2 - 子女声明 ChildClaim', () => {
+  it('TC6: 标准子女声明 — 创建 N 个 ChildClaim', () => {
+    const md = `# 太璋公房派下\n## 九 世祖\n朝玉 ，生八子。太琼、太琪、太璋、太琳、太瑚、太琏、太璜、太琚。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.childClaims.length).toBe(8)
+    expect(result.childClaims[0].claimedName).toBe('太琼')
+    expect(result.childClaims[0].ordinalIndex).toBe(1)
+    expect(result.childClaims[0].gender).toBe('男')
+    expect(result.childClaims[7].ordinalIndex).toBe(8)
+  })
+
+  it('TC7: 出继标注 — isAdoptive=true', () => {
+    const md = `# 太璋公房派下\n## 十五 世\n广甫 ，生子：礼敬（出继）、仪敬。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.childClaims).toHaveLength(2)
+    expect(result.childClaims[0].claimedName).toBe('礼敬')
+    expect(result.childClaims[0].isAdoptive).toBe(true)
+    expect(result.childClaims[1].isAdoptive).toBe(false)
+  })
+
+  it('TC8: "俱止" 标注 — statusFlags 含 no-grandchildren', () => {
+    const md = `# 太璋公房派下\n## 十八 世\n父亲 ，生子:日亮、日学、日魁俱止。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.childClaims).toHaveLength(3)
+    expect(result.childClaims[2].claimedName).toBe('日魁')
+    expect(result.childClaims[2].statusFlags).toContain('no-grandchildren')
+  })
+})
+
+describe('parsePartDataMarkdownV2 - 描述段落附加', () => {
+  it('TC9: 非主语行附加到上一成员 rawNotes', () => {
+    const md = `# 太璋公房派下\n## 十五 世\n发甫 杭良三子,字必荣。\n公一脉下共有坟九穴，详见附录。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.members).toHaveLength(1)
+    expect(result.members[0].rawNotes).toContain('[公共备注] 公一脉下共有坟九穴')
+  })
+
+  it('TC10: 围栏块 \`\`\`text 附加到上一成员', () => {
+    const md = `# 太璋公房派下\n## 十五 世\n发甫 ，字必荣。\n\`\`\`text\n附录内容\n\`\`\``
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.members[0].rawNotes).toContain('[公共备注] 附录内容')
+  })
+})
+
+describe('parsePartDataMarkdownV2 - Two-pass 跨代匹配', () => {
+  it('TC11: ChildClaim 跨代匹配成功', () => {
+    const md = `# 太璋公房派下\n## 九 世祖\n朝玉 ，生子：太琼。\n## 十 世祖\n太琼 ，本人。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.members).toHaveLength(2)
+    const taiqiong = result.members.find((m) => m.name === '太琼')!
+    const claim = result.childClaims[0]
+    expect(claim.status).toBe('matched')
+    expect(claim.resolvedMemberId).toBe(taiqiong.id)
+    expect(taiqiong.parentId).toBe(result.members[0].id)
+  })
+
+  it('TC12: 同名匹配冲突 — claim.status=ambiguous', () => {
+    const md = `# 太璋公房派下\n## 九 世祖\n朝玉 ，生子：太琼。\n## 十 世祖\n太琼 ，本人。\n太琼 ，另一个同名。`
+    const result = parsePartDataMarkdownV2(md)
+    const claim = result.childClaims[0]
+    expect(claim.status).toBe('ambiguous')
+  })
+
+  it('TC13: 起始代之外的 parentId=null 标记 isolated', () => {
+    const md = `# 太璋公房派下\n## 九 世祖\n孤儿甲 ，无父记录。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.members[0].uncertaintyFlags).not.toContain('missing')
+  })
+})

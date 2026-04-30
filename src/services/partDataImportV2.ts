@@ -1,6 +1,6 @@
 import { APP_SCHEMA_VERSION, type FamilyData, type Member } from '../types/member'
 import type { Spouse, SpouseRelation } from '../types/spouse'
-import type { ChildClaim } from '../types/childClaim'
+import type { ChildClaim, ChildClaimStatusFlag, ChildClaimGender } from '../types/childClaim'
 
 export interface PartDataImportReport {
   totalLines: number
@@ -141,6 +141,151 @@ function extractSpouses(line: string, husbandId: number, nextSpouseId: () => num
   return spouses
 }
 
+// ChildClaim parsing helpers
+
+interface ChildClaimRaw {
+  name: string
+  isAdoptive: boolean
+  statusFlags: ChildClaimStatusFlag[]
+  gender: ChildClaimGender
+}
+
+function parseChildToken(token: string, gender: ChildClaimGender): ChildClaimRaw | null {
+  let cleaned = token.trim()
+  if (!cleaned) return null
+  const flags: ChildClaimStatusFlag[] = []
+  let isAdoptive = false
+  if (/[（(](?:出继|出嗣)[）)]/.test(cleaned)) {
+    isAdoptive = true
+    cleaned = cleaned.replace(/[（(](?:出继|出嗣)[）)]/g, '')
+  }
+  if (/俱止|俱无后/.test(cleaned)) {
+    flags.push('no-grandchildren')
+    cleaned = cleaned.replace(/俱止|俱无后/g, '')
+  }
+  if (/早夭/.test(cleaned)) {
+    flags.push('lost-record')
+    cleaned = cleaned.replace(/早夭/g, '')
+  }
+  if (/往外|出嫁/.test(cleaned)) {
+    flags.push('out-married')
+    cleaned = cleaned.replace(/往外|出嫁/g, '')
+  }
+  cleaned = normalizeName(cleaned)
+  if (!isLikelyPersonName(cleaned)) return null
+  return { name: cleaned, isAdoptive, statusFlags: flags, gender }
+}
+
+function extractChildClaims(line: string, parentId: number, nextId: () => number): ChildClaim[] {
+  const claims: ChildClaim[] = []
+  let ordinal = 1
+  const sonBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?子\s*[:：]\s*([^。；]+)/g)]
+  for (const block of sonBlocks) {
+    const tokens = (block[1] ?? '').split(/[、，,]/)
+    for (const token of tokens) {
+      const raw = parseChildToken(token, '男')
+      if (!raw) continue
+      claims.push({
+        id: nextId(),
+        parentId,
+        claimedName: raw.name,
+        ordinalIndex: ordinal++,
+        gender: raw.gender,
+        isAdoptive: raw.isAdoptive,
+        outAdoptedToHint: '',
+        resolvedMemberId: null,
+        status: 'missing',
+        statusFlags: raw.statusFlags,
+        rawText: line,
+      })
+    }
+  }
+  const daughterBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?女\s*[:：]\s*([^。；]+)/g)]
+  for (const block of daughterBlocks) {
+    const tokens = (block[1] ?? '').split(/[、，,]/)
+    for (const token of tokens) {
+      const raw = parseChildToken(token, '女')
+      if (!raw) continue
+      claims.push({
+        id: nextId(),
+        parentId,
+        claimedName: raw.name,
+        ordinalIndex: ordinal++,
+        gender: raw.gender,
+        isAdoptive: raw.isAdoptive,
+        outAdoptedToHint: '',
+        resolvedMemberId: null,
+        status: 'missing',
+        statusFlags: raw.statusFlags,
+        rawText: line,
+      })
+    }
+  }
+  // Fallback: "生N子。A、B、C" without colon (loose form)
+  if (claims.length === 0) {
+    const looseBlocks = [...line.matchAll(/生([一二三四五六七八九十]+)子。([^。；]+)/g)]
+    for (const block of looseBlocks) {
+      const tokens = (block[2] ?? '').split(/[、，,]/)
+      for (const token of tokens) {
+        const raw = parseChildToken(token, '男')
+        if (!raw) continue
+        claims.push({
+          id: nextId(),
+          parentId,
+          claimedName: raw.name,
+          ordinalIndex: ordinal++,
+          gender: raw.gender,
+          isAdoptive: raw.isAdoptive,
+          outAdoptedToHint: '',
+          resolvedMemberId: null,
+          status: 'missing',
+          statusFlags: raw.statusFlags,
+          rawText: line,
+        })
+      }
+    }
+  }
+  return claims
+}
+
+// Two-pass resolution
+
+function runTwoPassResolution(state: ParserState): void {
+  const minGen = state.members.reduce(
+    (m, x) => Math.min(m, x.generationNumber ?? Infinity),
+    Infinity,
+  )
+
+  for (const claim of state.childClaims) {
+    const parent = state.members.find((m) => m.id === claim.parentId)
+    if (!parent) continue
+    const expectedGen = (parent.generationNumber ?? 0) + 1
+    const candidates = state.members.filter(
+      (m) =>
+        m.name === claim.claimedName &&
+        m.generationNumber === expectedGen &&
+        m.lineageBranch === parent.lineageBranch,
+    )
+    if (candidates.length === 1) {
+      claim.status = 'matched'
+      claim.resolvedMemberId = candidates[0].id
+      if (candidates[0].parentId === null && !claim.isAdoptive) {
+        candidates[0].parentId = claim.parentId
+      }
+    } else if (candidates.length > 1) {
+      claim.status = 'ambiguous'
+    } else {
+      claim.status = 'missing'
+    }
+  }
+
+  for (const member of state.members) {
+    if (member.parentId === null && (member.generationNumber ?? 0) > minGen) {
+      member.uncertaintyFlags = [...(member.uncertaintyFlags ?? []), 'missing']
+    }
+  }
+}
+
 interface ParserState {
   branchLabel: string
   generationLabel: string
@@ -168,10 +313,41 @@ export function parsePartDataMarkdownV2(raw: string): FamilyData {
     lastMember: null,
   }
 
-  const lines = raw.split(/\r?\n/).map(normalizeLine).filter((l) => l.length > 0)
+  // Keep raw lines (don't pre-filter) so we can handle fence blocks and descriptive paragraphs.
+  const rawLines = raw.split(/\r?\n/)
   const now = new Date().toISOString()
 
-  for (const line of lines) {
+  let inFence = false
+  const fenceBuffer: string[] = []
+
+  for (const rawLine of rawLines) {
+    const line = normalizeLine(rawLine)
+
+    // Fence block detection (```text ... ```)
+    if (line.startsWith('```')) {
+      if (!inFence) {
+        inFence = true
+        fenceBuffer.length = 0
+      } else {
+        // End of fence — flush buffer to lastMember.rawNotes
+        inFence = false
+        if (fenceBuffer.length > 0 && state.lastMember) {
+          const fenceContent = fenceBuffer.join('\n')
+          state.lastMember.rawNotes = (state.lastMember.rawNotes ?? '') + '\n[公共备注] ' + fenceContent
+        }
+        fenceBuffer.length = 0
+      }
+      continue
+    }
+
+    if (inFence) {
+      fenceBuffer.push(line)
+      continue
+    }
+
+    // Skip empty lines
+    if (line.length === 0) continue
+
     const h1 = line.match(/^#\s+(.+)$/)
     if (h1?.[1]) { state.branchLabel = h1[1].trim(); continue }
 
@@ -183,7 +359,13 @@ export function parsePartDataMarkdownV2(raw: string): FamilyData {
     }
 
     const subject = extractSubjectName(line)
-    if (!subject) continue
+    if (!subject) {
+      // Non-subject line: if long enough and not a heading, append to lastMember.rawNotes
+      if (line.length >= 5 && !line.startsWith('#') && state.lastMember) {
+        state.lastMember.rawNotes = (state.lastMember.rawNotes ?? '') + '\n[公共备注] ' + line
+      }
+      continue
+    }
 
     const member: Member = {
       id: state.nextId++,
@@ -201,7 +383,11 @@ export function parsePartDataMarkdownV2(raw: string): FamilyData {
     state.lastMember = member
     const newSpouses = extractSpouses(line, member.id, () => state.nextSpouseId++, now)
     state.spouses.push(...newSpouses)
+    const newClaims = extractChildClaims(line, member.id, () => state.nextChildClaimId++)
+    state.childClaims.push(...newClaims)
   }
+
+  runTwoPassResolution(state)
 
   return {
     schemaVersion: APP_SCHEMA_VERSION,
