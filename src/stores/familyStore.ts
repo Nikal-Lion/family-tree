@@ -7,7 +7,7 @@ import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
 import { canAssignParent, validateName } from '../services/validators'
-import { deleteSpousesByHusband } from '../services/spouseService'
+import { createSpouse, deleteSpousesByHusband } from '../services/spouseService'
 import { deleteChildClaimsByParent } from '../services/childClaimService'
 import {
   APP_SCHEMA_VERSION,
@@ -840,6 +840,23 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
 
     if (fatherId !== null && fatherId !== target.id && canAssignParent(state.members, target.id, fatherId)) {
       target.parentId = fatherId
+    }
+
+    if (item.spouseName.trim()) {
+      createSpouse(state, {
+        husbandId: target.id,
+        surname: item.spouseName.charAt(0),
+        fullName: item.spouseName.length > 1 ? item.spouseName : null,
+        aliases: [],
+        relationLabel: '配',
+        order: 1,
+        birthDate: '',
+        deathDate: '',
+        burialPlace: '',
+        biography: '',
+        statusFlags: [],
+        rawText: item.rawText ?? item.spouseName,
+      })
     }
 
     importedCount += 1
