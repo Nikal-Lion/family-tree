@@ -9,6 +9,7 @@ import LoginUserManager from '../components/LoginUserManager.vue'
 import MemberForm from '../components/MemberForm.vue'
 import MemberList from '../components/MemberList.vue'
 import OcrImportManager from '../components/OcrImportManager.vue'
+import PartDataImportPanel from '../components/PartDataImportPanel.vue'
 import StatsDashboard from '../components/StatsDashboard.vue'
 import TrackManager from '../components/TrackManager.vue'
 import { initAuthSession, useAuth } from '../services/authService'
@@ -781,6 +782,10 @@ async function handleImport(event: Event) {
           :members="members"
           @import-members="handleOcrImport"
         />
+
+        <section class="manage-section">
+          <PartDataImportPanel />
+        </section>
 
         <MemberDetail
           :member="selectedMember"
