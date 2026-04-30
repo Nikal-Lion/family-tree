@@ -1,5 +1,7 @@
 import type { LoginUser, LoginUserRole } from '../types/auth'
 import type { FamilyData } from '../types/member'
+import type { ChildClaim } from '../types/childClaim'
+import type { Spouse } from '../types/spouse'
 
 const API_BASE_URL = import.meta.env.VITE_D1_API_BASE_URL?.trim()
 
@@ -140,6 +142,46 @@ export async function runD1SelfCheck(): Promise<D1SelfCheckResult> {
   }
 }
 
+// TODO Worker side: /api/spouses route not yet implemented in cloudflare-d1-worker repo
+async function fetchSpousesFromD1(): Promise<Spouse[]> {
+  try {
+    const response = await fetch(resolveApiUrl('/api/spouses'), {
+      method: 'GET',
+      headers: buildHeaders(),
+      cache: 'no-store',
+    })
+    if (!response.ok) {
+      console.warn(`[D1] /api/spouses responded ${response.status} — using empty spouses array`)
+      return []
+    }
+    const payload = (await response.json()) as { spouses?: Spouse[] }
+    return Array.isArray(payload.spouses) ? payload.spouses : []
+  } catch (error) {
+    console.warn('[D1] fetchSpousesFromD1 failed, using empty array:', error)
+    return []
+  }
+}
+
+// TODO Worker side: /api/child-claims route not yet implemented in cloudflare-d1-worker repo
+async function fetchChildClaimsFromD1(): Promise<ChildClaim[]> {
+  try {
+    const response = await fetch(resolveApiUrl('/api/child-claims'), {
+      method: 'GET',
+      headers: buildHeaders(),
+      cache: 'no-store',
+    })
+    if (!response.ok) {
+      console.warn(`[D1] /api/child-claims responded ${response.status} — using empty childClaims array`)
+      return []
+    }
+    const payload = (await response.json()) as { childClaims?: ChildClaim[] }
+    return Array.isArray(payload.childClaims) ? payload.childClaims : []
+  } catch (error) {
+    console.warn('[D1] fetchChildClaimsFromD1 failed, using empty array:', error)
+    return []
+  }
+}
+
 export async function loadFamilyDataFromD1(): Promise<FamilyData | null> {
   const response = await fetch(buildFamilyDataUrl(), {
     method: 'GET',
@@ -148,7 +190,60 @@ export async function loadFamilyDataFromD1(): Promise<FamilyData | null> {
   })
 
   const payload = await parseJsonResponse<{ data: FamilyData | null }>(response)
-  return payload.data
+  if (!payload.data) {
+    return null
+  }
+
+  // Fetch spouses and child_claims in parallel from dedicated endpoints.
+  // If Worker endpoints are not yet deployed (404 / network error), fall back to
+  // whatever the main payload already contains (or empty arrays).
+  const [spouses, childClaims] = await Promise.all([
+    fetchSpousesFromD1(),
+    fetchChildClaimsFromD1(),
+  ])
+
+  return {
+    ...payload.data,
+    // Strip legacy spouse_ids field from each member if present (v3 payload compat).
+    members: payload.data.members.map(({ ...member }) => {
+      delete (member as Record<string, unknown>)['spouseIds']
+      return member
+    }),
+    spouses: spouses.length > 0 ? spouses : (payload.data.spouses ?? []),
+    childClaims: childClaims.length > 0 ? childClaims : (payload.data.childClaims ?? []),
+  }
+}
+
+// TODO Worker side: /api/sync-spouses route not yet implemented in cloudflare-d1-worker repo
+export async function syncSpousesToD1(spouses: Spouse[]): Promise<void> {
+  try {
+    const response = await fetch(resolveApiUrl('/api/sync-spouses'), {
+      method: 'PUT',
+      headers: buildHeaders(),
+      body: JSON.stringify({ spouses }),
+    })
+    if (!response.ok) {
+      console.warn(`[D1] syncSpousesToD1 responded ${response.status} — spouses not persisted to D1`)
+    }
+  } catch (error) {
+    console.warn('[D1] syncSpousesToD1 failed (Worker endpoint not yet available):', error)
+  }
+}
+
+// TODO Worker side: /api/sync-child-claims route not yet implemented in cloudflare-d1-worker repo
+export async function syncChildClaimsToD1(childClaims: ChildClaim[]): Promise<void> {
+  try {
+    const response = await fetch(resolveApiUrl('/api/sync-child-claims'), {
+      method: 'PUT',
+      headers: buildHeaders(),
+      body: JSON.stringify({ childClaims }),
+    })
+    if (!response.ok) {
+      console.warn(`[D1] syncChildClaimsToD1 responded ${response.status} — childClaims not persisted to D1`)
+    }
+  } catch (error) {
+    console.warn('[D1] syncChildClaimsToD1 failed (Worker endpoint not yet available):', error)
+  }
 }
 
 export async function saveFamilyDataToD1(data: FamilyData): Promise<void> {
