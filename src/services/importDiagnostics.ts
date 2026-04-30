@@ -1,4 +1,5 @@
 import type { FamilyData, Member } from '../types/member'
+import type { PartDataImportReport } from './partDataImportV2'
 
 export interface FamilyDataImportSummary {
   memberCount: number
@@ -85,26 +86,11 @@ export function analyzeFamilyDataImport(data: FamilyData): string[] {
     warnings.push(`检测到 ${cycleCount} 位成员存在祖先环风险`) 
   }
 
-  let missingSpouseRefs = 0
-  let unpairedSpouseRefs = 0
-  for (const member of data.members) {
-    for (const spouseId of (member as any).spouseIds ?? []) { // TODO Task 14: spouseIds removed from Member
-      const spouse = memberMap.get(spouseId)
-      if (!spouse) {
-        missingSpouseRefs += 1
-        continue
-      }
-      if (!((spouse as any).spouseIds ?? []).includes(member.id)) {
-        unpairedSpouseRefs += 1
-      }
-    }
-  }
-
+  const missingSpouseRefs = (data.spouses ?? []).filter(
+    (spouse) => !memberMap.has(spouse.husbandId),
+  ).length
   if (missingSpouseRefs > 0) {
-    warnings.push(`检测到 ${missingSpouseRefs} 条配偶引用不存在`) 
-  }
-  if (unpairedSpouseRefs > 0) {
-    warnings.push(`检测到 ${unpairedSpouseRefs} 条配偶关系未双向闭合`) 
+    warnings.push(`检测到 ${missingSpouseRefs} 条配偶引用不存在`)
   }
 
   const duplicateGroups = new Map<string, number>()
@@ -130,4 +116,38 @@ export function analyzeFamilyDataImport(data: FamilyData): string[] {
   }
 
   return warnings
+}
+
+export function summarizePartDataImportV2(data: FamilyData): PartDataImportReport {
+  const isolated = data.members
+    .filter((m) => m.uncertaintyFlags?.includes('missing'))
+    .map((m) => ({ id: m.id, name: m.name, reason: 'parentId=null and gen > minGen' }))
+
+  const unmatched = data.childClaims
+    .filter((c) => c.status === 'missing')
+    .map((c) => {
+      const p = data.members.find((m) => m.id === c.parentId)
+      return { parentName: p?.name ?? '', claimedName: c.claimedName, gen: (p?.generationNumber ?? 0) + 1 }
+    })
+
+  const ambiguous = data.childClaims
+    .filter((c) => c.status === 'ambiguous')
+    .map((c) => ({ memberId: c.parentId, name: c.claimedName, note: 'ambiguous match' }))
+
+  const claimedSet = new Set(data.childClaims.filter((c) => c.resolvedMemberId).map((c) => c.resolvedMemberId))
+  const unclaimed = data.members
+    .filter((m) => m.parentId !== null && !claimedSet.has(m.id))
+    .map((m) => ({ memberId: m.id, name: m.name }))
+
+  return {
+    totalLines: 0,
+    parsedMembers: data.members.length,
+    parsedSpouses: data.spouses.length,
+    parsedChildClaims: data.childClaims.length,
+    isolatedMembers: isolated,
+    unmatchedClaims: unmatched,
+    unclaimedChildren: unclaimed,
+    ambiguousAdoptions: ambiguous,
+    contradictions: [],
+  }
 }

@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { analyzeFamilyDataImport, summarizeFamilyDataImport, type FamilyDataImportSummary } from '../services/importDiagnostics'
+import { analyzeFamilyDataImport, summarizeFamilyDataImport, summarizePartDataImportV2, type FamilyDataImportSummary } from '../services/importDiagnostics'
 import { parseImportedJson } from '../services/importExport'
 import { parsePartDataMarkdown } from '../services/partDataImport'
 import { parsePartDataMarkdownV2, type PartDataImportReport } from '../services/partDataImportV2'
@@ -547,39 +547,11 @@ function previewPartDataV2(raw: string): {
     if (data.members.length === 0) {
       return { ok: false, data: null, report: null, message: '未识别到任何成员' }
     }
-    const isolatedMembers = data.members
-      .filter((m) => m.uncertaintyFlags?.includes('missing'))
-      .map((m) => ({ id: m.id, name: m.name, reason: 'parentId=null above min generation' }))
-    const unmatchedClaims = data.childClaims
-      .filter((c) => c.status === 'missing')
-      .map((c) => {
-        const parent = data.members.find((m) => m.id === c.parentId)
-        return {
-          parentName: parent?.name ?? '?',
-          claimedName: c.claimedName,
-          gen: parent?.generationNumber ?? 0,
-        }
-      })
-    const ambiguousAdoptions = data.childClaims
-      .filter((c) => c.status === 'ambiguous')
-      .map((c) => {
-        const parent = data.members.find((m) => m.id === c.parentId)
-        return { memberId: c.parentId, name: parent?.name ?? '?', note: `ambiguous claim: ${c.claimedName}` }
-      })
-    const report: PartDataImportReport = {
-      totalLines: raw.split(/\r?\n/).length,
-      parsedMembers: data.members.length,
-      parsedSpouses: data.spouses.length,
-      parsedChildClaims: data.childClaims.length,
-      isolatedMembers,
-      unmatchedClaims,
-      unclaimedChildren: [],
-      ambiguousAdoptions,
-      contradictions: [],
-    }
-    return { ok: true, data, report, message: '解析成功' }
-  } catch (err) {
-    return { ok: false, data: null, report: null, message: (err as Error).message }
+    const report = summarizePartDataImportV2(data)
+    report.totalLines = raw.split(/\r?\n/).length
+    return { ok: true, data, report, message: `识别 ${data.members.length} 位成员` }
+  } catch (error) {
+    return { ok: false, data: null, report: null, message: error instanceof Error ? error.message : '解析失败' }
   }
 }
 
