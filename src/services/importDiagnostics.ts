@@ -88,13 +88,13 @@ export function analyzeFamilyDataImport(data: FamilyData): string[] {
   let missingSpouseRefs = 0
   let unpairedSpouseRefs = 0
   for (const member of data.members) {
-    for (const spouseId of member.spouseIds) {
+    for (const spouseId of (member as any).spouseIds ?? []) { // TODO Task 14: spouseIds removed from Member
       const spouse = memberMap.get(spouseId)
       if (!spouse) {
         missingSpouseRefs += 1
         continue
       }
-      if (!spouse.spouseIds.includes(member.id)) {
+      if (!((spouse as any).spouseIds ?? []).includes(member.id)) {
         unpairedSpouseRefs += 1
       }
     }

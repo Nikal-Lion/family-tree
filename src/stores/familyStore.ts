@@ -106,23 +106,23 @@ function ensureBidirectionalSpouses(): void {
   }
 
   for (const member of state.members) {
-    member.spouseIds = normalizeSpouseIds(member.spouseIds, member.id)
+    (member as any).spouseIds = normalizeSpouseIds((member as any).spouseIds ?? [], member.id) // TODO Task 14: spouseIds removed from Member
   }
 
   for (const member of state.members) {
-    for (const spouseId of member.spouseIds) {
+    for (const spouseId of (member as any).spouseIds ?? []) {
       const spouse = byId.get(spouseId)
       if (!spouse) {
         continue
       }
-      if (!spouse.spouseIds.includes(member.id)) {
-        spouse.spouseIds.push(member.id)
+      if (!((spouse as any).spouseIds ?? []).includes(member.id)) {
+        ;(spouse as any).spouseIds = [...((spouse as any).spouseIds ?? []), member.id] // TODO Task 14: spouseIds removed from Member
       }
     }
   }
 
   for (const member of state.members) {
-    member.spouseIds = normalizeSpouseIds(member.spouseIds, member.id)
+    (member as any).spouseIds = normalizeSpouseIds((member as any).spouseIds ?? [], member.id) // TODO Task 14: spouseIds removed from Member
   }
 }
 
@@ -139,7 +139,7 @@ function applySpouseLinks(memberId: number, nextSpouseIds: number[], prevSpouseI
     if (!spouse) {
       continue
     }
-    spouse.spouseIds = spouse.spouseIds.filter((id) => id !== memberId)
+    (spouse as any).spouseIds = ((spouse as any).spouseIds ?? []).filter((id: number) => id !== memberId) // TODO Task 14: spouseIds removed from Member
   }
 
   for (const nextId of normalizedNext) {
@@ -147,15 +147,15 @@ function applySpouseLinks(memberId: number, nextSpouseIds: number[], prevSpouseI
     if (!spouse) {
       continue
     }
-    if (!spouse.spouseIds.includes(memberId)) {
-      spouse.spouseIds.push(memberId)
+    if (!((spouse as any).spouseIds ?? []).includes(memberId)) {
+      ;(spouse as any).spouseIds = [...((spouse as any).spouseIds ?? []), memberId] // TODO Task 14: spouseIds removed from Member
     }
-    spouse.spouseIds = normalizeSpouseIds(spouse.spouseIds, spouse.id)
+    (spouse as any).spouseIds = normalizeSpouseIds((spouse as any).spouseIds ?? [], spouse.id) // TODO Task 14: spouseIds removed from Member
   }
 
   const target = state.members.find((member) => member.id === memberId)
   if (target) {
-    target.spouseIds = normalizedNext
+    (target as any).spouseIds = normalizedNext // TODO Task 14: spouseIds removed from Member
   }
 }
 
@@ -208,7 +208,7 @@ function applyRelationsToMembers(): void {
   if (hasSpouseRelations) {
     for (const member of state.members) {
       const nextSpouseIds = [...(spousesByMember.get(member.id) ?? new Set<number>())]
-      member.spouseIds = normalizeSpouseIds(nextSpouseIds, member.id)
+      ;(member as any).spouseIds = normalizeSpouseIds(nextSpouseIds, member.id) // TODO Task 14: spouseIds removed from Member
     }
   }
 }
@@ -259,7 +259,7 @@ function syncCoreRelationsFromMembers(): void {
       }
     }
 
-    for (const spouseId of member.spouseIds) {
+    for (const spouseId of (member as any).spouseIds ?? []) { // TODO Task 14: spouseIds removed from Member
       if (!memberIds.has(spouseId) || spouseId === member.id) {
         continue
       }
@@ -321,6 +321,8 @@ function buildPersistPayload(): FamilyData {
     relations: state.relations,
     temporals: state.temporals,
     burials: state.burials,
+    spouses: [],
+    childClaims: [],
     nextId: state.nextId,
     nextTrackId: state.nextTrackId,
     nextEventId: state.nextEventId,
@@ -328,6 +330,8 @@ function buildPersistPayload(): FamilyData {
     nextRelationId: state.nextRelationId,
     nextTemporalId: state.nextTemporalId,
     nextBurialId: state.nextBurialId,
+    nextSpouseId: 1,
+    nextChildClaimId: 1,
   }
 }
 
@@ -444,12 +448,12 @@ function addMember(input: MemberInput): ActionResult {
     return { ok: false, message: nameError }
   }
 
-  const member: Member = {
+  const member = {
     id: state.nextId,
     name: input.name.trim(),
     gender: input.gender,
     parentId: normalizeParent(input.parentId),
-    spouseIds: [],
+    spouseIds: [] as number[], // TODO Task 14: spouseIds removed from Member
     birthDate: normalizeProfileText(input.birthDate),
     photoUrl: normalizeProfileText(input.photoUrl),
     biography: normalizeProfileText(input.biography),
@@ -457,11 +461,11 @@ function addMember(input: MemberInput): ActionResult {
     lineageBranch: normalizeProfileText(input.lineageBranch),
     rawNotes: normalizeProfileText(input.rawNotes),
     uncertaintyFlags: normalizeUncertaintyFlagsInput(input.uncertaintyFlags),
-  }
+  } as unknown as Member
 
   state.nextId += 1
   state.members.push(member)
-  applySpouseLinks(member.id, input.spouseIds, [])
+  applySpouseLinks(member.id, (input as any).spouseIds ?? [], []) // TODO Task 14: spouseIds removed from MemberInput
   ensureBidirectionalSpouses()
   state.selectedId = member.id
   persist()
@@ -485,7 +489,7 @@ function updateMember(id: number, input: MemberInput): ActionResult {
     return { ok: false, message: '父节点不能是本人或后代' }
   }
 
-  const previousSpouseIds = [...target.spouseIds]
+  const previousSpouseIds = [...((target as any).spouseIds ?? [])] as number[] // TODO Task 14: spouseIds removed from Member
   target.name = input.name.trim()
   target.gender = input.gender
   target.parentId = normalizedParentId
@@ -496,7 +500,7 @@ function updateMember(id: number, input: MemberInput): ActionResult {
   target.lineageBranch = normalizeProfileText(input.lineageBranch)
   target.rawNotes = normalizeProfileText(input.rawNotes)
   target.uncertaintyFlags = normalizeUncertaintyFlagsInput(input.uncertaintyFlags)
-  applySpouseLinks(id, input.spouseIds, previousSpouseIds)
+  applySpouseLinks(id, (input as any).spouseIds ?? [], previousSpouseIds) // TODO Task 14: spouseIds removed from MemberInput
   ensureBidirectionalSpouses()
   persist()
 
@@ -822,12 +826,12 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
       return existing.id
     }
 
-    const newMember: Member = {
+    const newMember = {
       id: state.nextId,
       name: normalized,
       gender,
       parentId: null,
-      spouseIds: [],
+      spouseIds: [] as number[], // TODO Task 14: spouseIds removed from Member
       birthDate: '',
       photoUrl: '',
       biography: '',
@@ -835,7 +839,7 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
       lineageBranch: '',
       rawNotes: '',
       uncertaintyFlags: [],
-    }
+    } as unknown as Member
 
     state.nextId += 1
     state.members.push(newMember)
@@ -871,7 +875,7 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
     if (item.spouseName.trim()) {
       const spouseId = resolveOrCreateByName(item.spouseName, item.gender === '男' ? '女' : '男')
       if (spouseId !== null) {
-        applySpouseLinks(target.id, [...target.spouseIds, spouseId], target.spouseIds)
+        applySpouseLinks(target.id, [...((target as any).spouseIds ?? []), spouseId], (target as any).spouseIds ?? []) // TODO Task 14: spouseIds removed from Member
       }
     }
 
@@ -942,6 +946,8 @@ export function useFamilyStore() {
       relations: state.relations,
       temporals: state.temporals,
       burials: state.burials,
+      spouses: [],
+      childClaims: [],
       nextId: state.nextId,
       nextTrackId: state.nextTrackId,
       nextEventId: state.nextEventId,
@@ -949,6 +955,8 @@ export function useFamilyStore() {
       nextRelationId: state.nextRelationId,
       nextTemporalId: state.nextTemporalId,
       nextBurialId: state.nextBurialId,
+      nextSpouseId: 1,
+      nextChildClaimId: 1,
     }),
   }
 }

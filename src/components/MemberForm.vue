@@ -18,15 +18,16 @@ const form = defineModel<MemberInput>('form', {
     name: '',
     parentId: null,
     gender: '男' as Gender,
-    spouseIds: [],
+    spouseIds: [], // TODO Task 14: spouseIds removed from MemberInput
     birthDate: '',
     photoUrl: '',
     biography: '',
     generationLabelRaw: '',
+    generationNumber: 0,
     lineageBranch: '',
     rawNotes: '',
     uncertaintyFlags: [],
-  },
+  } as unknown as MemberInput,
 })
 
 const uncertaintyFlagOptions: Array<{ value: UncertaintyFlag; label: string }> = [
@@ -60,15 +61,16 @@ watch(
         name: member.name,
         parentId: member.parentId,
         gender: member.gender,
-        spouseIds: [...member.spouseIds],
+        spouseIds: [...((member as any).spouseIds ?? [])], // TODO Task 14: spouseIds removed from MemberInput/Member
         birthDate: member.birthDate ?? '',
         photoUrl: member.photoUrl ?? '',
         biography: member.biography ?? '',
         generationLabelRaw: member.generationLabelRaw ?? '',
+        generationNumber: member.generationNumber ?? 0,
         lineageBranch: member.lineageBranch ?? '',
         rawNotes: member.rawNotes ?? '',
         uncertaintyFlags: [...(member.uncertaintyFlags ?? [])],
-      }
+      } as unknown as MemberInput
       return
     }
 
@@ -76,15 +78,16 @@ watch(
       name: '',
       parentId: null,
       gender: '男',
-      spouseIds: [],
+      spouseIds: [], // TODO Task 14: spouseIds removed from MemberInput
       birthDate: '',
       photoUrl: '',
       biography: '',
       generationLabelRaw: '',
+      generationNumber: 0,
       lineageBranch: '',
       rawNotes: '',
       uncertaintyFlags: [],
-    }
+    } as unknown as MemberInput
   },
   { immediate: true },
 )
@@ -112,18 +115,21 @@ function handleSpouseChange(event: Event) {
   const target = event.target as HTMLSelectElement
   form.value = {
     ...form.value,
-    spouseIds: Array.from(target.selectedOptions)
+    spouseIds: Array.from(target.selectedOptions) // TODO Task 14: spouseIds removed from MemberInput
       .map((option) => Number(option.value))
       .filter((id) => Number.isFinite(id)),
-  }
+  } as unknown as MemberInput
 }
 
 function clearSpouses() {
   form.value = {
     ...form.value,
-    spouseIds: [],
-  }
+    spouseIds: [], // TODO Task 14: spouseIds removed from MemberInput
+  } as unknown as MemberInput
 }
+
+// TODO Task 14: spouseIds removed from MemberInput — shim for template
+const formSpouseIds = computed<string[]>(() => ((form.value as any).spouseIds ?? []).map(String))
 
 function submitForm() {
   emit('submit', form.value, props.editingMember?.id)
@@ -165,7 +171,7 @@ function submitForm() {
       <span>配偶（可多选）</span>
       <select
         multiple
-        :value="form.spouseIds.map(String)"
+        :value="formSpouseIds"
         @change="handleSpouseChange"
       >
         <option

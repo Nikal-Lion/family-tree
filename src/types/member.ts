@@ -1,6 +1,9 @@
+import type { Spouse } from './spouse'
+import type { ChildClaim } from './childClaim'
+
 export type Gender = '男' | '女'
 
-export const APP_SCHEMA_VERSION = 3
+export const APP_SCHEMA_VERSION = 4
 
 export type UncertaintyFlag = 'missing' | 'estimated' | 'conflicting' | 'unverified'
 
@@ -69,11 +72,11 @@ export interface Member {
   name: string
   parentId: number | null
   gender: Gender
-  spouseIds: number[]
   birthDate?: string
   photoUrl?: string
   biography?: string
   generationLabelRaw?: string
+  generationNumber?: number
   lineageBranch?: string
   rawNotes?: string
   uncertaintyFlags?: UncertaintyFlag[]
@@ -126,6 +129,8 @@ export interface FamilyData {
   relations: KinshipRelation[]
   temporals: TemporalExpression[]
   burials: BurialRecord[]
+  spouses: Spouse[]
+  childClaims: ChildClaim[]
   nextId: number
   nextTrackId: number
   nextEventId: number
@@ -133,17 +138,19 @@ export interface FamilyData {
   nextRelationId: number
   nextTemporalId: number
   nextBurialId: number
+  nextSpouseId: number
+  nextChildClaimId: number
 }
 
 export interface MemberInput {
   name: string
   parentId: number | null
   gender: Gender
-  spouseIds: number[]
   birthDate: string
   photoUrl: string
   biography: string
   generationLabelRaw: string
+  generationNumber: number
   lineageBranch: string
   rawNotes: string
   uncertaintyFlags: UncertaintyFlag[]

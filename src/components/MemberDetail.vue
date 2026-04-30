@@ -27,6 +27,9 @@ const emit = defineEmits<{
   addChild: [parentId: number]
 }>()
 
+// TODO Task 14: spouseIds removed from Member — shim until spouse tab is wired
+const memberSpouseIds = computed<number[]>(() => (props.member as any)?.spouseIds ?? [])
+
 const relationTypeText: Record<KinshipRelation['type'], string> = {
   father: '父系',
   mother: '母系',
@@ -114,7 +117,7 @@ function getRelationText(relation: KinshipRelation, memberId: number): string {
       <p><span>ID</span>{{ member.id }}</p>
       <p><span>世代</span>第 {{ generation ?? '?' }} 代</p>
       <p><span>父亲</span>{{ findParentName(member.parentId) }}</p>
-      <p><span>配偶</span>{{ findSpouseNames(member.spouseIds) }}</p>
+      <p><span>配偶</span>{{ findSpouseNames(memberSpouseIds) }}</p>
       <p><span>出生</span>{{ member.birthDate || '未填写' }}</p>
       <p><span>照片</span>{{ member.photoUrl || '未填写' }}</p>
       <p><span>生平</span>{{ member.biography || '未填写' }}</p>

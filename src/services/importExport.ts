@@ -37,9 +37,9 @@ function isMember(value: unknown): value is Member {
   const member = value as Partial<Member>
   const genderOk = member.gender === undefined || member.gender === '男' || member.gender === '女'
   const parentOk = member.parentId === undefined || member.parentId === null || typeof member.parentId === 'number'
-  const spouseOk =
-    member.spouseIds === undefined ||
-    (Array.isArray(member.spouseIds) && member.spouseIds.every((id) => typeof id === 'number'))
+  const spouseOk = // TODO Task 14: spouseIds removed from Member — check legacy data
+    (member as any).spouseIds === undefined ||
+    (Array.isArray((member as any).spouseIds) && (member as any).spouseIds.every((id: unknown) => typeof id === 'number'))
   const birthDateOk = member.birthDate === undefined || typeof member.birthDate === 'string'
   const photoUrlOk = member.photoUrl === undefined || typeof member.photoUrl === 'string'
   const biographyOk = member.biography === undefined || typeof member.biography === 'string'
@@ -162,25 +162,25 @@ function normalizeMemberSpouses(members: Member[]): Member[] {
   }
 
   for (const member of members) {
-    member.spouseIds = uniqueNumbers(
-      member.spouseIds.filter((id) => id !== member.id && byId.has(id)),
+    (member as any).spouseIds = uniqueNumbers( // TODO Task 14: spouseIds removed from Member
+      (member as any).spouseIds.filter((id: number) => id !== member.id && byId.has(id)),
     )
   }
 
   for (const member of members) {
-    for (const spouseId of member.spouseIds) {
+    for (const spouseId of (member as any).spouseIds) { // TODO Task 14: spouseIds removed from Member
       const spouse = byId.get(spouseId)
       if (!spouse) {
         continue
       }
-      if (!spouse.spouseIds.includes(member.id)) {
-        spouse.spouseIds.push(member.id)
+      if (!(spouse as any).spouseIds.includes(member.id)) {
+        ;(spouse as any).spouseIds.push(member.id)
       }
     }
   }
 
   for (const member of members) {
-    member.spouseIds = uniqueNumbers(member.spouseIds).sort((a, b) => a - b)
+    (member as any).spouseIds = uniqueNumbers((member as any).spouseIds).sort((a: number, b: number) => a - b) // TODO Task 14: spouseIds removed from Member
   }
 
   return members
@@ -262,7 +262,7 @@ export function parseImportedJson(raw: string): FamilyData {
         ...member,
         gender: (member.gender === '女' ? '女' : '男') as Member['gender'],
         parentId: typeof member.parentId === 'number' ? member.parentId : null,
-        spouseIds: Array.isArray(member.spouseIds) ? member.spouseIds : [],
+        spouseIds: Array.isArray((member as any).spouseIds) ? (member as any).spouseIds : [], // TODO Task 14: spouseIds removed from Member
         birthDate: member.birthDate ?? '',
         photoUrl: member.photoUrl ?? '',
         biography: member.biography ?? '',
@@ -331,6 +331,8 @@ export function parseImportedJson(raw: string): FamilyData {
     relations,
     temporals,
     burials,
+    spouses: [],
+    childClaims: [],
     nextId,
     nextTrackId,
     nextEventId,
@@ -338,5 +340,7 @@ export function parseImportedJson(raw: string): FamilyData {
     nextRelationId,
     nextTemporalId,
     nextBurialId,
+    nextSpouseId: 1,
+    nextChildClaimId: 1,
   }
 }

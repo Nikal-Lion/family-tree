@@ -91,15 +91,16 @@ const formModel = ref<MemberInput>({
   name: '',
   parentId: null,
   gender: '男' as Gender,
-  spouseIds: [],
+  spouseIds: [], // TODO Task 14: spouseIds removed from MemberInput
   birthDate: '',
   photoUrl: '',
   biography: '',
   generationLabelRaw: '',
+  generationNumber: 0,
   lineageBranch: '',
   rawNotes: '',
   uncertaintyFlags: [],
-})
+} as unknown as MemberInput)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
 const searchKeyword = ref('')
@@ -435,15 +436,16 @@ function handleAddChild(parentId: number) {
     name: '',
     parentId,
     gender: '男',
-    spouseIds: [],
+    spouseIds: [], // TODO Task 14: spouseIds removed from MemberInput
     birthDate: '',
     photoUrl: '',
     biography: '',
     generationLabelRaw: '',
+    generationNumber: 0,
     lineageBranch: '',
     rawNotes: '',
     uncertaintyFlags: [],
-  }
+  } as unknown as MemberInput
   notifyInfo('已自动填充父亲，请输入子女姓名后保存')
 }
 

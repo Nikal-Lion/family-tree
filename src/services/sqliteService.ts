@@ -195,7 +195,7 @@ function queryMembers(database: Database): Member[] {
       name: String(row[1] ?? ''),
       parentId: row[2] === null ? null : Number(row[2]),
       gender: row[3] === '女' ? '女' : '男',
-      spouseIds,
+      spouseIds, // TODO Task 14: spouseIds removed from Member — kept for backward compat with SQLite schema
       birthDate: String(row[5] ?? ''),
       photoUrl: String(row[6] ?? ''),
       biography: String(row[7] ?? ''),
@@ -282,6 +282,8 @@ function toFamilyData(database: Database): FamilyData {
     relations: [],
     temporals: [],
     burials: [],
+    spouses: [],
+    childClaims: [],
     nextId: Math.max(readMetaNumber(database, 'next_id', maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(readMetaNumber(database, 'next_track_id', maxTrackId + 1), maxTrackId + 1),
     nextEventId: Math.max(readMetaNumber(database, 'next_event_id', maxEventId + 1), maxEventId + 1),
@@ -289,6 +291,8 @@ function toFamilyData(database: Database): FamilyData {
     nextRelationId: Math.max(readMetaNumber(database, 'next_relation_id', 1), 1),
     nextTemporalId: Math.max(readMetaNumber(database, 'next_temporal_id', 1), 1),
     nextBurialId: Math.max(readMetaNumber(database, 'next_burial_id', 1), 1),
+    nextSpouseId: 1,
+    nextChildClaimId: 1,
   }
 }
 
@@ -361,7 +365,7 @@ export async function saveFamilyDataToSqlite(data: FamilyData): Promise<void> {
         member.name,
         member.parentId,
         member.gender,
-        JSON.stringify(member.spouseIds),
+        JSON.stringify((member as any).spouseIds ?? []), // TODO Task 14: spouseIds removed from Member
         member.birthDate || '',
         member.photoUrl || '',
         member.biography || '',
