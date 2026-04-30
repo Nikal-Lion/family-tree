@@ -179,7 +179,8 @@ function parseChildToken(token: string, gender: ChildClaimGender): ChildClaimRaw
 function extractChildClaims(line: string, parentId: number, nextId: () => number): ChildClaim[] {
   const claims: ChildClaim[] = []
   let ordinal = 1
-  const sonBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?子\s*[:：]\s*([^。；]+)/g)]
+  // Capture stops at ，女 / ，生女 / 。 / ； — prevents son block from swallowing daughter section
+  const sonBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?子\s*[:：]\s*([^。；]*?)(?=[。；]|，(?:生)?女[：:]|$)/g)]
   for (const block of sonBlocks) {
     const tokens = (block[1] ?? '').split(/[、，,]/)
     for (const token of tokens) {
@@ -200,7 +201,7 @@ function extractChildClaims(line: string, parentId: number, nextId: () => number
       })
     }
   }
-  const daughterBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?女\s*[:：]\s*([^。；]+)/g)]
+  const daughterBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?女\s*[:：]\s*([^。；]*?)(?=[。；]|$)/g)]
   for (const block of daughterBlocks) {
     const tokens = (block[1] ?? '').split(/[、，,]/)
     for (const token of tokens) {
@@ -219,6 +220,26 @@ function extractChildClaims(line: string, parentId: number, nextId: () => number
         statusFlags: raw.statusFlags,
         rawText: line,
       })
+    }
+  }
+  // Abbreviated daughter form: "，女：A、B" or "。女：A、B" without the 生 prefix.
+  // Only run if no daughter claims yet, to avoid double-counting when both forms appear.
+  const hasDaughterClaim = claims.some((c) => c.gender === '女')
+  if (!hasDaughterClaim) {
+    const shorthandDaughterBlocks = [...line.matchAll(/(?:，|。|^)女\s*[:：]\s*([^。；]+)/g)]
+    for (const block of shorthandDaughterBlocks) {
+      const tokens = (block[1] ?? '').split(/[、，,]/)
+      for (const token of tokens) {
+        const raw = parseChildToken(token, '女')
+        if (!raw) continue
+        claims.push({
+          id: nextId(), parentId, claimedName: raw.name,
+          ordinalIndex: ordinal++, gender: raw.gender,
+          isAdoptive: raw.isAdoptive, outAdoptedToHint: '',
+          resolvedMemberId: null, status: 'missing',
+          statusFlags: raw.statusFlags, rawText: line,
+        })
+      }
     }
   }
   // Fallback: "生N子。A、B、C" without colon (loose form)

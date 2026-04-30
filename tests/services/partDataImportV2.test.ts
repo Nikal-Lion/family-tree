@@ -123,3 +123,27 @@ describe('parsePartDataMarkdownV2 - Two-pass 跨代匹配', () => {
     expect(result.members[0].uncertaintyFlags).not.toContain('missing')
   })
 })
+
+describe('parsePartDataMarkdownV2 - 子女声明 ChildClaim (abbreviated forms)', () => {
+  it('TC14: 抽象 "女：" 简写 — 不带"生"前缀的女儿声明', () => {
+    const md = `# 太璋公房派下\n## 廿三世\n德华 ，生子：连发，女：宝秀、金秀。`
+    const result = parsePartDataMarkdownV2(md)
+    const sons = result.childClaims.filter((c) => c.gender === '男')
+    const daughters = result.childClaims.filter((c) => c.gender === '女')
+    expect(sons).toHaveLength(1)
+    expect(sons[0].claimedName).toBe('连发')
+    expect(daughters).toHaveLength(2)
+    expect(daughters.map((d) => d.claimedName)).toEqual(['宝秀', '金秀'])
+    // 关键：不能出现"女宝秀"这种 son 段越界产物
+    expect(result.childClaims.find((c) => c.claimedName === '女宝秀')).toBeUndefined()
+  })
+
+  it('TC15: 标准 "生子：" + "生女：" 同时出现', () => {
+    const md = `# 太璋公房派下\n## 廿三世\n德安 ，生二子：荣华、永发，生女：带秀、茶秀。`
+    const result = parsePartDataMarkdownV2(md)
+    const sons = result.childClaims.filter((c) => c.gender === '男')
+    const daughters = result.childClaims.filter((c) => c.gender === '女')
+    expect(sons.map((s) => s.claimedName)).toEqual(['荣华', '永发'])
+    expect(daughters.map((d) => d.claimedName)).toEqual(['带秀', '茶秀'])
+  })
+})
