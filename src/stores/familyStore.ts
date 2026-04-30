@@ -116,7 +116,7 @@ function ensureBidirectionalSpouses(): void {
         continue
       }
       if (!((spouse as any).spouseIds ?? []).includes(member.id)) {
-        ;(spouse as any).spouseIds = [...((spouse as any).spouseIds ?? []), member.id] // TODO Task 14: spouseIds removed from Member
+        ;(spouse as any).spouseIds.push(member.id) // TODO Task 14: spouseIds removed from Member
       }
     }
   }
@@ -148,7 +148,7 @@ function applySpouseLinks(memberId: number, nextSpouseIds: number[], prevSpouseI
       continue
     }
     if (!((spouse as any).spouseIds ?? []).includes(memberId)) {
-      ;(spouse as any).spouseIds = [...((spouse as any).spouseIds ?? []), memberId] // TODO Task 14: spouseIds removed from Member
+      ;(spouse as any).spouseIds.push(memberId) // TODO Task 14: spouseIds removed from Member
     }
     (spouse as any).spouseIds = normalizeSpouseIds((spouse as any).spouseIds ?? [], spouse.id) // TODO Task 14: spouseIds removed from Member
   }
