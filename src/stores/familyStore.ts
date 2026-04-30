@@ -2,10 +2,13 @@ import { computed, reactive, ref } from 'vue'
 import { analyzeFamilyDataImport, summarizeFamilyDataImport, type FamilyDataImportSummary } from '../services/importDiagnostics'
 import { parseImportedJson } from '../services/importExport'
 import { parsePartDataMarkdown } from '../services/partDataImport'
+import { parsePartDataMarkdownV2, type PartDataImportReport } from '../services/partDataImportV2'
 import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
 import { canAssignParent, validateName } from '../services/validators'
+import { deleteSpousesByHusband } from '../services/spouseService'
+import { deleteChildClaimsByParent } from '../services/childClaimService'
 import {
   APP_SCHEMA_VERSION,
   type BurialRecord,
@@ -20,6 +23,8 @@ import {
   type Track,
   type UncertaintyFlag,
 } from '../types/member'
+import type { Spouse } from '../types/spouse'
+import type { ChildClaim } from '../types/childClaim'
 import type { OcrImportOptions, TempMember } from '../types/ocr'
 
 interface ActionResult {
@@ -42,6 +47,8 @@ const state = reactive<{
   relations: KinshipRelation[]
   temporals: TemporalExpression[]
   burials: BurialRecord[]
+  spouses: Spouse[]
+  childClaims: ChildClaim[]
   nextId: number
   nextTrackId: number
   nextEventId: number
@@ -49,6 +56,8 @@ const state = reactive<{
   nextRelationId: number
   nextTemporalId: number
   nextBurialId: number
+  nextSpouseId: number
+  nextChildClaimId: number
   selectedId: number | null
 }>({
   members: [],
@@ -58,6 +67,8 @@ const state = reactive<{
   relations: [],
   temporals: [],
   burials: [],
+  spouses: [],
+  childClaims: [],
   nextId: 1,
   nextTrackId: 1,
   nextEventId: 1,
@@ -65,6 +76,8 @@ const state = reactive<{
   nextRelationId: 1,
   nextTemporalId: 1,
   nextBurialId: 1,
+  nextSpouseId: 1,
+  nextChildClaimId: 1,
   selectedId: null,
 })
 
@@ -81,84 +94,6 @@ const ALLOWED_UNCERTAINTY_FLAGS = new Set<UncertaintyFlag>([
   'unverified',
 ])
 
-function uniqueNumbers(values: number[]): number[] {
-  return [...new Set(values)]
-}
-
-function normalizeSpouseIds(spouseIds: number[], selfId?: number): number[] {
-  return uniqueNumbers(
-    spouseIds.filter((id) => {
-      if (typeof id !== 'number') {
-        return false
-      }
-      if (selfId !== undefined && id === selfId) {
-        return false
-      }
-      return state.members.some((member) => member.id === id)
-    }),
-  ).sort((a, b) => a - b)
-}
-
-function ensureBidirectionalSpouses(): void {
-  const byId = new Map<number, Member>()
-  for (const member of state.members) {
-    byId.set(member.id, member)
-  }
-
-  for (const member of state.members) {
-    (member as any).spouseIds = normalizeSpouseIds((member as any).spouseIds ?? [], member.id) // TODO Task 14: spouseIds removed from Member
-  }
-
-  for (const member of state.members) {
-    for (const spouseId of (member as any).spouseIds ?? []) {
-      const spouse = byId.get(spouseId)
-      if (!spouse) {
-        continue
-      }
-      if (!((spouse as any).spouseIds ?? []).includes(member.id)) {
-        ;(spouse as any).spouseIds.push(member.id) // TODO Task 14: spouseIds removed from Member
-      }
-    }
-  }
-
-  for (const member of state.members) {
-    (member as any).spouseIds = normalizeSpouseIds((member as any).spouseIds ?? [], member.id) // TODO Task 14: spouseIds removed from Member
-  }
-}
-
-function applySpouseLinks(memberId: number, nextSpouseIds: number[], prevSpouseIds: number[]): void {
-  const normalizedNext = normalizeSpouseIds(nextSpouseIds, memberId)
-  const prevSet = new Set(prevSpouseIds)
-  const nextSet = new Set(normalizedNext)
-
-  for (const prevId of prevSet) {
-    if (nextSet.has(prevId)) {
-      continue
-    }
-    const spouse = state.members.find((member) => member.id === prevId)
-    if (!spouse) {
-      continue
-    }
-    (spouse as any).spouseIds = ((spouse as any).spouseIds ?? []).filter((id: number) => id !== memberId) // TODO Task 14: spouseIds removed from Member
-  }
-
-  for (const nextId of normalizedNext) {
-    const spouse = state.members.find((member) => member.id === nextId)
-    if (!spouse) {
-      continue
-    }
-    if (!((spouse as any).spouseIds ?? []).includes(memberId)) {
-      ;(spouse as any).spouseIds.push(memberId) // TODO Task 14: spouseIds removed from Member
-    }
-    (spouse as any).spouseIds = normalizeSpouseIds((spouse as any).spouseIds ?? [], spouse.id) // TODO Task 14: spouseIds removed from Member
-  }
-
-  const target = state.members.find((member) => member.id === memberId)
-  if (target) {
-    (target as any).spouseIds = normalizedNext // TODO Task 14: spouseIds removed from Member
-  }
-}
-
 function createRelationKey(type: KinshipRelation['type'], fromMemberId: number, toMemberId: number): string {
   return `${type}:${fromMemberId}:${toMemberId}`
 }
@@ -170,9 +105,7 @@ function applyRelationsToMembers(): void {
 
   const memberIds = new Set(state.members.map((member) => member.id))
   const fatherByChild = new Map<number, number>()
-  const spousesByMember = new Map<number, Set<number>>()
   let hasFatherRelations = false
-  let hasSpouseRelations = false
 
   for (const relation of state.relations) {
     if (
@@ -188,27 +121,12 @@ function applyRelationsToMembers(): void {
       if (!fatherByChild.has(relation.fromMemberId)) {
         fatherByChild.set(relation.fromMemberId, relation.toMemberId)
       }
-      continue
-    }
-
-    if (relation.type === 'spouse') {
-      hasSpouseRelations = true
-      const set = spousesByMember.get(relation.fromMemberId) ?? new Set<number>()
-      set.add(relation.toMemberId)
-      spousesByMember.set(relation.fromMemberId, set)
     }
   }
 
   if (hasFatherRelations) {
     for (const member of state.members) {
       member.parentId = fatherByChild.get(member.id) ?? null
-    }
-  }
-
-  if (hasSpouseRelations) {
-    for (const member of state.members) {
-      const nextSpouseIds = [...(spousesByMember.get(member.id) ?? new Set<number>())]
-      ;(member as any).spouseIds = normalizeSpouseIds(nextSpouseIds, member.id) // TODO Task 14: spouseIds removed from Member
     }
   }
 }
@@ -259,25 +177,6 @@ function syncCoreRelationsFromMembers(): void {
       }
     }
 
-    for (const spouseId of (member as any).spouseIds ?? []) { // TODO Task 14: spouseIds removed from Member
-      if (!memberIds.has(spouseId) || spouseId === member.id) {
-        continue
-      }
-      const key = createRelationKey('spouse', member.id, spouseId)
-      if (!derivedKeys.has(key)) {
-        derivedCoreRelations.push({
-          id: 0,
-          fromMemberId: member.id,
-          toMemberId: spouseId,
-          type: 'spouse',
-          status: 'active',
-          temporalId: null,
-          note: '',
-          rawText: '',
-        })
-        derivedKeys.add(key)
-      }
-    }
   }
 
   let nextRelationId = Math.max(state.nextRelationId, 1)
@@ -305,10 +204,7 @@ function syncCoreRelationsFromMembers(): void {
   state.nextRelationId = Math.max(nextRelationId, maxRelationId + 1, 1)
 }
 
-ensureBidirectionalSpouses()
-
 function buildPersistPayload(): FamilyData {
-  ensureBidirectionalSpouses()
   syncCoreRelationsFromMembers()
   state.members.sort((a, b) => a.id - b.id)
 
@@ -321,8 +217,8 @@ function buildPersistPayload(): FamilyData {
     relations: state.relations,
     temporals: state.temporals,
     burials: state.burials,
-    spouses: [],
-    childClaims: [],
+    spouses: state.spouses,
+    childClaims: state.childClaims,
     nextId: state.nextId,
     nextTrackId: state.nextTrackId,
     nextEventId: state.nextEventId,
@@ -330,8 +226,8 @@ function buildPersistPayload(): FamilyData {
     nextRelationId: state.nextRelationId,
     nextTemporalId: state.nextTemporalId,
     nextBurialId: state.nextBurialId,
-    nextSpouseId: 1,
-    nextChildClaimId: 1,
+    nextSpouseId: state.nextSpouseId,
+    nextChildClaimId: state.nextChildClaimId,
   }
 }
 
@@ -363,6 +259,8 @@ function applyLoadedData(data: FamilyData, options?: { preserveSelectedId?: bool
   state.relations = [...(data.relations ?? [])].sort((a, b) => a.id - b.id)
   state.temporals = [...(data.temporals ?? [])].sort((a, b) => a.id - b.id)
   state.burials = [...(data.burials ?? [])].sort((a, b) => a.id - b.id)
+  state.spouses = [...(data.spouses ?? [])].sort((a, b) => a.id - b.id)
+  state.childClaims = [...(data.childClaims ?? [])].sort((a, b) => a.id - b.id)
   state.nextId = data.nextId
   state.nextTrackId = data.nextTrackId
   state.nextEventId = data.nextEventId ?? 1
@@ -370,13 +268,14 @@ function applyLoadedData(data: FamilyData, options?: { preserveSelectedId?: bool
   state.nextRelationId = data.nextRelationId ?? 1
   state.nextTemporalId = data.nextTemporalId ?? 1
   state.nextBurialId = data.nextBurialId ?? 1
+  state.nextSpouseId = data.nextSpouseId ?? 1
+  state.nextChildClaimId = data.nextChildClaimId ?? 1
   const nextSelectedId = options?.preserveSelectedId ? state.selectedId : null
   state.selectedId =
     nextSelectedId !== null && data.members.some((member) => member.id === nextSelectedId)
       ? nextSelectedId
       : data.members[0]?.id ?? null
   applyRelationsToMembers()
-  ensureBidirectionalSpouses()
   syncCoreRelationsFromMembers()
 }
 
@@ -448,12 +347,11 @@ function addMember(input: MemberInput): ActionResult {
     return { ok: false, message: nameError }
   }
 
-  const member = {
+  const member: Member = {
     id: state.nextId,
     name: input.name.trim(),
     gender: input.gender,
     parentId: normalizeParent(input.parentId),
-    spouseIds: [] as number[], // TODO Task 14: spouseIds removed from Member
     birthDate: normalizeProfileText(input.birthDate),
     photoUrl: normalizeProfileText(input.photoUrl),
     biography: normalizeProfileText(input.biography),
@@ -461,12 +359,10 @@ function addMember(input: MemberInput): ActionResult {
     lineageBranch: normalizeProfileText(input.lineageBranch),
     rawNotes: normalizeProfileText(input.rawNotes),
     uncertaintyFlags: normalizeUncertaintyFlagsInput(input.uncertaintyFlags),
-  } as unknown as Member
+  }
 
   state.nextId += 1
   state.members.push(member)
-  applySpouseLinks(member.id, (input as any).spouseIds ?? [], []) // TODO Task 14: spouseIds removed from MemberInput
-  ensureBidirectionalSpouses()
   state.selectedId = member.id
   persist()
 
@@ -489,7 +385,6 @@ function updateMember(id: number, input: MemberInput): ActionResult {
     return { ok: false, message: '父节点不能是本人或后代' }
   }
 
-  const previousSpouseIds = [...((target as any).spouseIds ?? [])] as number[] // TODO Task 14: spouseIds removed from Member
   target.name = input.name.trim()
   target.gender = input.gender
   target.parentId = normalizedParentId
@@ -500,8 +395,6 @@ function updateMember(id: number, input: MemberInput): ActionResult {
   target.lineageBranch = normalizeProfileText(input.lineageBranch)
   target.rawNotes = normalizeProfileText(input.rawNotes)
   target.uncertaintyFlags = normalizeUncertaintyFlagsInput(input.uncertaintyFlags)
-  applySpouseLinks(id, (input as any).spouseIds ?? [], previousSpouseIds) // TODO Task 14: spouseIds removed from MemberInput
-  ensureBidirectionalSpouses()
   persist()
 
   return { ok: true }
@@ -564,7 +457,10 @@ function deleteMember(id: number): ActionResult {
         ? { ...relation, temporalId: null }
         : relation,
     )
-  ensureBidirectionalSpouses()
+  for (const deletedId of deletionIds) {
+    deleteSpousesByHusband(state, deletedId)
+    deleteChildClaimsByParent(state, deletedId)
+  }
   syncCoreRelationsFromMembers()
 
   if (state.members.length === 0) {
@@ -638,6 +534,81 @@ async function importDataFromMarkdown(raw: string): Promise<ActionResult> {
 function replaceData(data: FamilyData): void {
   applyLoadedData(data)
   ready.value = true
+}
+
+function previewPartDataV2(raw: string): {
+  ok: boolean
+  data: FamilyData | null
+  report: PartDataImportReport | null
+  message: string
+} {
+  try {
+    const data = parsePartDataMarkdownV2(raw)
+    if (data.members.length === 0) {
+      return { ok: false, data: null, report: null, message: '未识别到任何成员' }
+    }
+    const isolatedMembers = data.members
+      .filter((m) => m.uncertaintyFlags?.includes('missing'))
+      .map((m) => ({ id: m.id, name: m.name, reason: 'parentId=null above min generation' }))
+    const unmatchedClaims = data.childClaims
+      .filter((c) => c.status === 'missing')
+      .map((c) => {
+        const parent = data.members.find((m) => m.id === c.parentId)
+        return {
+          parentName: parent?.name ?? '?',
+          claimedName: c.claimedName,
+          gen: parent?.generationNumber ?? 0,
+        }
+      })
+    const ambiguousAdoptions = data.childClaims
+      .filter((c) => c.status === 'ambiguous')
+      .map((c) => {
+        const parent = data.members.find((m) => m.id === c.parentId)
+        return { memberId: c.parentId, name: parent?.name ?? '?', note: `ambiguous claim: ${c.claimedName}` }
+      })
+    const report: PartDataImportReport = {
+      totalLines: raw.split(/\r?\n/).length,
+      parsedMembers: data.members.length,
+      parsedSpouses: data.spouses.length,
+      parsedChildClaims: data.childClaims.length,
+      isolatedMembers,
+      unmatchedClaims,
+      unclaimedChildren: [],
+      ambiguousAdoptions,
+      contradictions: [],
+    }
+    return { ok: true, data, report, message: '解析成功' }
+  } catch (err) {
+    return { ok: false, data: null, report: null, message: (err as Error).message }
+  }
+}
+
+async function importPartDataV2(raw: string): Promise<{ ok: boolean; message: string }> {
+  const preview = previewPartDataV2(raw)
+  if (!preview.ok || !preview.data) {
+    return { ok: false, message: preview.message }
+  }
+  const data = preview.data
+  state.members = data.members
+  state.spouses = data.spouses
+  state.childClaims = data.childClaims
+  state.aliases = data.aliases
+  state.relations = data.relations
+  state.temporals = data.temporals
+  state.burials = data.burials
+  state.nextId = data.nextId
+  state.nextAliasId = data.nextAliasId
+  state.nextRelationId = data.nextRelationId
+  state.nextTemporalId = data.nextTemporalId
+  state.nextBurialId = data.nextBurialId
+  state.nextSpouseId = data.nextSpouseId
+  state.nextChildClaimId = data.nextChildClaimId
+  ready.value = true
+  await enqueuePersist(buildPersistPayload())
+  return {
+    ok: true,
+    message: `导入成功：${data.members.length} 主成员、${data.spouses.length} 配偶、${data.childClaims.length} 子女声明`,
+  }
 }
 
 function normalizeEventInput(input: FamilyEventInput): FamilyEventInput {
@@ -826,12 +797,11 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
       return existing.id
     }
 
-    const newMember = {
+    const newMember: Member = {
       id: state.nextId,
       name: normalized,
       gender,
       parentId: null,
-      spouseIds: [] as number[], // TODO Task 14: spouseIds removed from Member
       birthDate: '',
       photoUrl: '',
       biography: '',
@@ -839,7 +809,7 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
       lineageBranch: '',
       rawNotes: '',
       uncertaintyFlags: [],
-    } as unknown as Member
+    }
 
     state.nextId += 1
     state.members.push(newMember)
@@ -872,17 +842,9 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
       target.parentId = fatherId
     }
 
-    if (item.spouseName.trim()) {
-      const spouseId = resolveOrCreateByName(item.spouseName, item.gender === '男' ? '女' : '男')
-      if (spouseId !== null) {
-        applySpouseLinks(target.id, [...((target as any).spouseIds ?? []), spouseId], (target as any).spouseIds ?? []) // TODO Task 14: spouseIds removed from Member
-      }
-    }
-
     importedCount += 1
   }
 
-  ensureBidirectionalSpouses()
   persist()
 
   return {
@@ -902,6 +864,8 @@ export function useFamilyStore() {
   const relations = computed(() => state.relations)
   const temporals = computed(() => state.temporals)
   const burials = computed(() => state.burials)
+  const spouses = computed(() => state.spouses)
+  const childClaims = computed(() => state.childClaims)
   const selectedId = computed(() => state.selectedId)
   const selectedMember = computed(() => getMemberById(state.selectedId))
 
@@ -913,6 +877,8 @@ export function useFamilyStore() {
     relations,
     temporals,
     burials,
+    spouses,
+    childClaims,
     selectedId,
     selectedMember,
     ready: computed(() => ready.value),
@@ -936,6 +902,8 @@ export function useFamilyStore() {
     importDataFromJson,
     previewDataFromMarkdown,
     importDataFromMarkdown,
+    previewPartDataV2,
+    importPartDataV2,
     replaceData,
     exportData: () => ({
       schemaVersion: schemaVersion.value,
@@ -946,8 +914,8 @@ export function useFamilyStore() {
       relations: state.relations,
       temporals: state.temporals,
       burials: state.burials,
-      spouses: [],
-      childClaims: [],
+      spouses: state.spouses,
+      childClaims: state.childClaims,
       nextId: state.nextId,
       nextTrackId: state.nextTrackId,
       nextEventId: state.nextEventId,
@@ -955,8 +923,8 @@ export function useFamilyStore() {
       nextRelationId: state.nextRelationId,
       nextTemporalId: state.nextTemporalId,
       nextBurialId: state.nextBurialId,
-      nextSpouseId: 1,
-      nextChildClaimId: 1,
+      nextSpouseId: state.nextSpouseId,
+      nextChildClaimId: state.nextChildClaimId,
     }),
   }
 }
