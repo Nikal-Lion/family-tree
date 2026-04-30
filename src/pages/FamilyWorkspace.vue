@@ -9,6 +9,7 @@ import LoginUserManager from '../components/LoginUserManager.vue'
 import MemberForm from '../components/MemberForm.vue'
 import MemberList from '../components/MemberList.vue'
 import OcrImportManager from '../components/OcrImportManager.vue'
+import PartDataImportPanel from '../components/PartDataImportPanel.vue'
 import StatsDashboard from '../components/StatsDashboard.vue'
 import TrackManager from '../components/TrackManager.vue'
 import { initAuthSession, useAuth } from '../services/authService'
@@ -91,15 +92,15 @@ const formModel = ref<MemberInput>({
   name: '',
   parentId: null,
   gender: '男' as Gender,
-  spouseIds: [],
   birthDate: '',
   photoUrl: '',
   biography: '',
   generationLabelRaw: '',
+  generationNumber: 0,
   lineageBranch: '',
   rawNotes: '',
   uncertaintyFlags: [],
-})
+} as unknown as MemberInput)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
 const searchKeyword = ref('')
@@ -371,16 +372,6 @@ function findParentName(parentId: number | null): string {
   return parent?.name ?? '未知'
 }
 
-function findSpouseNames(spouseIds: number[]): string {
-  if (spouseIds.length === 0) {
-    return '暂无'
-  }
-
-  return spouseIds
-    .map((id) => members.value.find((member) => member.id === id)?.name ?? `成员#${id}`)
-    .join('、')
-}
-
 function resolveMemberName(id: number): string {
   const target = members.value.find((member) => member.id === id)
   return target?.name ?? `成员#${id}`
@@ -435,15 +426,15 @@ function handleAddChild(parentId: number) {
     name: '',
     parentId,
     gender: '男',
-    spouseIds: [],
     birthDate: '',
     photoUrl: '',
     biography: '',
     generationLabelRaw: '',
+    generationNumber: 0,
     lineageBranch: '',
     rawNotes: '',
     uncertaintyFlags: [],
-  }
+  } as unknown as MemberInput
   notifyInfo('已自动填充父亲，请输入子女姓名后保存')
 }
 
@@ -780,10 +771,13 @@ async function handleImport(event: Event) {
           @import-members="handleOcrImport"
         />
 
+        <section class="manage-section">
+          <PartDataImportPanel />
+        </section>
+
         <MemberDetail
           :member="selectedMember"
           :find-parent-name="findParentName"
-          :find-spouse-names="findSpouseNames"
           :generation="selectedGeneration"
           :aliases="selectedAliases"
           :relations="selectedRelations"

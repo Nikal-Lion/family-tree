@@ -1,3 +1,7 @@
+/**
+ * @deprecated 自 V4 起改用 partDataImportV2.ts。
+ * 保留作回滚兜底，下个 minor 版本移除。
+ */
 import { APP_SCHEMA_VERSION, type FamilyData, type Member, type NameAlias, type TemporalExpression, type BurialRecord } from '../types/member'
 
 const STOP_WORDS = new Set([
@@ -101,12 +105,12 @@ function buildMemberParentScopeKey(name: string, generationLabel: string, parent
 }
 
 function createMember(state: BuilderState, name: string, gender: Gender, sourceLine: string): Member {
-  const member: Member = {
+  const member = {
     id: state.nextId,
     name,
     parentId: null,
     gender,
-    spouseIds: [],
+    spouseIds: [] as number[], // TODO Task 14: spouseIds removed from Member
     birthDate: '',
     photoUrl: '',
     biography: sourceLine,
@@ -114,7 +118,7 @@ function createMember(state: BuilderState, name: string, gender: Gender, sourceL
     lineageBranch: state.branchLabel,
     rawNotes: sourceLine,
     uncertaintyFlags: ['unverified'],
-  }
+  } as unknown as Member
 
   state.nextId += 1
   state.members.push(member)
@@ -248,8 +252,8 @@ function appendSpouse(member: Member, spouseId: number): void {
   if (spouseId === member.id) {
     return
   }
-  if (!member.spouseIds.includes(spouseId)) {
-    member.spouseIds.push(spouseId)
+  if (!(member as any).spouseIds.includes(spouseId)) { // TODO Task 14: spouseIds removed from Member
+    ;(member as any).spouseIds.push(spouseId)
   }
 }
 
@@ -453,8 +457,8 @@ function finalizeMembers(state: BuilderState): void {
   }
 
   for (const member of state.members) {
-    member.spouseIds = [...new Set(member.spouseIds.filter((id) => id !== member.id && membersById.has(id)))].sort(
-      (a, b) => a - b,
+    (member as any).spouseIds = [...new Set<number>((member as any).spouseIds.filter((id: number) => id !== member.id && membersById.has(id)))].sort( // TODO Task 14: spouseIds removed from Member
+      (a: number, b: number) => a - b,
     )
     if (!member.lineageBranch) {
       member.lineageBranch = state.branchLabel
@@ -465,19 +469,19 @@ function finalizeMembers(state: BuilderState): void {
   }
 
   for (const member of state.members) {
-    for (const spouseId of member.spouseIds) {
+    for (const spouseId of (member as any).spouseIds) { // TODO Task 14: spouseIds removed from Member
       const spouse = membersById.get(spouseId)
       if (!spouse) {
         continue
       }
-      if (!spouse.spouseIds.includes(member.id)) {
-        spouse.spouseIds.push(member.id)
+      if (!(spouse as any).spouseIds.includes(member.id)) {
+        ;(spouse as any).spouseIds.push(member.id)
       }
     }
   }
 
   for (const member of state.members) {
-    member.spouseIds = [...new Set(member.spouseIds)].sort((a, b) => a - b)
+    (member as any).spouseIds = [...new Set<number>((member as any).spouseIds)].sort((a: number, b: number) => a - b) // TODO Task 14: spouseIds removed from Member
   }
 }
 
@@ -610,6 +614,8 @@ export function parsePartDataMarkdown(raw: string): FamilyData {
     relations: [],
     temporals: state.temporals.sort((a, b) => a.id - b.id),
     burials: state.burials.sort((a, b) => a.id - b.id),
+    spouses: [],
+    childClaims: [],
     nextId: maxId + 1,
     nextTrackId: 1,
     nextEventId: 1,
@@ -617,5 +623,7 @@ export function parsePartDataMarkdown(raw: string): FamilyData {
     nextRelationId: 1,
     nextTemporalId: maxTemporalId + 1,
     nextBurialId: maxBurialId + 1,
+    nextSpouseId: 1,
+    nextChildClaimId: 1,
   }
 }

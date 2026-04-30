@@ -11,6 +11,8 @@ import {
   type TemporalExpression,
   type UncertaintyFlag,
 } from '../types/member'
+import type { ChildClaim } from '../types/childClaim'
+import type { Spouse } from '../types/spouse'
 import {
   exportD1BackupBinary,
   importD1BackupBinary,
@@ -38,9 +40,9 @@ const TEMPORAL_CALENDAR_TYPES = ['gregorian', 'lunar-era', 'ganzhi', 'mixed', 'u
 const TEMPORAL_PRECISIONS = ['year', 'month', 'day', 'hour', 'unknown']
 
 const defaultMembers: Member[] = [
-  { id: 1, name: '始祖', parentId: null, gender: '男', spouseIds: [], birthDate: '', photoUrl: '', biography: '' },
-  { id: 2, name: '长子', parentId: 1, gender: '男', spouseIds: [], birthDate: '', photoUrl: '', biography: '' },
-  { id: 3, name: '次女', parentId: 1, gender: '女', spouseIds: [], birthDate: '', photoUrl: '', biography: '' },
+  { id: 1, name: '始祖', parentId: null, gender: '男', birthDate: '', photoUrl: '', biography: '' },
+  { id: 2, name: '长子', parentId: 1, gender: '男', birthDate: '', photoUrl: '', biography: '' },
+  { id: 3, name: '次女', parentId: 1, gender: '女', birthDate: '', photoUrl: '', biography: '' },
 ]
 
 const defaultData: FamilyData = {
@@ -52,6 +54,8 @@ const defaultData: FamilyData = {
   relations: [],
   temporals: [],
   burials: [],
+  spouses: [],
+  childClaims: [],
   nextId: 4,
   nextTrackId: 1,
   nextEventId: 1,
@@ -59,18 +63,22 @@ const defaultData: FamilyData = {
   nextRelationId: 1,
   nextTemporalId: 1,
   nextBurialId: 1,
+  nextSpouseId: 1,
+  nextChildClaimId: 1,
 }
 
 function cloneDefaultData(): FamilyData {
   return {
     schemaVersion: defaultData.schemaVersion,
-    members: defaultData.members.map((member) => ({ ...member, spouseIds: [...member.spouseIds] })),
+    members: defaultData.members.map((member) => ({ ...member })),
     tracks: [],
     events: [],
     aliases: [],
     relations: [],
     temporals: [],
     burials: [],
+    spouses: [],
+    childClaims: [],
     nextId: defaultData.nextId,
     nextTrackId: defaultData.nextTrackId,
     nextEventId: defaultData.nextEventId,
@@ -78,6 +86,8 @@ function cloneDefaultData(): FamilyData {
     nextRelationId: defaultData.nextRelationId,
     nextTemporalId: defaultData.nextTemporalId,
     nextBurialId: defaultData.nextBurialId,
+    nextSpouseId: defaultData.nextSpouseId,
+    nextChildClaimId: defaultData.nextChildClaimId,
   }
 }
 
@@ -127,40 +137,6 @@ function isTrack(value: unknown): value is Track {
   )
 }
 
-function uniqueNumbers(values: number[]): number[] {
-  return [...new Set(values)]
-}
-
-function normalizeMemberSpouses(members: Member[]): Member[] {
-  const byId = new Map<number, Member>()
-  for (const member of members) {
-    byId.set(member.id, member)
-  }
-
-  for (const member of members) {
-    member.spouseIds = uniqueNumbers(
-      member.spouseIds.filter((id) => id !== member.id && byId.has(id)),
-    )
-  }
-
-  for (const member of members) {
-    for (const spouseId of member.spouseIds) {
-      const spouse = byId.get(spouseId)
-      if (!spouse) {
-        continue
-      }
-      if (!spouse.spouseIds.includes(member.id)) {
-        spouse.spouseIds.push(member.id)
-      }
-    }
-  }
-
-  for (const member of members) {
-    member.spouseIds = uniqueNumbers(member.spouseIds).sort((a, b) => a - b)
-  }
-
-  return members
-}
 
 function isMember(value: unknown): value is Member {
   if (!value || typeof value !== 'object') {
@@ -170,9 +146,6 @@ function isMember(value: unknown): value is Member {
   const m = value as Partial<Member>
   const genderOk = m.gender === '男' || m.gender === '女'
   const parentOk = m.parentId === null || typeof m.parentId === 'number'
-  const spouseOk =
-    m.spouseIds === undefined ||
-    (Array.isArray(m.spouseIds) && m.spouseIds.every((id) => typeof id === 'number'))
   const birthDateOk = m.birthDate === undefined || typeof m.birthDate === 'string'
   const photoUrlOk = m.photoUrl === undefined || typeof m.photoUrl === 'string'
   const biographyOk = m.biography === undefined || typeof m.biography === 'string'
@@ -191,7 +164,6 @@ function isMember(value: unknown): value is Member {
     typeof m.name === 'string' &&
     genderOk &&
     parentOk &&
-    spouseOk &&
     birthDateOk &&
     photoUrlOk &&
     biographyOk &&
@@ -283,11 +255,35 @@ function isBurialRecord(value: unknown): value is BurialRecord {
   )
 }
 
+function isSpouse(value: unknown): value is Spouse {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const s = value as Partial<Spouse>
+  return (
+    typeof s.id === 'number' &&
+    typeof s.husbandId === 'number' &&
+    typeof s.surname === 'string' &&
+    typeof s.relationLabel === 'string'
+  )
+}
+
+function isChildClaim(value: unknown): value is ChildClaim {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const c = value as Partial<ChildClaim>
+  return (
+    typeof c.id === 'number' &&
+    typeof c.parentId === 'number' &&
+    typeof c.claimedName === 'string'
+  )
+}
+
 function normalizeFamilyDataPayload(parsed: Partial<FamilyData>): FamilyData {
   const members = Array.isArray(parsed.members)
     ? parsed.members.filter(isMember).map((member) => ({
         ...member,
-        spouseIds: Array.isArray(member.spouseIds) ? member.spouseIds : [],
         birthDate: member.birthDate ?? '',
         photoUrl: member.photoUrl ?? '',
         biography: member.biography ?? '',
@@ -312,6 +308,8 @@ function normalizeFamilyDataPayload(parsed: Partial<FamilyData>): FamilyData {
   const relations = Array.isArray(parsed.relations) ? parsed.relations.filter(isKinshipRelation) : []
   const temporals = Array.isArray(parsed.temporals) ? parsed.temporals.filter(isTemporalExpression) : []
   const burials = Array.isArray(parsed.burials) ? parsed.burials.filter(isBurialRecord) : []
+  const spouses = Array.isArray(parsed.spouses) ? parsed.spouses.filter(isSpouse) : []
+  const childClaims = Array.isArray(parsed.childClaims) ? parsed.childClaims.filter(isChildClaim) : []
 
   const nextId = typeof parsed.nextId === 'number' ? parsed.nextId : 1
   const nextTrackId = typeof parsed.nextTrackId === 'number' ? parsed.nextTrackId : 1
@@ -320,16 +318,20 @@ function normalizeFamilyDataPayload(parsed: Partial<FamilyData>): FamilyData {
   const nextRelationId = typeof parsed.nextRelationId === 'number' ? parsed.nextRelationId : 1
   const nextTemporalId = typeof parsed.nextTemporalId === 'number' ? parsed.nextTemporalId : 1
   const nextBurialId = typeof parsed.nextBurialId === 'number' ? parsed.nextBurialId : 1
+  const nextSpouseId = typeof parsed.nextSpouseId === 'number' ? parsed.nextSpouseId : 1
+  const nextChildClaimId = typeof parsed.nextChildClaimId === 'number' ? parsed.nextChildClaimId : 1
 
   return {
     schemaVersion: APP_SCHEMA_VERSION,
-    members: normalizeMemberSpouses(members),
+    members,
     tracks,
     events,
     aliases,
     relations,
     temporals,
     burials,
+    spouses,
+    childClaims,
     nextId: Math.max(nextId, ...members.map((m) => m.id + 1)),
     nextTrackId: Math.max(nextTrackId, ...tracks.map((track) => track.id + 1), 1),
     nextEventId: Math.max(nextEventId, ...events.map((event) => event.id + 1), 1),
@@ -337,6 +339,8 @@ function normalizeFamilyDataPayload(parsed: Partial<FamilyData>): FamilyData {
     nextRelationId: Math.max(nextRelationId, ...relations.map((relation) => relation.id + 1), 1),
     nextTemporalId: Math.max(nextTemporalId, ...temporals.map((temporal) => temporal.id + 1), 1),
     nextBurialId: Math.max(nextBurialId, ...burials.map((burial) => burial.id + 1), 1),
+    nextSpouseId: Math.max(nextSpouseId, ...spouses.map((s) => s.id + 1), 1),
+    nextChildClaimId: Math.max(nextChildClaimId, ...childClaims.map((c) => c.id + 1), 1),
   }
 }
 

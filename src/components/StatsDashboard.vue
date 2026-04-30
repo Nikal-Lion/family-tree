@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { computeGenerations, countByGeneration, getMaxGeneration } from '../services/generationService'
+import { useFamilyStore } from '../stores/familyStore'
 import type { FamilyEvent, Member, Track } from '../types/member'
 
 const props = defineProps<{
@@ -8,6 +9,8 @@ const props = defineProps<{
   tracks: Track[]
   events: FamilyEvent[]
 }>()
+
+const store = useFamilyStore()
 
 const generationMap = computed(() => computeGenerations(props.members))
 const maxGeneration = computed(() => getMaxGeneration(generationMap.value))
@@ -21,6 +24,7 @@ const genCounts = computed(() => {
 })
 
 const totalMembers = computed(() => props.members.length)
+const totalSpouses = computed(() => store.spouses.value.length)
 
 const maleCount = computed(() => props.members.filter((m) => m.gender === '男').length)
 const femaleCount = computed(() => props.members.filter((m) => m.gender === '女').length)
@@ -66,6 +70,10 @@ const femalePercent = computed(() => {
       <div class="stat-card">
         <span class="stat-value">{{ events.length }}</span>
         <span class="stat-label">事件数</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ totalSpouses }}</span>
+        <span class="stat-label">配偶记录</span>
       </div>
       <div class="stat-card">
         <span class="stat-value">{{ maleCount }}/{{ femaleCount }}</span>
