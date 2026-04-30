@@ -1,5 +1,5 @@
 import { APP_SCHEMA_VERSION, type FamilyData, type Member } from '../types/member'
-import type { Spouse } from '../types/spouse'
+import type { Spouse, SpouseRelation } from '../types/spouse'
 import type { ChildClaim } from '../types/childClaim'
 
 export interface PartDataImportReport {
@@ -75,6 +75,66 @@ function extractSubjectName(line: string): string {
   return raw
 }
 
+function inferSpouseOrder(label: SpouseRelation, prevOrder: number): number {
+  if (label === '配' || label === '妣' || label === '娶') return 1
+  if (label === '继配' || label === '继妣') return prevOrder + 1
+  if (label === '三妣') return 3
+  if (label === '四妣') return 4
+  return prevOrder + 1
+}
+
+function extractAliases(text: string): string[] {
+  const aliases: string[] = []
+  const ngMatch = text.match(/([一二三四五六七八九十][娘姑姐妹])/g)
+  if (ngMatch) aliases.push(...ngMatch)
+  return aliases
+}
+
+function extractSpouses(line: string, husbandId: number, nextSpouseId: () => number, now: string): Spouse[] {
+  const spouses: Spouse[] = []
+  let prevOrder = 0
+  const re = /(继配|三妣|四妣|继妣|配|妣|娶)\s*([一-龥]{1,8})/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(line)) !== null) {
+    const relationLabel = m[1] as SpouseRelation
+    const nameToken = m[2]
+    let surname = ''
+    let fullName: string | null = null
+    let aliases: string[] = []
+    const yiIdx = nameToken.indexOf('氏')
+    if (yiIdx >= 0) {
+      surname = nameToken.slice(0, yiIdx)
+    } else {
+      surname = nameToken.charAt(0)
+      if (nameToken.length > 1) {
+        fullName = nameToken
+        // Extract aliases from the name portion after the surname character
+        aliases = extractAliases(nameToken.slice(1))
+      }
+    }
+    const tail = line.slice(m.index + m[0].length, m.index + m[0].length + 12)
+    aliases = [...aliases, ...extractAliases(tail)]
+
+    const order = inferSpouseOrder(relationLabel, prevOrder)
+    prevOrder = order
+    spouses.push({
+      id: nextSpouseId(),
+      husbandId,
+      surname,
+      fullName,
+      aliases,
+      relationLabel,
+      order,
+      birthDate: '', deathDate: '', burialPlace: '', biography: '',
+      statusFlags: [],
+      rawText: line,
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
+  return spouses
+}
+
 interface ParserState {
   branchLabel: string
   generationLabel: string
@@ -104,7 +164,6 @@ export function parsePartDataMarkdownV2(raw: string): FamilyData {
 
   const lines = raw.split(/\r?\n/).map(normalizeLine).filter((l) => l.length > 0)
   const now = new Date().toISOString()
-  void now // used in future tasks for createdAt/updatedAt
 
   for (const line of lines) {
     const h1 = line.match(/^#\s+(.+)$/)
@@ -134,6 +193,8 @@ export function parsePartDataMarkdownV2(raw: string): FamilyData {
     }
     state.members.push(member)
     state.lastMember = member
+    const newSpouses = extractSpouses(line, member.id, () => state.nextSpouseId++, now)
+    state.spouses.push(...newSpouses)
   }
 
   return {
