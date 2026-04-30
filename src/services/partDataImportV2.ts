@@ -163,6 +163,15 @@ function parseChildToken(token: string, gender: ChildClaimGender): ChildClaimRaw
     flags.push('no-grandchildren')
     cleaned = cleaned.replace(/俱止|俱无后/g, '')
   }
+  // Strip standalone trailing 止 (meaning "no descendants") that isn't part of the name
+  // e.g. "等贞止" -> "等贞", but only when 止 is the final character appended after a valid name
+  if (cleaned.endsWith('止') && cleaned.length > 1) {
+    const withoutZhi = cleaned.slice(0, -1)
+    if (isLikelyPersonName(withoutZhi)) {
+      flags.push('no-grandchildren')
+      cleaned = withoutZhi
+    }
+  }
   if (/早夭/.test(cleaned)) {
     flags.push('lost-record')
     cleaned = cleaned.replace(/早夭/g, '')
@@ -180,7 +189,8 @@ function extractChildClaims(line: string, parentId: number, nextId: () => number
   const claims: ChildClaim[] = []
   let ordinal = 1
   // Capture stops at ，女 / ，生女 / 。 / ； — prevents son block from swallowing daughter section
-  const sonBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?子\s*[:：]\s*([^。；]*?)(?=[。；]|，(?:生)?女[：:]|$)/g)]
+  // Handles both "生N子：" (number before 子) and "生子N：" (number after 子)
+  const sonBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?子(?:[一二三四五六七八九十]+)?\s*[:：]\s*([^。；]*?)(?=[。；]|，(?:生)?女[：:]|$)/g)]
   for (const block of sonBlocks) {
     const tokens = (block[1] ?? '').split(/[、，,]/)
     for (const token of tokens) {
@@ -201,7 +211,8 @@ function extractChildClaims(line: string, parentId: number, nextId: () => number
       })
     }
   }
-  const daughterBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?女\s*[:：]\s*([^。；]*?)(?=[。；]|$)/g)]
+  // Handles "生N女：" and "生女N：" ordering variants
+  const daughterBlocks = [...line.matchAll(/生(?:[一二三四五六七八九十]+)?女(?:[一二三四五六七八九十]+)?\s*[:：]\s*([^。；]*?)(?=[。；]|$)/g)]
   for (const block of daughterBlocks) {
     const tokens = (block[1] ?? '').split(/[、，,]/)
     for (const token of tokens) {
