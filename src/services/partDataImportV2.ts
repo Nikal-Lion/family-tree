@@ -253,6 +253,23 @@ function extractChildClaims(line: string, parentId: number, nextId: () => number
       }
     }
   }
+  // 继子：/嗣子：— adoptive child declarations. These create ChildClaims with isAdoptive=true.
+  const adoptiveBlocks = [...line.matchAll(/(?:继子|嗣子)\s*[:：]\s*([^。；]*?)(?=[。；]|$)/g)]
+  for (const block of adoptiveBlocks) {
+    const tokens = (block[1] ?? '').split(/[、，,]/)
+    for (const token of tokens) {
+      const raw = parseChildToken(token, '男')
+      if (!raw) continue
+      claims.push({
+        id: nextId(), parentId, claimedName: raw.name,
+        ordinalIndex: ordinal++, gender: raw.gender,
+        isAdoptive: true, // 主动标记为继子
+        outAdoptedToHint: '',
+        resolvedMemberId: null, status: 'missing',
+        statusFlags: raw.statusFlags, rawText: line,
+      })
+    }
+  }
   // Fallback: "生N子。A、B、C" without colon (loose form)
   if (claims.length === 0) {
     const looseBlocks = [...line.matchAll(/生([一二三四五六七八九十]+)子。([^。；]+)/g)]

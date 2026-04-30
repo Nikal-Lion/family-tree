@@ -146,4 +146,20 @@ describe('parsePartDataMarkdownV2 - 子女声明 ChildClaim (abbreviated forms)'
     expect(sons.map((s) => s.claimedName)).toEqual(['荣华', '永发'])
     expect(daughters.map((d) => d.claimedName)).toEqual(['带秀', '茶秀'])
   })
+
+  it('TC16: 继子：声明 — isAdoptive=true', () => {
+    const md = `# 太璋公房派下\n## 十五 世\n礼敬 ，继子：必贤。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.childClaims).toHaveLength(1)
+    expect(result.childClaims[0].claimedName).toBe('必贤')
+    expect(result.childClaims[0].isAdoptive).toBe(true)
+  })
+
+  it('TC17: 嗣子：声明 — isAdoptive=true', () => {
+    const md = `# 太璋公房派下\n## 十五 世\n天兴 ，嗣子：有恩。`
+    const result = parsePartDataMarkdownV2(md)
+    expect(result.childClaims).toHaveLength(1)
+    expect(result.childClaims[0].claimedName).toBe('有恩')
+    expect(result.childClaims[0].isAdoptive).toBe(true)
+  })
 })
