@@ -75,6 +75,8 @@ function extractSubjectName(line: string): string {
   return raw
 }
 
+// '配'/'妣'/'娶' are interchangeable primary-spouse markers (regional variants).
+// '其他' falls through to prevOrder + 1 (treated as a subsequent spouse).
 function inferSpouseOrder(label: SpouseRelation, prevOrder: number): number {
   if (label === '配' || label === '妣' || label === '娶') return 1
   if (label === '继配' || label === '继妣') return prevOrder + 1
@@ -93,6 +95,9 @@ function extractAliases(text: string): string[] {
 function extractSpouses(line: string, husbandId: number, nextSpouseId: () => number, now: string): Spouse[] {
   const spouses: Spouse[] = []
   let prevOrder = 0
+  // [一-龥]{1,8} stops at any non-CJK character (punctuation/space/digits).
+  // Real data separates multiple spouses with fullwidth commas，so greedy match is safe.
+  // If input lacks separators, nameToken can absorb the next relation keyword.
   const re = /(继配|三妣|四妣|继妣|配|妣|娶)\s*([一-龥]{1,8})/g
   let m: RegExpExecArray | null
   while ((m = re.exec(line)) !== null) {
@@ -113,7 +118,8 @@ function extractSpouses(line: string, husbandId: number, nextSpouseId: () => num
       }
     }
     const tail = line.slice(m.index + m[0].length, m.index + m[0].length + 12)
-    aliases = [...aliases, ...extractAliases(tail)]
+    const tailAliases = extractAliases(tail)
+    aliases = [...new Set([...aliases, ...tailAliases])]
 
     const order = inferSpouseOrder(relationLabel, prevOrder)
     prevOrder = order
