@@ -13,8 +13,7 @@
     "noEmit": true,
     "jsx": "preserve",
     "strict": true,
-    "types": ["vite/client"],
-    "baseUrl": "."
+    "types": ["vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"]
 }
