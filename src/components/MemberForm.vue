@@ -17,22 +17,7 @@ const emit = defineEmits<{
 
 const store = useFamilyStore()
 
-const form = defineModel<MemberInput>('form', {
-  required: true,
-  default: {
-    name: '',
-    parentId: null,
-    gender: '男' as Gender,
-    birthDate: '',
-    photoUrl: '',
-    biography: '',
-    generationLabelRaw: '',
-    generationNumber: 0,
-    lineageBranch: '',
-    rawNotes: '',
-    uncertaintyFlags: [],
-  } as unknown as MemberInput,
-})
+const form = defineModel<MemberInput>('form', { required: true })
 
 const uncertaintyFlagOptions: Array<{ value: UncertaintyFlag; label: string }> = [
   { value: 'missing', label: '信息缺失' },
