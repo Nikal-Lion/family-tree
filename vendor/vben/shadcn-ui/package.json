@@ -1,0 +1,41 @@
+{
+  "name": "@vben-core/shadcn-ui",
+  "version": "5.7.0",
+  "homepage": "https://github.com/vbenjs/vue-vben-admin",
+  "bugs": "https://github.com/vbenjs/vue-vben-admin/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vbenjs/vue-vben-admin.git",
+    "directory": "packages/@vben-core/uikit/shadcn-ui"
+  },
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "components.json",
+    "src"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@vben-core/composables": "5.7.0",
+    "@vben-core/design": "5.7.0",
+    "@vben-core/icons": "5.7.0",
+    "@vben-core/shared": "5.7.0",
+    "@vben-core/typings": "5.7.0",
+    "@vueuse/core": "^14.3.0",
+    "class-variance-authority": "^0.7.1",
+    "lucide-vue-next": "^0.577.0",
+    "reka-ui": "^2.9.7",
+    "vee-validate": "^4.15.1",
+    "vue": "^3.5.34"
+  }
+}

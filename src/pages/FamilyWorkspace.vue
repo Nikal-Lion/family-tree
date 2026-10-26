@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import AuthManager from '../components/AuthManager.vue'
 import FamilyTreeChart from '../components/FamilyTreeChart.vue'
 import MemberDetail from '../components/MemberDetail.vue'
 import EventManager from '../components/EventManager.vue'
@@ -26,7 +25,7 @@ import { useFamilyStore } from '../stores/familyStore'
 import type { FamilyEventInput, Gender, MemberInput, Track } from '../types/member'
 import type { DuplicateAction, TempMember } from '../types/ocr'
 
-type WorkspaceMode = 'overview' | 'manage' | 'system'
+import type { WorkspaceMode } from '../services/accessControl'
 
 const props = withDefaults(
   defineProps<{
@@ -46,20 +45,6 @@ const isManageMode = computed(() => props.mode === 'manage')
 const isSystemMode = computed(() => props.mode === 'system')
 const showDataWorkspace = computed(() => isOverviewMode.value || isManageMode.value)
 const isViewerMode = computed(() => !isManageMode.value || !canMaintain.value)
-const navItems = computed(() => {
-  const items: Array<{ key: WorkspaceMode; label: string; path: string }> = [
-    { key: 'overview', label: '数据总览', path: '/app/overview' },
-  ]
-
-  if (canMaintain.value) {
-    items.push({ key: 'manage', label: '数据维护', path: '/app/manage' })
-  }
-  if (isSysadmin.value) {
-    items.push({ key: 'system', label: '系统管理', path: '/app/system' })
-  }
-
-  return items
-})
 const canShowManageActions = computed(() => isManageMode.value && canMaintain.value)
 const canShowSystemPanels = computed(() => isSystemMode.value && isSysadmin.value)
 const canShowImportActions = computed(() => canShowManageActions.value)
@@ -79,13 +64,6 @@ watch(
   },
   { immediate: true },
 )
-
-function navigateTo(path: string): void {
-  if (route.path === path) {
-    return
-  }
-  void router.push(path)
-}
 
 const editingId = ref<number | null>(null)
 const formModel = ref<MemberInput>({
@@ -651,28 +629,13 @@ async function handleImport(event: Event) {
 </script>
 
 <template>
+  <div class="legacy-workspace">
   <div class="page">
-    <header class="topbar">
-      <div class="topbar-main">
-        <div>
-          <h1>家族云谱</h1>
-          <p>记录家族世系，传承家族文化</p>
-        </div>
-        <AuthManager @notify="(msg, type) => showToast(msg, type)" />
+    <header class="workspace-toolbar">
+      <div>
+        <h1>{{ route.meta.title }}</h1>
+        <p>{{ route.meta.description }}</p>
       </div>
-
-      <nav class="workspace-nav" aria-label="工作区导航">
-        <button
-          v-for="item in navItems"
-          :key="item.key"
-          class="workspace-nav-item"
-          :class="{ 'workspace-nav-item-active': route.path === item.path }"
-          type="button"
-          @click="navigateTo(item.path)"
-        >
-          {{ item.label }}
-        </button>
-      </nav>
 
       <div v-if="canShowManageActions" class="top-actions">
         <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite/Markdown</button>
@@ -771,7 +734,7 @@ async function handleImport(event: Event) {
           @import-members="handleOcrImport"
         />
 
-        <section class="manage-section">
+        <section v-if="canShowManageActions" class="manage-section">
           <PartDataImportPanel />
         </section>
 
@@ -865,5 +828,6 @@ async function handleImport(event: Event) {
         {{ toast.message }}
       </div>
     </transition>
+  </div>
   </div>
 </template>

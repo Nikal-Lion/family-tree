@@ -39,6 +39,7 @@ defineExpose({ exportAsPng })
 const chartRef = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | null = null
 let lastCenteredId: number | null = null
+let resizeObserver: ResizeObserver | null = null
 
 const treeData = computed(() => buildTreeData(props.members))
 
@@ -124,39 +125,23 @@ function centerOnSelectedNode() {
     return
   }
 
-  const layout = data.getItemLayout(targetIndex)
-  if (!layout || typeof layout.x !== 'number' || typeof layout.y !== 'number') {
+  const element = data.getItemGraphicEl(targetIndex)
+  if (!element) {
     return
   }
 
-  const zr = chart.getZr()
-  if (!zr) {
+  const [x, y] = element.transformCoordToGlobal(0, 0)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
     return
   }
-  const width = Number((zr as any).getWidth?.() ?? 0)
-  const height = Number((zr as any).getHeight?.() ?? 0)
-  const x = Number(layout.x)
-  const y = Number(layout.y)
-  const dx = width * 0.46 - x
-  const dy = height * 0.5 - y
+  lastCenteredId = props.selectedId
 
   chart.dispatchAction({
     type: 'treeRoam',
     seriesIndex: 0,
-    dx,
-    dy,
-    zoom: 1,
-    originX: 0,
-    originY: 0,
+    dx: chart.getWidth() * 0.46 - x,
+    dy: chart.getHeight() * 0.5 - y,
   })
-
-  chart.dispatchAction({
-    type: 'showTip',
-    seriesIndex: 0,
-    dataIndex: targetIndex,
-  })
-
-  lastCenteredId = props.selectedId
 }
 
 function renderChart() {
@@ -168,6 +153,8 @@ function renderChart() {
   const decoratedTree = decorateTree(treeData.value, highlightSet)
 
   chart.setOption({
+    animation: document.visibilityState === 'visible'
+      && !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     tooltip: {
       trigger: 'item',
       triggerOn: 'mousemove',
@@ -181,6 +168,7 @@ function renderChart() {
     },
     series: [
       {
+        id: 'family-tree',
         type: 'tree',
         data: [decoratedTree],
         left: '2%',
@@ -229,7 +217,13 @@ function renderChart() {
 }
 
 function handleResize() {
-  chart?.resize()
+  const element = chartRef.value
+  if (
+    chart && element
+    && (chart.getWidth() !== element.clientWidth || chart.getHeight() !== element.clientHeight)
+  ) {
+    chart.resize()
+  }
 }
 
 onMounted(() => {
@@ -238,6 +232,7 @@ onMounted(() => {
   }
 
   chart = echarts.init(chartRef.value)
+  chart.on('finished', centerOnSelectedNode)
   chart.on('click', (params: any) => {
     const id = params.data?.id
     if (typeof id === 'number') {
@@ -246,13 +241,13 @@ onMounted(() => {
   })
 
   renderChart()
-  setTimeout(() => {
-    centerOnSelectedNode()
-  }, 0)
+  resizeObserver = new ResizeObserver(handleResize)
+  resizeObserver.observe(chartRef.value)
   window.addEventListener('resize', handleResize)
 })
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
   window.removeEventListener('resize', handleResize)
   chart?.dispose()
   chart = null
@@ -270,9 +265,6 @@ watch(
   () => props.selectedId,
   () => {
     renderChart()
-    setTimeout(() => {
-      centerOnSelectedNode()
-    }, 0)
   },
 )
 </script>

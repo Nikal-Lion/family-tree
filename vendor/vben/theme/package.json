@@ -1,0 +1,10 @@
+{
+  "name": "@vben/tailwind-config",
+  "version": "5.7.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./theme": "./theme.css"
+  },
+  "description": "Official Vben v5.7.0 Tailwind theme, with application-local source detection."
+}

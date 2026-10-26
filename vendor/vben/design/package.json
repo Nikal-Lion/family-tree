@@ -1,0 +1,25 @@
+{
+  "name": "@vben-core/design",
+  "version": "5.7.0",
+  "homepage": "https://github.com/vbenjs/vue-vben-admin",
+  "bugs": "https://github.com/vbenjs/vue-vben-admin/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vbenjs/vue-vben-admin.git",
+    "directory": "packages/@vben-core/base/design"
+  },
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./bem": "./src/scss-bem/bem.scss",
+    "./theme": "./src/css/global.css"
+  },
+  "dependencies": {
+    "@iconify/json": "^2.2.476"
+  }
+}
