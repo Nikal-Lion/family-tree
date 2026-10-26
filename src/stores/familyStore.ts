@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import { analyzeFamilyDataImport, summarizeFamilyDataImport, summarizePartDataImportV2, type FamilyDataImportSummary } from '../services/importDiagnostics'
-import { parseImportedJson } from '../services/importExport'
+import { normalizeFamilyData, parseImportedJson } from '../services/importExport'
 import { parsePartDataMarkdown } from '../services/partDataImport'
 import { parsePartDataMarkdownV2, type PartDataImportReport } from '../services/partDataImportV2'
 import { loadFamilyDataFromD1 } from '../services/d1ApiService'
@@ -86,7 +86,10 @@ const ready = ref(false)
 let initPromise: Promise<void> | null = null
 let persistQueue: Promise<void> = Promise.resolve()
 let syncPromise: Promise<boolean> | null = null
-const CORE_RELATION_TYPES = new Set<KinshipRelation['type']>(['father', 'spouse'])
+const pendingWrites = ref(0)
+const lastSaveError = ref('')
+const lastSavedAt = ref<string | null>(null)
+const CORE_RELATION_TYPES = new Set<KinshipRelation['type']>(['father'])
 const ALLOWED_UNCERTAINTY_FLAGS = new Set<UncertaintyFlag>([
   'missing',
   'estimated',
@@ -126,7 +129,7 @@ function applyRelationsToMembers(): void {
 
   if (hasFatherRelations) {
     for (const member of state.members) {
-      member.parentId = fatherByChild.get(member.id) ?? null
+      member.parentId = fatherByChild.get(member.id) ?? member.parentId
     }
   }
 }
@@ -231,23 +234,43 @@ function buildPersistPayload(): FamilyData {
   }
 }
 
-function enqueuePersist(payload: FamilyData): Promise<void> {
-  persistQueue = persistQueue
-    .catch((error) => {
-      console.error('保存数据失败', error)
+function durable<Args extends unknown[]>(action: (...args: Args) => ActionResult | Promise<ActionResult>) {
+  return (...args: Args): Promise<ActionResult> => {
+    pendingWrites.value += 1
+    const syncAtStart = syncPromise
+    const run = persistQueue.then(async (): Promise<ActionResult> => {
+      let before: FamilyData | null = null
+      let selectedBefore = state.selectedId
+      try {
+        if (syncAtStart) await syncAtStart
+        await init()
+        selectedBefore = state.selectedId
+        before = normalizeFamilyData(buildPersistPayload())
+        lastSaveError.value = ''
+        const result = await action(...args)
+        if (!result.ok) {
+          applyLoadedData(before)
+          state.selectedId = selectedBefore
+          return result
+        }
+        const payload = normalizeFamilyData(buildPersistPayload())
+        await saveFamilyData(payload)
+        lastSavedAt.value = new Date().toISOString()
+        return result
+      } catch (error) {
+        lastSaveError.value = error instanceof Error ? error.message : '云端保存失败'
+        if (before) {
+          applyLoadedData(before)
+          state.selectedId = selectedBefore
+        }
+        return { ok: false, message: `未保存：${lastSaveError.value}` }
+      } finally {
+        pendingWrites.value -= 1
+      }
     })
-    .then(() => saveFamilyData(payload))
-
-  return persistQueue
-}
-
-function persist(): void {
-  const payload = buildPersistPayload()
-
-  void enqueuePersist(payload)
-    .catch((error) => {
-      console.error('保存数据失败', error)
-    })
+    persistQueue = run.then(() => undefined)
+    return run
+  }
 }
 
 function applyLoadedData(data: FamilyData, options?: { preserveSelectedId?: boolean }): void {
@@ -298,10 +321,15 @@ async function init(): Promise<void> {
   initPromise = (async () => {
     const loaded = await initializeStorage()
     applyLoadedData(loaded)
+    lastSaveError.value = ''
     ready.value = true
   })()
 
-  return initPromise
+  try {
+    await initPromise
+  } finally {
+    initPromise = null
+  }
 }
 
 async function syncFromCloud(): Promise<boolean> {
@@ -321,6 +349,7 @@ async function syncFromCloud(): Promise<boolean> {
     }
 
     applyLoadedData(loaded, { preserveSelectedId: true })
+    lastSaveError.value = ''
     ready.value = true
     return true
   })()
@@ -356,6 +385,7 @@ function addMember(input: MemberInput): ActionResult {
     photoUrl: normalizeProfileText(input.photoUrl),
     biography: normalizeProfileText(input.biography),
     generationLabelRaw: normalizeProfileText(input.generationLabelRaw),
+    generationNumber: input.generationNumber,
     lineageBranch: normalizeProfileText(input.lineageBranch),
     rawNotes: normalizeProfileText(input.rawNotes),
     uncertaintyFlags: normalizeUncertaintyFlagsInput(input.uncertaintyFlags),
@@ -364,7 +394,6 @@ function addMember(input: MemberInput): ActionResult {
   state.nextId += 1
   state.members.push(member)
   state.selectedId = member.id
-  persist()
 
   return { ok: true }
 }
@@ -392,10 +421,10 @@ function updateMember(id: number, input: MemberInput): ActionResult {
   target.photoUrl = normalizeProfileText(input.photoUrl)
   target.biography = normalizeProfileText(input.biography)
   target.generationLabelRaw = normalizeProfileText(input.generationLabelRaw)
+  target.generationNumber = input.generationNumber
   target.lineageBranch = normalizeProfileText(input.lineageBranch)
   target.rawNotes = normalizeProfileText(input.rawNotes)
   target.uncertaintyFlags = normalizeUncertaintyFlagsInput(input.uncertaintyFlags)
-  persist()
 
   return { ok: true }
 }
@@ -449,7 +478,9 @@ function deleteMember(id: number): ActionResult {
   state.temporals = state.temporals.filter(
     (temporal) => temporal.memberId === null || !deletionIds.has(temporal.memberId),
   )
-  state.burials = state.burials.filter((burial) => !deletionIds.has(burial.memberId))
+  state.burials = state.burials.filter((burial) => !deletionIds.has(burial.memberId)).map((burial) => (
+    burial.temporalId !== null && deletedTemporalIds.has(burial.temporalId) ? { ...burial, temporalId: null } : burial
+  ))
   state.relations = state.relations
     .filter((relation) => !deletionIds.has(relation.fromMemberId) && !deletionIds.has(relation.toMemberId))
     .map((relation) =>
@@ -461,6 +492,9 @@ function deleteMember(id: number): ActionResult {
     deleteSpousesByHusband(state, deletedId)
     deleteChildClaimsByParent(state, deletedId)
   }
+  state.childClaims = state.childClaims.map((claim) => claim.resolvedMemberId !== null && deletionIds.has(claim.resolvedMemberId)
+    ? { ...claim, resolvedMemberId: null, status: 'missing' }
+    : claim)
   syncCoreRelationsFromMembers()
 
   if (state.members.length === 0) {
@@ -469,7 +503,6 @@ function deleteMember(id: number): ActionResult {
     state.selectedId = state.members[0].id
   }
 
-  persist()
 
   return { ok: true, message: `已删除 ${deletionIds.size} 位成员` }
 }
@@ -479,7 +512,6 @@ async function importDataFromJson(raw: string): Promise<ActionResult> {
     const imported = parseImportedJson(raw)
     applyLoadedData(imported)
     ready.value = true
-    await enqueuePersist(buildPersistPayload())
     return { ok: true, message: '导入成功' }
   } catch (error) {
     return {
@@ -521,7 +553,6 @@ async function importDataFromMarkdown(raw: string): Promise<ActionResult> {
     const warnings = analyzeFamilyDataImport(imported)
     applyLoadedData(imported)
     ready.value = true
-    await enqueuePersist(buildPersistPayload())
     return {
       ok: true,
       message:
@@ -535,11 +566,6 @@ async function importDataFromMarkdown(raw: string): Promise<ActionResult> {
       message: error instanceof Error ? error.message : 'Markdown 导入失败',
     }
   }
-}
-
-function replaceData(data: FamilyData): void {
-  applyLoadedData(data)
-  ready.value = true
 }
 
 function previewPartDataV2(raw: string): {
@@ -567,22 +593,13 @@ async function importPartDataV2(raw: string): Promise<{ ok: boolean; message: st
     return { ok: false, message: preview.message }
   }
   const data = preview.data
-  state.members = data.members
-  state.spouses = data.spouses
-  state.childClaims = data.childClaims
-  state.aliases = data.aliases
-  state.relations = data.relations
-  state.temporals = data.temporals
-  state.burials = data.burials
-  state.nextId = data.nextId
-  state.nextAliasId = data.nextAliasId
-  state.nextRelationId = data.nextRelationId
-  state.nextTemporalId = data.nextTemporalId
-  state.nextBurialId = data.nextBurialId
-  state.nextSpouseId = data.nextSpouseId
-  state.nextChildClaimId = data.nextChildClaimId
-  ready.value = true
-  await enqueuePersist(buildPersistPayload())
+  applyLoadedData({
+    ...data,
+    events: state.events.map((event) => ({ ...event, memberId: null })),
+    tracks: state.tracks.map((track) => ({ ...track, memberId: null })),
+    nextEventId: state.nextEventId,
+    nextTrackId: state.nextTrackId,
+  })
   return {
     ok: true,
     message: `导入成功：${data.members.length} 主成员、${data.spouses.length} 配偶、${data.childClaims.length} 子女声明`,
@@ -623,7 +640,6 @@ function addEvent(input: FamilyEventInput): ActionResult {
   state.nextEventId += 1
   state.events.push(event)
   state.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
-  persist()
   return { ok: true, message: '事件新增成功' }
 }
 
@@ -649,7 +665,6 @@ function updateEvent(id: number, input: FamilyEventInput): ActionResult {
   target.updatedAt = new Date().toISOString()
 
   state.events.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
-  persist()
   return { ok: true, message: '事件更新成功' }
 }
 
@@ -660,7 +675,6 @@ function deleteEvent(id: number): ActionResult {
     return { ok: false, message: '事件不存在' }
   }
 
-  persist()
   return { ok: true, message: '事件已删除' }
 }
 
@@ -700,7 +714,6 @@ function addTrackFromGpx(raw: string, name: string, memberId: number | null): Ac
     state.nextTrackId += 1
     state.tracks.push(track)
     state.tracks.sort((a, b) => a.id - b.id)
-    persist()
     return { ok: true, message: '轨迹上传成功' }
   } catch (error) {
     return {
@@ -719,7 +732,6 @@ function updateTrackMeta(id: number, name: string, memberId: number | null): Act
   target.name = normalizeTrackName(name)
   target.memberId = normalizeTrackMemberId(memberId)
   target.updatedAt = new Date().toISOString()
-  persist()
   return { ok: true, message: '轨迹信息已更新' }
 }
 
@@ -730,7 +742,6 @@ function deleteTrack(id: number): ActionResult {
     return { ok: false, message: '轨迹不存在' }
   }
 
-  persist()
   return { ok: true, message: '轨迹已删除' }
 }
 
@@ -840,7 +851,6 @@ function importOcrMembers(tempMembers: TempMember[], options: OcrImportOptions):
     importedCount += 1
   }
 
-  persist()
 
   return {
     ok: true,
@@ -857,7 +867,6 @@ function addSpouseToMember(input: SpouseInput): ActionResult {
     return { ok: false, message: '成员不存在' }
   }
   createSpouse(state, input)
-  persist()
   return { ok: true }
 }
 
@@ -866,7 +875,6 @@ function removeSpouseFromMember(id: number): ActionResult {
   if (!removed) {
     return { ok: false, message: '配偶记录不存在' }
   }
-  persist()
   return { ok: true }
 }
 
@@ -896,6 +904,10 @@ export function useFamilyStore() {
     selectedId,
     selectedMember,
     ready: computed(() => ready.value),
+    saving: computed(() => pendingWrites.value > 0),
+    lastSaveError: computed(() => lastSaveError.value),
+    lastSavedAt: computed(() => lastSavedAt.value),
+    whenIdle: () => persistQueue,
     init,
     syncFromCloud,
     nextId: computed(() => state.nextId),
@@ -903,25 +915,25 @@ export function useFamilyStore() {
     selectMember: (id: number) => {
       state.selectedId = id
     },
-    addMember,
-    updateMember,
-    deleteMember,
-    addTrackFromGpx,
-    updateTrackMeta,
-    deleteTrack,
-    addEvent,
-    updateEvent,
-    deleteEvent,
-    importOcrMembers,
-    importDataFromJson,
+    addMember: durable(addMember),
+    updateMember: durable(updateMember),
+    deleteMember: durable(deleteMember),
+    addTrackFromGpx: durable(addTrackFromGpx),
+    updateTrackMeta: durable(updateTrackMeta),
+    deleteTrack: durable(deleteTrack),
+    addEvent: durable(addEvent),
+    updateEvent: durable(updateEvent),
+    deleteEvent: durable(deleteEvent),
+    importOcrMembers: durable(importOcrMembers),
+    importDataFromJson: durable(importDataFromJson),
     previewDataFromMarkdown,
-    importDataFromMarkdown,
+    importDataFromMarkdown: durable(importDataFromMarkdown),
     previewPartDataV2,
-    importPartDataV2,
-    replaceData,
-    addSpouseToMember,
-    removeSpouseFromMember,
-    exportData: () => ({
+    importPartDataV2: durable(importPartDataV2),
+    getDeletionImpact: (id: number) => collectDescendants(id).length,
+    addSpouseToMember: durable(addSpouseToMember),
+    removeSpouseFromMember: durable(removeSpouseFromMember),
+    exportData: () => normalizeFamilyData({
       schemaVersion: schemaVersion.value,
       members: state.members,
       tracks: state.tracks,

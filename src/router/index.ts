@@ -16,8 +16,10 @@ const router = createRouter({
         { path: '', name: 'AppEntry', component: { render: () => null } },
         ...workspaceEntries.map((entry) => ({
           path: entry.mode,
-          component: () => import('../pages/FamilyWorkspace.vue'),
-          props: { mode: entry.mode },
+          component: entry.mode === 'manage'
+            ? () => import('../pages/ManagePage.vue')
+            : () => import('../pages/FamilyWorkspace.vue'),
+          props: entry.mode === 'manage' ? false : { mode: entry.mode },
           meta: { title: entry.title, description: entry.description, allowedRoles: entry.roles },
         })),
       ],

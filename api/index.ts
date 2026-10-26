@@ -1,3 +1,8 @@
+import type { BurialRecord, FamilyData, GpxPoint, KinshipRelation, NameAlias, TemporalExpression, TrackStats, UncertaintyFlag } from '../src/types/member'
+import type { Spouse } from '../src/types/spouse'
+import type { ChildClaim } from '../src/types/childClaim'
+import { FamilyDataValidationError, normalizeFamilyData } from '../src/services/importExport'
+
 interface Env {
   DB: D1Database
   API_TOKEN?: string
@@ -20,114 +25,6 @@ interface D1PreparedStatement {
 
 interface D1QueryResult<T> {
   results?: T[]
-}
-
-interface GpxPoint {
-  lat: number
-  lng: number
-  ele?: number
-  time?: string
-}
-
-interface TrackStats {
-  distanceMeters: number
-  pointCount: number
-  elevationGainMeters: number | null
-}
-
-type UncertaintyFlag = 'missing' | 'estimated' | 'conflicting' | 'unverified'
-
-interface NameAlias {
-  id: number
-  memberId: number
-  name: string
-  type: 'primary' | 'given' | 'courtesy' | 'art' | 'taboo' | 'alias' | 'other'
-  isPreferred: boolean
-  note?: string
-  rawText?: string
-}
-
-interface KinshipRelation {
-  id: number
-  fromMemberId: number
-  toMemberId: number
-  type: 'father' | 'mother' | 'spouse' | 'step-parent' | 'adoptive-parent' | 'adopted-child' | 'successor' | 'other'
-  status: 'active' | 'ended' | 'uncertain'
-  temporalId: number | null
-  note?: string
-  rawText?: string
-}
-
-interface TemporalExpression {
-  id: number
-  memberId: number | null
-  label: string
-  rawText: string
-  calendarType: 'gregorian' | 'lunar-era' | 'ganzhi' | 'mixed' | 'unknown'
-  normalizedDate?: string
-  precision: 'year' | 'month' | 'day' | 'hour' | 'unknown'
-  confidence: number
-}
-
-interface BurialRecord {
-  id: number
-  memberId: number
-  temporalId: number | null
-  placeRaw: string
-  mountainDirection?: string
-  fenjin?: string
-  note?: string
-  rawText?: string
-}
-
-interface FamilyData {
-  schemaVersion: number
-  members: Array<{
-    id: number
-    name: string
-    parentId: number | null
-    gender: '男' | '女'
-    spouseIds: number[]
-    birthDate?: string
-    photoUrl?: string
-    biography?: string
-    generationLabelRaw?: string
-    lineageBranch?: string
-    rawNotes?: string
-    uncertaintyFlags?: UncertaintyFlag[]
-  }>
-  events: Array<{
-    id: number
-    memberId: number | null
-    type: '婚' | '丧' | '嫁' | '娶' | '生' | '卒' | '其他'
-    title: string
-    date: string
-    description?: string
-    createdAt: string
-    updatedAt: string
-  }>
-  tracks: Array<{
-    id: number
-    name: string
-    memberId: number | null
-    points: GpxPoint[]
-    startPoint: GpxPoint
-    endPoint: GpxPoint
-    stats: TrackStats
-    createdAt: string
-    updatedAt: string
-  }>
-  aliases: NameAlias[]
-  relations: KinshipRelation[]
-  temporals: TemporalExpression[]
-  burials: BurialRecord[]
-  nextId: number
-  nextTrackId: number
-  nextEventId: number
-  nextAliasId: number
-  nextRelationId: number
-  nextTemporalId: number
-  nextBurialId: number
 }
 
 interface MemberProfileExtension {
@@ -247,7 +144,7 @@ async function sha256Hex(text: string): Promise<string> {
     .join('')
 }
 
-function hexToBytes(hex: string): Uint8Array | null {
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> | null {
   if (!/^[0-9a-f]+$/i.test(hex) || hex.length % 2 !== 0) {
     return null
   }
@@ -581,6 +478,11 @@ function parseLoginUserId(pathname: string): number | null {
 
 async function ensureSchema(db: D1Database): Promise<void> {
   await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS family_data_revision (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      revision INTEGER NOT NULL
+    )`),
+    db.prepare('INSERT OR IGNORE INTO family_data_revision VALUES (1, 0)'),
     db.prepare(`CREATE TABLE IF NOT EXISTS members (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
@@ -625,6 +527,25 @@ async function ensureSchema(db: D1Database): Promise<void> {
       raw_notes TEXT,
       uncertainty_flags_json TEXT DEFAULT '[]',
       FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS member_generations (
+      member_id INTEGER PRIMARY KEY,
+      generation_number INTEGER NOT NULL,
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS spouses (
+      id INTEGER PRIMARY KEY,
+      husband_id INTEGER NOT NULL,
+      payload_json TEXT NOT NULL,
+      FOREIGN KEY (husband_id) REFERENCES members(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS child_claims (
+      id INTEGER PRIMARY KEY,
+      parent_id INTEGER NOT NULL,
+      resolved_member_id INTEGER,
+      payload_json TEXT NOT NULL,
+      FOREIGN KEY (parent_id) REFERENCES members(id) ON DELETE CASCADE,
+      FOREIGN KEY (resolved_member_id) REFERENCES members(id) ON DELETE SET NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS name_aliases (
       id INTEGER PRIMARY KEY,
@@ -790,8 +711,6 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     biography: row.biography || '',
   }))
 
-  if (members.length === 0) return null
-
   const trackRows = await db.prepare('SELECT * FROM tracks ORDER BY id').all<{
     id: number
     name: string
@@ -910,6 +829,14 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
   for (const row of metaRows.results ?? []) {
     meta.set(row.key, row.value || '')
   }
+  const generationRows = await db.prepare('SELECT member_id, generation_number FROM member_generations')
+    .all<{ member_id: number; generation_number: number }>()
+  const generations = new Map((generationRows.results ?? []).map((row) => [row.member_id, row.generation_number]))
+  const spouseRows = await db.prepare('SELECT payload_json FROM spouses ORDER BY id').all<{ payload_json: string }>()
+  const claimRows = await db.prepare('SELECT payload_json FROM child_claims ORDER BY id').all<{ payload_json: string }>()
+  const spouses = (spouseRows.results ?? []).map((row) => JSON.parse(row.payload_json) as Spouse)
+  const childClaims = (claimRows.results ?? []).map((row) => JSON.parse(row.payload_json) as ChildClaim)
+  if (!members.length && !tracks.length && !events.length && !meta.has('schema_version')) return null
 
   const maxMemberId = members.length > 0 ? Math.max(...members.map((m) => m.id)) : 0
   const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
@@ -980,6 +907,7 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     const extension = memberProfiles[String(member.id)]
     return {
       ...member,
+      generationNumber: generations.get(member.id),
       generationLabelRaw: typeof extension?.generationLabelRaw === 'string' ? extension.generationLabelRaw : '',
       lineageBranch: typeof extension?.lineageBranch === 'string' ? extension.lineageBranch : '',
       rawNotes: typeof extension?.rawNotes === 'string' ? extension.rawNotes : '',
@@ -992,7 +920,7 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
   const maxTemporalId = temporals.length > 0 ? Math.max(...temporals.map((item) => item.id)) : 0
   const maxBurialId = burials.length > 0 ? Math.max(...burials.map((item) => item.id)) : 0
 
-  return {
+  return normalizeFamilyData({
     schemaVersion: toInt(meta.get('schema_version'), 3),
     members: membersWithExtensions,
     events,
@@ -1001,6 +929,8 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     relations,
     temporals,
     burials,
+    spouses,
+    childClaims,
     nextId: Math.max(toInt(meta.get('next_id'), maxMemberId + 1), maxMemberId + 1),
     nextTrackId: Math.max(toInt(meta.get('next_track_id'), maxTrackId + 1), maxTrackId + 1),
     nextEventId: Math.max(toInt(meta.get('next_event_id'), maxEventId + 1), maxEventId + 1),
@@ -1008,15 +938,27 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     nextRelationId: Math.max(toInt(meta.get('next_relation_id'), maxRelationId + 1), maxRelationId + 1),
     nextTemporalId: Math.max(toInt(meta.get('next_temporal_id'), maxTemporalId + 1), maxTemporalId + 1),
     nextBurialId: Math.max(toInt(meta.get('next_burial_id'), maxBurialId + 1), maxBurialId + 1),
-  }
+    nextSpouseId: toInt(meta.get('next_spouse_id'), 1),
+    nextChildClaimId: toInt(meta.get('next_child_claim_id'), 1),
+  })
 }
 
-async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> {
+async function readRevision(db: D1Database): Promise<number> {
+  const rows = await db.prepare('SELECT revision FROM family_data_revision WHERE singleton = 1').all<{ revision: number }>()
+  return rows.results?.[0]?.revision ?? 0
+}
+
+async function writeFamilyData(db: D1Database, data: FamilyData, expectedRevision: number): Promise<void> {
   await ensureSchema(db)
 
   const nowTs = Math.floor(Date.now() / 1000)
 
   const statements: D1PreparedStatement[] = [
+    // A stale revision violates NOT NULL and rolls back the entire D1 batch.
+    db.prepare('UPDATE family_data_revision SET revision = CASE WHEN revision = ? THEN revision + 1 ELSE NULL END WHERE singleton = 1').bind(expectedRevision),
+    db.prepare('DELETE FROM child_claims'),
+    db.prepare('DELETE FROM spouses'),
+    db.prepare('DELETE FROM member_generations'),
     db.prepare('DELETE FROM kinship_relations'),
     db.prepare('DELETE FROM burial_records'),
     db.prepare('DELETE FROM temporal_expressions'),
@@ -1038,7 +980,7 @@ async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> 
           member.name,
           member.parentId,
           member.gender,
-          JSON.stringify(member.spouseIds || []),
+          '[]',
           member.birthDate || null,
           member.photoUrl || null,
           member.biography || null,
@@ -1046,6 +988,18 @@ async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> 
           nowTs,
         ),
     )
+  }
+
+  for (const member of data.members) {
+    if (member.generationNumber !== undefined) {
+      statements.push(db.prepare('INSERT INTO member_generations VALUES (?, ?)').bind(member.id, member.generationNumber))
+    }
+  }
+  for (const spouse of data.spouses) {
+    statements.push(db.prepare('INSERT INTO spouses VALUES (?, ?, ?)').bind(spouse.id, spouse.husbandId, JSON.stringify(spouse)))
+  }
+  for (const claim of data.childClaims) {
+    statements.push(db.prepare('INSERT INTO child_claims VALUES (?, ?, ?, ?)').bind(claim.id, claim.parentId, claim.resolvedMemberId, JSON.stringify(claim)))
   }
 
   for (const event of data.events ?? []) {
@@ -1187,6 +1141,8 @@ async function writeFamilyData(db: D1Database, data: FamilyData): Promise<void> 
     ['next_relation_id', String(data.nextRelationId)],
     ['next_temporal_id', String(data.nextTemporalId)],
     ['next_burial_id', String(data.nextBurialId)],
+    ['next_spouse_id', String(data.nextSpouseId)],
+    ['next_child_claim_id', String(data.nextChildClaimId)],
     ['aliases_json', JSON.stringify(data.aliases ?? [])],
     ['relations_json', JSON.stringify(data.relations ?? [])],
     ['temporals_json', JSON.stringify(data.temporals ?? [])],
@@ -1504,8 +1460,12 @@ export default {
         if (!auth.authenticated) {
           return errorResponse('未登录，无法读取数据', 401, 'AUTH_REQUIRED')
         }
-        const data = await readFamilyData(env.DB)
-        return jsonResponse({ data })
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const revision = await readRevision(env.DB)
+          const data = await readFamilyData(env.DB)
+          if (revision === await readRevision(env.DB)) return jsonResponse({ data, revision })
+        }
+        return errorResponse('数据正在更新，请稍后重试', 503, 'DATA_BUSY')
       }
 
       if (request.method === 'PUT' && url.pathname === '/api/family-data') {
@@ -1514,18 +1474,31 @@ export default {
           return denied
         }
 
-        const payload = (await request.json()) as { data?: FamilyData }
+        const payload = (await request.json()) as { data?: unknown }
         if (!payload?.data) {
           return jsonResponse({ error: '请求体缺少 data' }, 400)
         }
-        await writeFamilyData(env.DB, payload.data)
-        return jsonResponse({ ok: true })
+        const match = /^"(\d+)"$/.exec(request.headers.get('If-Match') ?? '')
+        if (!match || !Number.isSafeInteger(Number(match[1]))) {
+          return errorResponse('缺少数据版本，请刷新页面后再保存', 428, 'REVISION_REQUIRED')
+        }
+        const expectedRevision = Number(match[1])
+        const data = normalizeFamilyData(payload.data)
+        try {
+          await writeFamilyData(env.DB, data, expectedRevision)
+        } catch (error) {
+          if (await readRevision(env.DB) !== expectedRevision) {
+            return errorResponse('云端数据已被其他页面更新，请重新加载后再修改；本次修改未保存', 409, 'DATA_CONFLICT')
+          }
+          throw error
+        }
+        return jsonResponse({ ok: true, revision: expectedRevision + 1 })
       }
 
       return jsonResponse({ error: '未找到接口' }, 404)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'D1 服务内部错误'
-      return jsonResponse({ error: message }, 500)
+      return jsonResponse({ error: message }, error instanceof FamilyDataValidationError || error instanceof SyntaxError ? 400 : 500)
     }
   },
 }

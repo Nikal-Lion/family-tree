@@ -4,6 +4,26 @@
 
 body { margin: 0; background: #f4f6f9; }
 #app { min-height: 100vh; }
+.workspace-data-fields { display: contents; border: 0; padding: 0; margin: 0; min-width: 0; }
+.storage-error { color: #b42318; background: #fef3f2; padding: 12px; border-radius: 8px; }
+.manage-page { padding: 24px; min-width: 0; }
+.manage-page-heading h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #182230; }
+.manage-page-heading p, .member-save-note { color: #667085; font-size: 13px; }
+.member-manager { width: 100%; }
+.member-table-toolbar { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.member-search { width: 280px; max-width: 100%; }
+.member-form-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; }
+.member-form-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.member-detail-actions { margin-bottom: 20px; }
+.member-detail-card { margin-top: 20px; }
+.member-preserved-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.workspace-shell .legacy-workspace .workspace-tools-layout .right-pane { width: 100%; min-width: 0; background: transparent; border: 0; box-shadow: none; }
+.manage-page .legacy-workspace .page { padding: 0; min-height: 0; }
+@media (max-width: 767px) {
+  .manage-page { padding: 14px; }
+  .member-form-grid { grid-template-columns: 1fr; }
+  .member-search { width: 220px; }
+}
 button, input, textarea, select { font: inherit; }
 .workspace-shell { min-height: 100vh; background: #f4f6f9; }
 .workspace-brand { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 20px; color: #172033; font-size: 18px; font-weight: 700; white-space: nowrap; }

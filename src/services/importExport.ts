@@ -1,346 +1,243 @@
-import {
-  APP_SCHEMA_VERSION,
-  type BurialRecord,
-  type FamilyData,
-  type FamilyEvent,
-  type FamilyEventType,
-  type KinshipRelation,
-  type Member,
-  type NameAlias,
-  type Track,
-  type TemporalExpression,
-  type UncertaintyFlag,
-} from '../types/member'
+import { APP_SCHEMA_VERSION, type FamilyData, type GpxPoint, type Member } from '../types/member'
 
-const EVENT_TYPES: FamilyEventType[] = ['婚', '丧', '嫁', '娶', '生', '卒', '其他']
-const UNCERTAINTY_FLAGS: UncertaintyFlag[] = ['missing', 'estimated', 'conflicting', 'unverified']
-const NAME_ALIAS_TYPES = ['primary', 'given', 'courtesy', 'art', 'taboo', 'alias', 'other']
-const KINSHIP_RELATION_TYPES = [
-  'father',
-  'mother',
-  'spouse',
-  'step-parent',
-  'adoptive-parent',
-  'adopted-child',
-  'successor',
-  'other',
-]
-const KINSHIP_RELATION_STATUSES = ['active', 'ended', 'uncertain']
-const TEMPORAL_CALENDAR_TYPES = ['gregorian', 'lunar-era', 'ganzhi', 'mixed', 'unknown']
-const TEMPORAL_PRECISIONS = ['year', 'month', 'day', 'hour', 'unknown']
+export class FamilyDataValidationError extends Error {}
 
-function isMember(value: unknown): value is Member {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
+type Row = Record<string, unknown>
 
-  const member = value as Partial<Member>
-  const genderOk = member.gender === undefined || member.gender === '男' || member.gender === '女'
-  const parentOk = member.parentId === undefined || member.parentId === null || typeof member.parentId === 'number'
-  const spouseOk = // TODO Task 14: spouseIds removed from Member — check legacy data
-    (member as any).spouseIds === undefined ||
-    (Array.isArray((member as any).spouseIds) && (member as any).spouseIds.every((id: unknown) => typeof id === 'number'))
-  const birthDateOk = member.birthDate === undefined || typeof member.birthDate === 'string'
-  const photoUrlOk = member.photoUrl === undefined || typeof member.photoUrl === 'string'
-  const biographyOk = member.biography === undefined || typeof member.biography === 'string'
-  const generationLabelRawOk =
-    member.generationLabelRaw === undefined || typeof member.generationLabelRaw === 'string'
-  const lineageBranchOk = member.lineageBranch === undefined || typeof member.lineageBranch === 'string'
-  const rawNotesOk = member.rawNotes === undefined || typeof member.rawNotes === 'string'
-  const uncertaintyFlagsOk =
-    member.uncertaintyFlags === undefined ||
-    (Array.isArray(member.uncertaintyFlags) &&
-      member.uncertaintyFlags.every(
-        (flag) => typeof flag === 'string' && UNCERTAINTY_FLAGS.includes(flag as UncertaintyFlag),
-      ))
-
-  return (
-    typeof member.id === 'number' &&
-    typeof member.name === 'string' &&
-    genderOk &&
-    parentOk &&
-    spouseOk &&
-    birthDateOk &&
-    photoUrlOk &&
-    biographyOk &&
-    generationLabelRawOk &&
-    lineageBranchOk &&
-    rawNotesOk &&
-    uncertaintyFlagsOk
-  )
+function invalid(message: string): never {
+  throw new FamilyDataValidationError(`数据无效：${message}`)
 }
 
-function isNameAlias(value: unknown): value is NameAlias {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const alias = value as Partial<NameAlias>
-  const typeOk = typeof alias.type === 'string' && NAME_ALIAS_TYPES.includes(alias.type)
-  return (
-    typeof alias.id === 'number' &&
-    typeof alias.memberId === 'number' &&
-    typeof alias.name === 'string' &&
-    typeOk &&
-    typeof alias.isPreferred === 'boolean' &&
-    (alias.note === undefined || typeof alias.note === 'string') &&
-    (alias.rawText === undefined || typeof alias.rawText === 'string')
-  )
+function record(value: unknown): Row {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('记录必须为对象')
+  return value as Row
 }
 
-function isKinshipRelation(value: unknown): value is KinshipRelation {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const relation = value as Partial<KinshipRelation>
-  const typeOk = typeof relation.type === 'string' && KINSHIP_RELATION_TYPES.includes(relation.type)
-  const statusOk =
-    typeof relation.status === 'string' && KINSHIP_RELATION_STATUSES.includes(relation.status)
-
-  return (
-    typeof relation.id === 'number' &&
-    typeof relation.fromMemberId === 'number' &&
-    typeof relation.toMemberId === 'number' &&
-    typeOk &&
-    statusOk &&
-    (relation.temporalId === null || typeof relation.temporalId === 'number') &&
-    (relation.note === undefined || typeof relation.note === 'string') &&
-    (relation.rawText === undefined || typeof relation.rawText === 'string')
-  )
+function text(row: Row, key: string, fallback = ''): string {
+  const value = row[key] ?? fallback
+  if (typeof value !== 'string') invalid(`${key} 必须为文本`)
+  return value
 }
 
-function isTemporalExpression(value: unknown): value is TemporalExpression {
-  if (!value || typeof value !== 'object') {
-    return false
+function integer(value: unknown, label: string, minimum = 1): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) {
+    invalid(`${label} 必须为不小于 ${minimum} 的整数`)
   }
-
-  const temporal = value as Partial<TemporalExpression>
-  const calendarOk =
-    typeof temporal.calendarType === 'string' && TEMPORAL_CALENDAR_TYPES.includes(temporal.calendarType)
-  const precisionOk =
-    typeof temporal.precision === 'string' && TEMPORAL_PRECISIONS.includes(temporal.precision)
-
-  return (
-    typeof temporal.id === 'number' &&
-    (temporal.memberId === null || typeof temporal.memberId === 'number') &&
-    typeof temporal.label === 'string' &&
-    typeof temporal.rawText === 'string' &&
-    calendarOk &&
-    (temporal.normalizedDate === undefined || typeof temporal.normalizedDate === 'string') &&
-    precisionOk &&
-    typeof temporal.confidence === 'number'
-  )
+  return value
 }
 
-function isBurialRecord(value: unknown): value is BurialRecord {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const burial = value as Partial<BurialRecord>
-  return (
-    typeof burial.id === 'number' &&
-    typeof burial.memberId === 'number' &&
-    (burial.temporalId === null || typeof burial.temporalId === 'number') &&
-    typeof burial.placeRaw === 'string' &&
-    (burial.mountainDirection === undefined || typeof burial.mountainDirection === 'string') &&
-    (burial.fenjin === undefined || typeof burial.fenjin === 'string') &&
-    (burial.note === undefined || typeof burial.note === 'string') &&
-    (burial.rawText === undefined || typeof burial.rawText === 'string')
-  )
+function reference(value: unknown): number | null {
+  return value == null ? null : integer(value, '关联 ID')
 }
 
-function uniqueNumbers(values: number[]): number[] {
-  return [...new Set(values)]
+function literal<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
+  if (!allowed.includes(value as T)) invalid(`${label} 不合法`)
+  return value as T
 }
 
-function normalizeMemberSpouses(members: Member[]): Member[] {
-  const byId = new Map<number, Member>()
-  for (const member of members) {
-    byId.set(member.id, member)
-  }
+function strings(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) invalid('列表必须为文本数组')
+  return [...value]
+}
 
-  for (const member of members) {
-    (member as any).spouseIds = uniqueNumbers( // TODO Task 14: spouseIds removed from Member
-      (member as any).spouseIds.filter((id: number) => id !== member.id && byId.has(id)),
-    )
-  }
+function flags<T extends string>(value: unknown, allowed: readonly T[]): T[] {
+  return strings(value).map((item) => literal(item, allowed, '标记'))
+}
 
-  for (const member of members) {
-    for (const spouseId of (member as any).spouseIds) { // TODO Task 14: spouseIds removed from Member
-      const spouse = byId.get(spouseId)
-      if (!spouse) {
-        continue
-      }
-      if (!(spouse as any).spouseIds.includes(member.id)) {
-        ;(spouse as any).spouseIds.push(member.id)
-      }
+function boolean(value: unknown, fallback = false): boolean {
+  if (value === undefined) return fallback
+  if (typeof value !== 'boolean') invalid('布尔字段不合法')
+  return value
+}
+
+function rows<T extends { id: number }>(root: Row, key: string, parse: (row: Row) => T): T[] {
+  const value = root[key] ?? []
+  if (!Array.isArray(value)) invalid(`${key} 必须为数组`)
+  const ids = new Set<number>()
+  return value.map((item) => {
+    const row = parse(record(item))
+    if (ids.has(row.id)) invalid(`${key} ID 重复：${row.id}`)
+    ids.add(row.id)
+    return row
+  })
+}
+
+function point(value: unknown): GpxPoint {
+  const row = record(value)
+  if (
+    typeof row.lat !== 'number' || !Number.isFinite(row.lat) || Math.abs(row.lat) > 90
+    || typeof row.lng !== 'number' || !Number.isFinite(row.lng) || Math.abs(row.lng) > 180
+  ) invalid('轨迹经纬度不合法')
+  if (row.ele !== undefined && (typeof row.ele !== 'number' || !Number.isFinite(row.ele))) invalid('轨迹海拔不合法')
+  return { lat: row.lat, lng: row.lng, ...(row.ele === undefined ? {} : { ele: row.ele as number }), ...(row.time === undefined ? {} : { time: text(row, 'time') }) }
+}
+
+function nextId(root: Row, key: string, values: { id: number }[]): number {
+  const minimum = values.reduce((max, item) => Math.max(max, item.id + 1), 1)
+  return Math.max(root[key] === undefined ? 1 : integer(root[key], key), minimum)
+}
+
+export function normalizeFamilyData(value: unknown): FamilyData {
+  const root = record(value)
+  const version = root.schemaVersion ?? 3
+  if (version !== 2 && version !== 3 && version !== APP_SCHEMA_VERSION) invalid('仅支持 schemaVersion 2、3、4')
+  if (!Array.isArray(root.members)) invalid('缺少成员数组')
+
+  const members = rows<Member>(root, 'members', (row) => ({
+    id: integer(row.id, '成员 ID'),
+    name: text(row, 'name').trim() || invalid('成员姓名不能为空'),
+    parentId: reference(row.parentId),
+    gender: literal(row.gender ?? '男', ['男', '女'], '性别'),
+    birthDate: text(row, 'birthDate'),
+    photoUrl: text(row, 'photoUrl'),
+    biography: text(row, 'biography'),
+    generationLabelRaw: text(row, 'generationLabelRaw'),
+    ...(row.generationNumber == null ? {} : { generationNumber: integer(row.generationNumber, '世代数', 0) }),
+    lineageBranch: text(row, 'lineageBranch'),
+    rawNotes: text(row, 'rawNotes'),
+    uncertaintyFlags: flags(row.uncertaintyFlags, ['missing', 'estimated', 'conflicting', 'unverified']),
+  }))
+  const aliases = rows<FamilyData['aliases'][number]>(root, 'aliases', (row) => ({
+    id: integer(row.id, '别名 ID'), memberId: integer(row.memberId, '别名成员 ID'),
+    name: text(row, 'name'), type: literal(row.type, ['primary', 'given', 'courtesy', 'art', 'taboo', 'alias', 'other'], '别名类型'),
+    isPreferred: boolean(row.isPreferred), note: text(row, 'note'), rawText: text(row, 'rawText'),
+  }))
+  const temporals = rows<FamilyData['temporals'][number]>(root, 'temporals', (row) => {
+    const confidence = row.confidence ?? 1
+    if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) invalid('纪年可信度不合法')
+    return {
+      id: integer(row.id, '纪年 ID'), memberId: reference(row.memberId), label: text(row, 'label'), rawText: text(row, 'rawText'),
+      calendarType: literal(row.calendarType, ['gregorian', 'lunar-era', 'ganzhi', 'mixed', 'unknown'], '历法'),
+      normalizedDate: text(row, 'normalizedDate'), precision: literal(row.precision, ['year', 'month', 'day', 'hour', 'unknown'], '纪年精度'), confidence,
     }
-  }
-
-  for (const member of members) {
-    (member as any).spouseIds = uniqueNumbers((member as any).spouseIds).sort((a: number, b: number) => a - b) // TODO Task 14: spouseIds removed from Member
-  }
-
-  return members
-}
-
-function isTrack(value: unknown): value is Track {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const track = value as Partial<Track>
-  const points = Array.isArray(track.points) ? track.points : []
-  const hasValidPoints = points.every((point) => {
-    if (!point || typeof point !== 'object') {
-      return false
+  })
+  const relations = rows<FamilyData['relations'][number]>(root, 'relations', (row) => ({
+    id: integer(row.id, '关系 ID'), fromMemberId: integer(row.fromMemberId, '关系来源 ID'), toMemberId: integer(row.toMemberId, '关系目标 ID'),
+    type: literal(row.type, ['father', 'mother', 'spouse', 'step-parent', 'adoptive-parent', 'adopted-child', 'successor', 'other'], '关系类型'),
+    status: literal(row.status ?? 'active', ['active', 'ended', 'uncertain'], '关系状态'),
+    temporalId: reference(row.temporalId), note: text(row, 'note'), rawText: text(row, 'rawText'),
+  }))
+  const burials = rows<FamilyData['burials'][number]>(root, 'burials', (row) => ({
+    id: integer(row.id, '葬地 ID'), memberId: integer(row.memberId, '葬地成员 ID'), temporalId: reference(row.temporalId),
+    placeRaw: text(row, 'placeRaw'), mountainDirection: text(row, 'mountainDirection'), fenjin: text(row, 'fenjin'),
+    note: text(row, 'note'), rawText: text(row, 'rawText'),
+  }))
+  const spouses = rows<FamilyData['spouses'][number]>(root, 'spouses', (row) => ({
+    id: integer(row.id, '配偶 ID'), husbandId: integer(row.husbandId, '配偶关联成员 ID'),
+    surname: text(row, 'surname'), fullName: row.fullName == null ? null : text(row, 'fullName'),
+    aliases: strings(row.aliases), relationLabel: literal(row.relationLabel, ['配', '继配', '妣', '继妣', '三妣', '四妣', '娶', '其他'], '配偶关系'),
+    order: integer(row.order ?? 1, '配偶顺序', 0), birthDate: text(row, 'birthDate'), deathDate: text(row, 'deathDate'),
+    burialPlace: text(row, 'burialPlace'), biography: text(row, 'biography'),
+    statusFlags: flags(row.statusFlags, ['early-deceased', 'lost-record', 'out-married']), rawText: text(row, 'rawText'),
+    createdAt: text(row, 'createdAt'), updatedAt: text(row, 'updatedAt'),
+  }))
+  const childClaims = rows<FamilyData['childClaims'][number]>(root, 'childClaims', (row) => ({
+    id: integer(row.id, '子女声明 ID'), parentId: integer(row.parentId, '声明父亲 ID'), claimedName: text(row, 'claimedName'),
+    ordinalIndex: integer(row.ordinalIndex ?? 0, '子女顺序', 0), gender: literal(row.gender ?? 'unknown', ['男', '女', 'unknown'], '声明性别'),
+    isAdoptive: boolean(row.isAdoptive), outAdoptedToHint: text(row, 'outAdoptedToHint'), resolvedMemberId: reference(row.resolvedMemberId),
+    status: literal(row.status ?? 'missing', ['matched', 'missing', 'ambiguous'], '声明状态'),
+    statusFlags: flags(row.statusFlags, ['no-grandchildren', 'unmarried', 'out-married', 'lost-record']), rawText: text(row, 'rawText'),
+  }))
+  const events = rows<FamilyData['events'][number]>(root, 'events', (row) => ({
+    id: integer(row.id, '事件 ID'), memberId: reference(row.memberId), type: literal(row.type, ['婚', '丧', '嫁', '娶', '生', '卒', '其他'], '事件类型'),
+    title: text(row, 'title'), date: text(row, 'date'), description: text(row, 'description'),
+    createdAt: text(row, 'createdAt'), updatedAt: text(row, 'updatedAt'),
+  }))
+  const tracks = rows<FamilyData['tracks'][number]>(root, 'tracks', (row) => {
+    if (!Array.isArray(row.points) || row.points.length === 0) invalid('轨迹缺少有效点')
+    const points = row.points.map(point)
+    const stats = record(row.stats)
+    if (typeof stats.distanceMeters !== 'number' || !Number.isFinite(stats.distanceMeters) || stats.distanceMeters < 0) invalid('轨迹距离不合法')
+    const elevation = stats.elevationGainMeters ?? null
+    if (elevation !== null && (typeof elevation !== 'number' || !Number.isFinite(elevation))) invalid('轨迹爬升不合法')
+    return {
+      id: integer(row.id, '轨迹 ID'), name: text(row, 'name'), memberId: reference(row.memberId), points,
+      startPoint: point(row.startPoint), endPoint: point(row.endPoint),
+      stats: { distanceMeters: stats.distanceMeters, pointCount: points.length, elevationGainMeters: elevation },
+      createdAt: text(row, 'createdAt'), updatedAt: text(row, 'updatedAt'),
     }
-    const p = point as { lat?: unknown; lng?: unknown }
-    return typeof p.lat === 'number' && typeof p.lng === 'number'
   })
 
-  return (
-    typeof track.id === 'number' &&
-    typeof track.name === 'string' &&
-    (track.memberId === null || typeof track.memberId === 'number') &&
-    hasValidPoints &&
-    !!track.startPoint &&
-    !!track.endPoint &&
-    typeof track.createdAt === 'string' &&
-    typeof track.updatedAt === 'string'
-  )
-}
+  const byId = new Map(members.map((member) => [member.id, member]))
+  const temporalIds = new Set(temporals.map((item) => item.id))
+  const memberRef = (id: number | null) => { if (id !== null && !byId.has(id)) invalid(`关联成员不存在：${id}`) }
+  const temporalRef = (id: number | null) => { if (id !== null && !temporalIds.has(id)) invalid(`关联纪年不存在：${id}`) }
 
-function isEvent(value: unknown): value is FamilyEvent {
-  if (!value || typeof value !== 'object') {
-    return false
+  for (const member of members) memberRef(member.parentId)
+  for (const item of [...aliases, ...burials, ...temporals, ...events, ...tracks]) memberRef(item.memberId)
+  for (const item of [...burials, ...relations]) temporalRef(item.temporalId)
+  for (const relation of relations) {
+    memberRef(relation.fromMemberId)
+    memberRef(relation.toMemberId)
+    if (relation.fromMemberId === relation.toMemberId) invalid('关系不能指向本人')
+    if (relation.type === 'father') {
+      const member = byId.get(relation.fromMemberId)!
+      if (member.parentId !== null && member.parentId !== relation.toMemberId) invalid('父系关系与成员记录冲突')
+      member.parentId = relation.toMemberId
+    }
+  }
+  for (const spouse of spouses) memberRef(spouse.husbandId)
+  for (const claim of childClaims) {
+    memberRef(claim.parentId)
+    memberRef(claim.resolvedMemberId)
+    if (claim.status === 'matched' && claim.resolvedMemberId === null) invalid('已匹配的子女声明缺少关联成员')
   }
 
-  const event = value as Partial<FamilyEvent>
-  const typeOk = typeof event.type === 'string' && EVENT_TYPES.includes(event.type as FamilyEventType)
-  return (
-    typeof event.id === 'number' &&
-    (event.memberId === null || typeof event.memberId === 'number') &&
-    typeOk &&
-    typeof event.title === 'string' &&
-    typeof event.date === 'string' &&
-    (event.description === undefined || typeof event.description === 'string') &&
-    typeof event.createdAt === 'string' &&
-    typeof event.updatedAt === 'string'
-  )
+  const checked = new Set<number>()
+  for (const member of members) {
+    const path = new Set<number>()
+    let current: number | null = member.id
+    while (current !== null && !checked.has(current)) {
+      if (path.has(current)) invalid('父系关系存在循环')
+      path.add(current)
+      current = byId.get(current)!.parentId
+    }
+    for (const id of path) checked.add(id)
+  }
+
+  let relationId = nextId(root, 'nextRelationId', relations)
+  for (const item of root.members) {
+    const row = record(item)
+    if (row.spouseIds === undefined) continue
+    if (!Array.isArray(row.spouseIds)) invalid('旧版配偶关联必须为数组')
+    for (const value of row.spouseIds) {
+      const spouseId = integer(value, '旧版配偶 ID')
+      memberRef(spouseId)
+      if (spouseId === row.id) invalid('配偶不能是本人')
+      if (!relations.some((relation) => relation.type === 'spouse' && (
+        (relation.fromMemberId === row.id && relation.toMemberId === spouseId)
+        || (relation.fromMemberId === spouseId && relation.toMemberId === row.id)
+      ))) {
+        relations.push({ id: relationId++, fromMemberId: integer(row.id, '成员 ID'), toMemberId: spouseId, type: 'spouse', status: 'active', temporalId: null, note: '', rawText: '' })
+      }
+    }
+  }
+
+  return {
+    schemaVersion: APP_SCHEMA_VERSION, members, tracks, events, aliases, relations, temporals, burials, spouses, childClaims,
+    nextId: nextId(root, 'nextId', members), nextTrackId: nextId(root, 'nextTrackId', tracks),
+    nextEventId: nextId(root, 'nextEventId', events), nextAliasId: nextId(root, 'nextAliasId', aliases),
+    nextRelationId: Math.max(nextId(root, 'nextRelationId', relations), relationId),
+    nextTemporalId: nextId(root, 'nextTemporalId', temporals), nextBurialId: nextId(root, 'nextBurialId', burials),
+    nextSpouseId: nextId(root, 'nextSpouseId', spouses), nextChildClaimId: nextId(root, 'nextChildClaimId', childClaims),
+  }
+}
+
+export function createEmptyFamilyData(): FamilyData {
+  return normalizeFamilyData({ schemaVersion: APP_SCHEMA_VERSION, members: [] })
 }
 
 export function exportAsJson(data: FamilyData): string {
-  return JSON.stringify(data, null, 2)
+  return JSON.stringify(normalizeFamilyData(data), null, 2)
 }
 
 export function parseImportedJson(raw: string): FamilyData {
-  let parsed: unknown
+  let value: unknown
   try {
-    parsed = JSON.parse(raw)
+    value = JSON.parse(raw)
   } catch {
-    throw new Error('导入失败：JSON 格式无效')
+    throw new FamilyDataValidationError('导入失败：JSON 格式无效')
   }
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('导入失败：数据结构错误')
-  }
-
-  const obj = parsed as Partial<FamilyData>
-  const sourceSchemaVersion =
-    typeof obj.schemaVersion === 'number' ? obj.schemaVersion : APP_SCHEMA_VERSION - 1
-  if (sourceSchemaVersion !== APP_SCHEMA_VERSION && sourceSchemaVersion !== APP_SCHEMA_VERSION - 1) {
-    throw new Error(
-      `导入失败：仅支持 schemaVersion=${APP_SCHEMA_VERSION - 1} 或 schemaVersion=${APP_SCHEMA_VERSION} 的数据文件`,
-    )
-  }
-
-  const members = Array.isArray(obj.members)
-    ? obj.members.filter(isMember).map((member) => ({
-        ...member,
-        gender: (member.gender === '女' ? '女' : '男') as Member['gender'],
-        parentId: typeof member.parentId === 'number' ? member.parentId : null,
-        spouseIds: Array.isArray((member as any).spouseIds) ? (member as any).spouseIds : [], // TODO Task 14: spouseIds removed from Member
-        birthDate: member.birthDate ?? '',
-        photoUrl: member.photoUrl ?? '',
-        biography: member.biography ?? '',
-        generationLabelRaw: member.generationLabelRaw ?? '',
-        lineageBranch: member.lineageBranch ?? '',
-        rawNotes: member.rawNotes ?? '',
-        uncertaintyFlags: Array.isArray(member.uncertaintyFlags)
-          ? member.uncertaintyFlags.filter((flag) => UNCERTAINTY_FLAGS.includes(flag))
-          : [],
-      }))
-    : []
-  const tracks = Array.isArray(obj.tracks) ? obj.tracks.filter(isTrack) : []
-  const events = Array.isArray(obj.events)
-    ? obj.events.filter(isEvent).map((event) => ({
-        ...event,
-        description: event.description ?? '',
-      }))
-    : []
-  const aliases = Array.isArray(obj.aliases) ? obj.aliases.filter(isNameAlias) : []
-  const relations = Array.isArray(obj.relations) ? obj.relations.filter(isKinshipRelation) : []
-  const temporals = Array.isArray(obj.temporals) ? obj.temporals.filter(isTemporalExpression) : []
-  const burials = Array.isArray(obj.burials) ? obj.burials.filter(isBurialRecord) : []
-  if (members.length === 0) {
-    throw new Error('导入失败：未找到有效成员数据')
-  }
-
-  const ids = new Set<number>()
-  for (const member of members) {
-    if (ids.has(member.id)) {
-      throw new Error('导入失败：成员 ID 重复')
-    }
-    ids.add(member.id)
-  }
-
-  const maxId = Math.max(...members.map((m) => m.id))
-  const nextId = typeof obj.nextId === 'number' ? Math.max(obj.nextId, maxId + 1) : maxId + 1
-  const maxTrackId = tracks.length > 0 ? Math.max(...tracks.map((t) => t.id)) : 0
-  const nextTrackId =
-    typeof obj.nextTrackId === 'number' ? Math.max(obj.nextTrackId, maxTrackId + 1) : maxTrackId + 1
-  const maxEventId = events.length > 0 ? Math.max(...events.map((e) => e.id)) : 0
-  const nextEventId =
-    typeof obj.nextEventId === 'number' ? Math.max(obj.nextEventId, maxEventId + 1) : maxEventId + 1
-  const maxAliasId = aliases.length > 0 ? Math.max(...aliases.map((alias) => alias.id)) : 0
-  const nextAliasId =
-    typeof obj.nextAliasId === 'number' ? Math.max(obj.nextAliasId, maxAliasId + 1) : maxAliasId + 1
-  const maxRelationId = relations.length > 0 ? Math.max(...relations.map((relation) => relation.id)) : 0
-  const nextRelationId =
-    typeof obj.nextRelationId === 'number'
-      ? Math.max(obj.nextRelationId, maxRelationId + 1)
-      : maxRelationId + 1
-  const maxTemporalId = temporals.length > 0 ? Math.max(...temporals.map((temporal) => temporal.id)) : 0
-  const nextTemporalId =
-    typeof obj.nextTemporalId === 'number'
-      ? Math.max(obj.nextTemporalId, maxTemporalId + 1)
-      : maxTemporalId + 1
-  const maxBurialId = burials.length > 0 ? Math.max(...burials.map((burial) => burial.id)) : 0
-  const nextBurialId =
-    typeof obj.nextBurialId === 'number' ? Math.max(obj.nextBurialId, maxBurialId + 1) : maxBurialId + 1
-
-  return {
-    schemaVersion: APP_SCHEMA_VERSION,
-    members: normalizeMemberSpouses(members),
-    tracks,
-    events,
-    aliases,
-    relations,
-    temporals,
-    burials,
-    spouses: [],
-    childClaims: [],
-    nextId,
-    nextTrackId,
-    nextEventId,
-    nextAliasId,
-    nextRelationId,
-    nextTemporalId,
-    nextBurialId,
-    nextSpouseId: 1,
-    nextChildClaimId: 1,
-  }
+  return normalizeFamilyData(value)
 }

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { message } from 'ant-design-vue'
 import type { Gender, Member, MemberInput, UncertaintyFlag } from '../types/member'
 import type { SpouseRelation } from '../types/spouse'
 import { useFamilyStore } from '../stores/familyStore'
 import { findSpousesByHusband } from '../services/spouseService'
+import { createMemberInput } from '../services/memberProfile'
 
 const props = defineProps<{
   members: Member[]
@@ -38,36 +40,7 @@ const parentOptions = computed(() => {
 watch(
   () => props.editingMember,
   (member) => {
-    if (member) {
-      form.value = {
-        name: member.name,
-        parentId: member.parentId,
-        gender: member.gender,
-        birthDate: member.birthDate ?? '',
-        photoUrl: member.photoUrl ?? '',
-        biography: member.biography ?? '',
-        generationLabelRaw: member.generationLabelRaw ?? '',
-        generationNumber: member.generationNumber ?? 0,
-        lineageBranch: member.lineageBranch ?? '',
-        rawNotes: member.rawNotes ?? '',
-        uncertaintyFlags: [...(member.uncertaintyFlags ?? [])],
-      } as unknown as MemberInput
-      return
-    }
-
-    form.value = {
-      name: '',
-      parentId: null,
-      gender: '男',
-      birthDate: '',
-      photoUrl: '',
-      biography: '',
-      generationLabelRaw: '',
-      generationNumber: 0,
-      lineageBranch: '',
-      rawNotes: '',
-      uncertaintyFlags: [],
-    } as unknown as MemberInput
+    form.value = createMemberInput(member ?? undefined)
   },
   { immediate: true },
 )
@@ -102,10 +75,10 @@ const currentSpouses = computed(() => {
   return findSpousesByHusband({ spouses: store.spouses.value }, id)
 })
 
-function addSpouseRow() {
+async function addSpouseRow() {
   const id = props.editingMember?.id
   if (!id || !newSpouseSurname.value.trim()) return
-  store.addSpouseToMember({
+  const result = await store.addSpouseToMember({
     husbandId: id,
     surname: newSpouseSurname.value.trim(),
     fullName: newSpouseFullName.value.trim() || null,
@@ -119,14 +92,19 @@ function addSpouseRow() {
     statusFlags: [],
     rawText: '',
   })
+  if (!result.ok) {
+    message.error(result.message ?? '配偶保存失败')
+    return
+  }
   newSpouseSurname.value = ''
   newSpouseFullName.value = ''
   newSpouseRelation.value = '配'
 }
 
-function removeSpouse(id: number) {
+async function removeSpouse(id: number) {
   if (!confirm('删除该配偶记录？')) return
-  store.removeSpouseFromMember(id)
+  const result = await store.removeSpouseFromMember(id)
+  if (!result.ok) message.error(result.message ?? '删除失败')
 }
 
 function submitForm() {

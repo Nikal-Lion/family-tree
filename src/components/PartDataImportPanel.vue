@@ -18,28 +18,40 @@ async function onFile(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const raw = await file.text()
-  const result = store.previewPartDataV2(raw)
-  if (!result.ok || !result.data || !result.report) {
-    errorMsg.value = result.message ?? '解析失败'
+  try {
+    const raw = await file.text()
+    const result = store.previewPartDataV2(raw)
+    if (!result.ok || !result.data || !result.report) {
+      errorMsg.value = result.message ?? '解析失败'
+      previewState.value = null
+      return
+    }
+    errorMsg.value = ''
+    previewState.value = { data: result.data, report: result.report, rawText: raw }
+  } catch (error) {
+    errorMsg.value = error instanceof Error ? error.message : '读取谱文文件失败'
     previewState.value = null
-    return
+  } finally {
+    input.value = ''
   }
-  errorMsg.value = ''
-  previewState.value = { data: result.data, report: result.report, rawText: raw }
 }
 
 async function confirmImport() {
   if (!previewState.value) return
-  if (!confirm('重新导入将清空现有成员、配偶、子女声明、别名、葬地、时间记录。（事件、轨迹、登录用户保留）确认继续？')) return
+  if (!confirm('重新导入将替换现有成员、配偶、子女声明、别名、葬地和时间记录。事件与轨迹保留，但原成员关联会清空；登录用户不变。请先导出完整备份，确认继续？')) return
   importing.value = true
-  const r = await store.importPartDataV2(previewState.value.rawText)
-  importing.value = false
-  if (r.ok) {
-    previewState.value = null
-    alert(r.message)
-  } else {
-    errorMsg.value = r.message ?? '导入失败'
+  try {
+    const r = await store.importPartDataV2(previewState.value.rawText)
+    if (r.ok) {
+      previewState.value = null
+      alert(r.message)
+    } else {
+      errorMsg.value = r.message ?? '导入失败'
+    }
+  } catch (error) {
+    errorMsg.value = error instanceof Error ? error.message : '导入失败'
+  } finally {
+    importing.value = false
   }
 }
 

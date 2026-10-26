@@ -1,0 +1,53 @@
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { familyFixture } from '../fixtures/familyData'
+
+const fetchMock = vi.fn()
+beforeEach(() => {
+  vi.resetModules()
+  fetchMock.mockReset()
+  vi.stubGlobal('fetch', fetchMock)
+  vi.stubGlobal('location', { origin: 'http://local.invalid' })
+})
+afterEach(() => vi.unstubAllGlobals())
+describe('revision-aware D1 client', () => {
+  it('loads all v4 collections with one request and carries the acknowledged revision', async () => {
+    const api = await import('../../src/services/d1ApiService')
+    api.setSessionToken('test-session')
+    const data = familyFixture()
+    fetchMock.mockResolvedValueOnce(Response.json({ data, revision: 7 }))
+    expect(await api.loadFamilyDataFromD1()).toEqual(data)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    fetchMock.mockResolvedValueOnce(Response.json({ ok: true, revision: 8 }))
+    await api.saveFamilyDataToD1(data)
+    expect((fetchMock.mock.calls[1]![1].headers as Headers).get('If-Match')).toBe('"7"')
+    fetchMock.mockResolvedValueOnce(Response.json({ ok: true, revision: 9 }))
+    await api.saveFamilyDataToD1(data)
+    expect((fetchMock.mock.calls[2]![1].headers as Headers).get('If-Match')).toBe('"8"')
+  })
+  it('refuses blind writes and discards the loaded revision when accounts change', async () => {
+    const api = await import('../../src/services/d1ApiService')
+    await expect(api.saveFamilyDataToD1(familyFixture())).rejects.toThrow('先加载')
+    api.setSessionToken('first')
+    fetchMock.mockResolvedValueOnce(Response.json({ data: familyFixture(), revision: 1 }))
+    await api.loadFamilyDataFromD1()
+    api.setSessionToken('second')
+    await expect(api.saveFamilyDataToD1(familyFixture())).rejects.toThrow('先加载')
+  })
+  it('surfaces stale-write conflicts instead of treating them as success', async () => {
+    const api = await import('../../src/services/d1ApiService')
+    fetchMock.mockResolvedValueOnce(Response.json({ data: familyFixture(), revision: 1 }))
+    await api.loadFamilyDataFromD1()
+    fetchMock.mockResolvedValueOnce(Response.json({ error: '云端已更新，请重新加载' }, { status: 409 }))
+    await expect(api.saveFamilyDataToD1(familyFixture())).rejects.toThrow('云端已更新')
+  })
+  it('surfaces forbidden writes without advancing the acknowledged revision', async () => {
+    const api = await import('../../src/services/d1ApiService')
+    fetchMock.mockResolvedValueOnce(Response.json({ data: familyFixture(), revision: 7 }))
+    await api.loadFamilyDataFromD1()
+    fetchMock.mockResolvedValueOnce(Response.json({ error: '需要 maintainer 权限' }, { status: 403 }))
+    await expect(api.saveFamilyDataToD1(familyFixture())).rejects.toThrow('需要 maintainer 权限')
+    fetchMock.mockResolvedValueOnce(Response.json({ ok: true, revision: 8 }))
+    await api.saveFamilyDataToD1(familyFixture())
+    expect((fetchMock.mock.calls[2]![1].headers as Headers).get('If-Match')).toBe('"7"')
+  })
+})

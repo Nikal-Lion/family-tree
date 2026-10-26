@@ -19,10 +19,11 @@ import {
 } from '../services/d1ApiService'
 import { exportAsJson } from '../services/importExport'
 import { computeGenerations } from '../services/generationService'
+import { createMemberInput } from '../services/memberProfile'
 import { buildNavigationUrl } from '../services/navigationBridge'
 import { exportSqliteData, importSqliteData } from '../services/storage'
 import { useFamilyStore } from '../stores/familyStore'
-import type { FamilyEventInput, Gender, MemberInput, Track } from '../types/member'
+import type { FamilyEventInput, MemberInput, Track } from '../types/member'
 import type { DuplicateAction, TempMember } from '../types/ocr'
 
 import type { WorkspaceMode } from '../services/accessControl'
@@ -30,9 +31,11 @@ import type { WorkspaceMode } from '../services/accessControl'
 const props = withDefaults(
   defineProps<{
     mode?: WorkspaceMode
+    section?: 'all' | 'activities' | 'imports'
   }>(),
   {
     mode: 'overview',
+    section: 'all',
   },
 )
 
@@ -48,6 +51,9 @@ const isViewerMode = computed(() => !isManageMode.value || !canMaintain.value)
 const canShowManageActions = computed(() => isManageMode.value && canMaintain.value)
 const canShowSystemPanels = computed(() => isSystemMode.value && isSysadmin.value)
 const canShowImportActions = computed(() => canShowManageActions.value)
+const showTree = computed(() => props.section === 'all')
+const showActivities = computed(() => props.section !== 'imports')
+const showImports = computed(() => props.section !== 'activities')
 
 watch(
   [() => ready.value, () => isAuthenticated.value],
@@ -66,19 +72,7 @@ watch(
 )
 
 const editingId = ref<number | null>(null)
-const formModel = ref<MemberInput>({
-  name: '',
-  parentId: null,
-  gender: '男' as Gender,
-  birthDate: '',
-  photoUrl: '',
-  biography: '',
-  generationLabelRaw: '',
-  generationNumber: 0,
-  lineageBranch: '',
-  rawNotes: '',
-  uncertaintyFlags: [],
-} as unknown as MemberInput)
+const formModel = ref<MemberInput>(createMemberInput())
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
 const searchKeyword = ref('')
@@ -355,8 +349,8 @@ function resolveMemberName(id: number): string {
   return target?.name ?? `成员#${id}`
 }
 
-function handleSubmit(payload: MemberInput, id?: number) {
-  const result = typeof id === 'number' ? store.updateMember(id, payload) : store.addMember(payload)
+async function handleSubmit(payload: MemberInput, id?: number) {
+  const result = await (typeof id === 'number' ? store.updateMember(id, payload) : store.addMember(payload))
   if (!result.ok) {
     notifyError(result.message ?? '保存失败')
     return
@@ -374,7 +368,7 @@ function handleCancelEdit() {
   editingId.value = null
 }
 
-function handleRemove(id: number) {
+async function handleRemove(id: number) {
   const target = members.value.find((member) => member.id === id)
   if (!target) {
     return
@@ -388,7 +382,7 @@ function handleRemove(id: number) {
     return
   }
 
-  const result = store.deleteMember(id)
+  const result = await store.deleteMember(id)
   if (!result.ok) {
     notifyError(result.message ?? '删除失败')
     return
@@ -400,23 +394,12 @@ function handleRemove(id: number) {
 
 function handleAddChild(parentId: number) {
   editingId.value = null
-  formModel.value = {
-    name: '',
-    parentId,
-    gender: '男',
-    birthDate: '',
-    photoUrl: '',
-    biography: '',
-    generationLabelRaw: '',
-    generationNumber: 0,
-    lineageBranch: '',
-    rawNotes: '',
-    uncertaintyFlags: [],
-  } as unknown as MemberInput
+  formModel.value = createMemberInput(undefined, parentId)
   notifyInfo('已自动填充父亲，请输入子女姓名后保存')
 }
 
-function handleExport() {
+async function handleExport() {
+  await store.whenIdle()
   const json = exportAsJson(store.exportData())
   const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -430,7 +413,8 @@ function handleExport() {
 
 async function handleExportSqlite() {
   try {
-    const binary = await exportSqliteData()
+    await store.whenIdle()
+    const binary = await exportSqliteData(store.exportData())
     const binaryBuffer = binary.buffer.slice(
       binary.byteOffset,
       binary.byteOffset + binary.byteLength,
@@ -453,8 +437,8 @@ function handleExportTreePng() {
   notifySuccess('族谱树图已导出为 PNG')
 }
 
-function handleTrackUpload(payload: { raw: string; name: string; memberId: number | null }) {
-  const result = store.addTrackFromGpx(payload.raw, payload.name, payload.memberId)
+async function handleTrackUpload(payload: { raw: string; name: string; memberId: number | null }) {
+  const result = await store.addTrackFromGpx(payload.raw, payload.name, payload.memberId)
   if (!result.ok) {
     notifyError(result.message ?? '轨迹上传失败')
     return
@@ -462,13 +446,13 @@ function handleTrackUpload(payload: { raw: string; name: string; memberId: numbe
   notifySuccess(result.message ?? '轨迹上传成功')
 }
 
-function handleTrackRemove(id: number) {
+async function handleTrackRemove(id: number) {
   const confirmed = window.confirm('确认删除该轨迹吗？')
   if (!confirmed) {
     return
   }
 
-  const result = store.deleteTrack(id)
+  const result = await store.deleteTrack(id)
   if (!result.ok) {
     notifyError(result.message ?? '轨迹删除失败')
     return
@@ -486,8 +470,8 @@ function handleTrackNavigate(track: Track) {
   notifyError('导航页面被拦截，请允许弹窗后重试')
 }
 
-function handleTrackMetaUpdate(payload: { id: number; name: string; memberId: number | null }) {
-  const result = store.updateTrackMeta(payload.id, payload.name, payload.memberId)
+async function handleTrackMetaUpdate(payload: { id: number; name: string; memberId: number | null }) {
+  const result = await store.updateTrackMeta(payload.id, payload.name, payload.memberId)
   if (!result.ok) {
     notifyError(result.message ?? '轨迹更新失败')
     return
@@ -495,8 +479,8 @@ function handleTrackMetaUpdate(payload: { id: number; name: string; memberId: nu
   notifySuccess(result.message ?? '轨迹信息已更新')
 }
 
-function handleOcrImport(payload: { members: TempMember[]; duplicateAction: DuplicateAction }) {
-  const result = store.importOcrMembers(payload.members, {
+async function handleOcrImport(payload: { members: TempMember[]; duplicateAction: DuplicateAction }) {
+  const result = await store.importOcrMembers(payload.members, {
     duplicateAction: payload.duplicateAction,
   })
   if (!result.ok) {
@@ -506,8 +490,8 @@ function handleOcrImport(payload: { members: TempMember[]; duplicateAction: Dupl
   notifySuccess(result.message ?? 'OCR 导入成功')
 }
 
-function handleEventAdd(payload: FamilyEventInput) {
-  const result = store.addEvent(payload)
+async function handleEventAdd(payload: FamilyEventInput) {
+  const result = await store.addEvent(payload)
   if (!result.ok) {
     notifyError(result.message ?? '事件新增失败')
     return
@@ -515,8 +499,8 @@ function handleEventAdd(payload: FamilyEventInput) {
   notifySuccess(result.message ?? '事件新增成功')
 }
 
-function handleEventUpdate(payload: { id: number; input: FamilyEventInput }) {
-  const result = store.updateEvent(payload.id, payload.input)
+async function handleEventUpdate(payload: { id: number; input: FamilyEventInput }) {
+  const result = await store.updateEvent(payload.id, payload.input)
   if (!result.ok) {
     notifyError(result.message ?? '事件更新失败')
     return
@@ -524,8 +508,8 @@ function handleEventUpdate(payload: { id: number; input: FamilyEventInput }) {
   notifySuccess(result.message ?? '事件更新成功')
 }
 
-function handleEventRemove(id: number) {
-  const result = store.deleteEvent(id)
+async function handleEventRemove(id: number) {
+  const result = await store.deleteEvent(id)
   if (!result.ok) {
     notifyError(result.message ?? '事件删除失败')
     return
@@ -553,95 +537,84 @@ async function handleImport(event: Event) {
     return
   }
 
-  const lowerName = file.name.toLowerCase()
+  try {
+    const lowerName = file.name.toLowerCase()
 
-  if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown')) {
-    const text = await file.text()
-    const preview = store.previewDataFromMarkdown(text)
-    if (!preview.ok) {
-      notifyError(preview.message ?? 'Markdown 预览失败')
-      input.value = ''
+    if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown')) {
+      const text = await file.text()
+      const preview = store.previewDataFromMarkdown(text)
+      if (!preview.ok) {
+        notifyError(preview.message ?? 'Markdown 预览失败')
+        return
+      }
+
+      const summary = preview.summary
+      const summaryText = summary
+        ? `成员 ${summary.memberCount}，始祖分支 ${summary.rootCount}，别名 ${summary.aliasCount}，时间表达 ${summary.temporalCount}，葬地 ${summary.burialCount}`
+        : '未生成统计信息'
+      const warningPreview =
+        preview.warnings.length > 0
+          ? preview.warnings
+              .slice(0, 4)
+              .map((item, index) => `${index + 1}. ${item}`)
+              .join('\n')
+          : '未检测到明显结构风险'
+
+      const confirmCover = window.confirm(
+        `Markdown 预览结果：\n${summaryText}\n\n风险提示（最多展示 4 条）：\n${warningPreview}\n\n导入将替换成员资料，事件和轨迹保留但清空原人物关联。是否继续？`,
+      )
+      if (!confirmCover) return
+
+      const result = await store.importDataFromMarkdown(text)
+      if (!result.ok) {
+        notifyError(result.message ?? 'Markdown 导入失败')
+      } else {
+        editingId.value = null
+        notifySuccess(result.message ?? 'Markdown 导入成功')
+      }
       return
     }
 
-    const summary = preview.summary
-    const summaryText = summary
-      ? `成员 ${summary.memberCount}，始祖分支 ${summary.rootCount}，别名 ${summary.aliasCount}，时间表达 ${summary.temporalCount}，葬地 ${summary.burialCount}`
-      : '未生成统计信息'
-    const warningPreview =
-      preview.warnings.length > 0
-        ? preview.warnings
-            .slice(0, 4)
-            .map((item, index) => `${index + 1}. ${item}`)
-            .join('\n')
-        : '未检测到明显结构风险'
+    const confirmCover = window.confirm('恢复备份将替换全部族谱业务资料（不影响登录账号），是否继续？')
+    if (!confirmCover) return
 
-    const confirmCover = window.confirm(
-      `Markdown 预览结果：\n${summaryText}\n\n风险提示（最多展示 4 条）：\n${warningPreview}\n\n导入将覆盖当前数据，是否继续？`,
-    )
-    if (!confirmCover) {
-      input.value = ''
-      return
-    }
-
-    const result = await store.importDataFromMarkdown(text)
-    if (!result.ok) {
-      notifyError(result.message ?? 'Markdown 导入失败')
-    } else {
-      editingId.value = null
-      notifySuccess(result.message ?? 'Markdown 导入成功')
-    }
-    input.value = ''
-    return
-  }
-
-  const confirmCover = window.confirm('导入将覆盖当前数据，是否继续？')
-  if (!confirmCover) {
-    input.value = ''
-    return
-  }
-
-  if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
-    try {
+    let result
+    if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
       const buffer = await file.arrayBuffer()
       const imported = await importSqliteData(new Uint8Array(buffer))
-      store.replaceData(imported)
-      editingId.value = null
-      notifySuccess('SQLite 导入成功')
-    } catch (error) {
-      notifyError(error instanceof Error ? error.message : 'SQLite 导入失败')
+      result = await store.importDataFromJson(exportAsJson(imported))
+    } else {
+      result = await store.importDataFromJson(await file.text())
     }
+
+    if (!result.ok) {
+      notifyError(result.message ?? '备份恢复失败')
+    } else {
+      editingId.value = null
+      notifySuccess('备份已恢复并保存到云端')
+    }
+  } catch (error) {
+    notifyError(error instanceof Error ? error.message : '读取备份失败')
+  } finally {
     input.value = ''
-    return
   }
-
-  const text = await file.text()
-  const result = await store.importDataFromJson(text)
-  if (!result.ok) {
-    notifyError(result.message ?? '导入失败')
-  } else {
-    editingId.value = null
-    notifySuccess(result.message ?? '导入成功')
-  }
-
-  input.value = ''
 }
 </script>
 
 <template>
   <div class="legacy-workspace">
   <div class="page">
-    <header class="workspace-toolbar">
+    <header v-if="section !== 'activities'" class="workspace-toolbar">
       <div>
-        <h1>{{ route.meta.title }}</h1>
-        <p>{{ route.meta.description }}</p>
+        <h1>{{ section === 'imports' ? '资料导入与备份' : route.meta.title }}</h1>
+        <p>{{ section === 'imports' ? 'JSON / SQLite 备份保留全部族谱业务资料，不包含登录账号和会话。SQLite 为独立备份文件，并非 D1 整库镜像。' : route.meta.description }}</p>
       </div>
 
-      <div v-if="canShowManageActions" class="top-actions">
+      <div v-if="canShowManageActions && showImports" class="top-actions">
         <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite/Markdown</button>
         <button class="btn-primary" type="button" @click="handleExport">导出 JSON</button>
         <button class="btn-ghost" type="button" @click="handleExportSqlite">导出 SQLite</button>
-        <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
+        <button v-if="showTree" class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
       </div>
 
       <div v-else-if="isOverviewMode" class="top-actions top-actions-readonly">
@@ -669,8 +642,11 @@ async function handleImport(event: Event) {
       <button class="btn-primary" type="button" @click="bootstrapStore">重试</button>
     </section>
 
-    <main v-if="showDataWorkspace && !isBootstrapping && !bootstrapError" class="main-layout">
-      <section class="left-pane">
+    <p v-if="store.saving.value" role="status">正在保存到云端，请勿关闭页面…</p>
+    <p v-if="store.lastSaveError.value" role="alert" class="storage-error">修改未保存，已恢复原数据：{{ store.lastSaveError.value }}</p>
+    <fieldset :disabled="store.saving.value" class="workspace-data-fields">
+    <main v-if="showDataWorkspace && !isBootstrapping && !bootstrapError" class="main-layout" :class="{'workspace-tools-layout': !showTree}">
+      <section v-if="showTree" class="left-pane">
         <FamilyTreeChart
           ref="treeChartRef"
           :members="members"
@@ -682,13 +658,14 @@ async function handleImport(event: Event) {
 
       <aside class="right-pane">
         <StatsDashboard
+          v-if="showTree"
           :members="members"
           :tracks="tracks"
           :events="events"
         />
 
         <MemberForm
-          v-if="canShowManageActions"
+          v-if="canShowManageActions && showTree"
           v-model:form="formModel"
           :members="members"
           :editing-member="editingMember"
@@ -697,6 +674,7 @@ async function handleImport(event: Event) {
         />
 
         <MemberList
+          v-if="showTree"
           :members="members"
           :selected-id="store.selectedId.value"
           :find-parent-name="findParentName"
@@ -709,6 +687,7 @@ async function handleImport(event: Event) {
         />
 
         <TrackManager
+          v-if="showActivities"
           :tracks="tracks"
           :members="members"
           :selected-member-id="store.selectedId.value"
@@ -720,6 +699,7 @@ async function handleImport(event: Event) {
         />
 
         <EventManager
+          v-if="showActivities"
           :events="events"
           :members="members"
           :readonly="isViewerMode"
@@ -729,16 +709,17 @@ async function handleImport(event: Event) {
         />
 
         <OcrImportManager
-          v-if="canShowManageActions"
+          v-if="canShowManageActions && showImports"
           :members="members"
           @import-members="handleOcrImport"
         />
 
-        <section v-if="canShowManageActions" class="manage-section">
+        <section v-if="canShowManageActions && showImports" class="manage-section">
           <PartDataImportPanel />
         </section>
 
         <MemberDetail
+          v-if="showTree"
           :member="selectedMember"
           :find-parent-name="findParentName"
           :generation="selectedGeneration"
@@ -754,6 +735,7 @@ async function handleImport(event: Event) {
         />
       </aside>
     </main>
+    </fieldset>
 
     <main v-if="canShowSystemPanels" class="system-layout">
       <section class="diagnostic-panel" :class="`diagnostic-panel-${diagnosticsTone}`">
