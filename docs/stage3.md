@@ -15,7 +15,7 @@ Stage3 目标：
 - 将工作区拆分为三个页面：总览页、维护页、系统管理页。
 - 保证前后端权限一致，避免仅前端控制带来的越权风险。
 
-当前进度：第一阶段官方 Vben 5.7.0 核心布局、Ant Design Vue 登录与三角色导航已提交（`66725d1`）。第二阶段维护页与数据可靠性改动仍在工作区；本文记录实现范围，不表示已发布、全量测试通过或完成全部端到端验收。
+当前进度：第一阶段官方 Vben 5.7.0 核心布局、Ant Design Vue 登录与三角色导航已提交（`66725d1`），第二阶段可靠保存、备份与族人管理已提交（`6693ccc`）。第三阶段将剩余管理模块改为独立 Ant Design Vue 页面；本文记录实现范围，不表示已正式部署或完成整个系统的端到端验收。
 
 ---
 
@@ -56,8 +56,9 @@ Stage3 目标：
 
 - `vendor/vben/` 固定官方 v5.7.0 的核心运行包与主题，保留 MIT 许可及 `upstream.json` 溯源记录；不引入示例业务、Turbo 或 pnpm。
 - 第一阶段切换登录页、布局与路由，业务界面由旧工作区桥接。
-- 第二阶段新增 `ManagePage` 与 `MemberManager`，将族人管理独立为 Ant Design Vue 表格、表单和档案 Drawer；事件、轨迹、资料与备份仍桥接旧工作区分区。
+- 第二阶段新增 `ManagePage` 与 `MemberManager`，将族人管理独立为 Ant Design Vue 表格、表单和档案 Drawer。
 - 第二阶段补齐 schema 4 业务全字段的云端可靠保存与 JSON / SQLite 快照备份；这不是登录账号/会话备份、任意 SQLite 导入或 D1 整库恢复。
+- 第三阶段新增 `ActivityManager`、`ImportManager` 和 `SystemPage`，重写账号管理、Markdown 预览和 OCR 核对界面；管理端不再引用旧工作区。事件/轨迹与导入备份仍沿用现有 store 和服务契约，错误保留输入，只有云端确认才算成功。
 - 总览仍使用旧 ECharts 图谱，未替换新引擎；OCR 语义与去重的已知问题未在本轮修复，不能称为业务全面重写。
 - 当前以在线 D1 为主，离线编辑同步、SQLite + IndexedDB 主存储仍未实现，不宣称离线兜底可用。
 
@@ -73,14 +74,14 @@ Stage3 目标：
 
 ### 4.2 页面拆分策略
 
-路由对应独立入口；保留旧工作区分区作为过渡，而非三个页面全部复用同一工作区模式：
+路由对应独立入口；旧工作区仅保留只读总览：
 
-- `/app/overview`：旧 `FamilyWorkspace` 的 overview 模式，只读展示树图、统计、成员列表、轨迹、事件、详情。
+- `/app/overview`：`FamilyWorkspace` 只读展示树图、统计、成员列表、轨迹、事件、详情，不包含管理端写入和导入组件。
 - `/app/manage`：独立 `ManagePage`，提供三个 Tab：
   - **族人管理**：新 `MemberManager`；Ant Design Vue 表格支持姓名/ID/分支/别名搜索、性别筛选与分页；全字段表单支持谱载代数 `generationNumber`，档案 Drawer 展示配偶、子女声明、别名、关系、纪年、葬地，并支持新增/删除配偶。
-  - **事件与轨迹**：桥接 `FamilyWorkspace mode="manage" section="activities"`。
-  - **资料与备份**：桥接 `FamilyWorkspace mode="manage" section="imports"`，承接 OCR 与业务备份导入导出。
-- `/app/system`：系统管理入口，登录用户管理 + D1 自检。
+  - **事件与轨迹**：独立 `ActivityManager`，支持事件维护、搜索筛选及 GPX 上传、轨迹改名/成员关联/删除/终点导航。
+  - **资料与备份**：独立 `ImportManager`，备份选择后先校验并展示九个集合数量，再确认恢复；Markdown 分析与 OCR 人工核对使用独立 Ant Design Vue 组件。切换主 Tab 保留已挂载页面中的预览和筛选。
+- `/app/system`：独立 `SystemPage`，提供账号管理与真实 D1 自检；账号支持搜索、分页、三角色、启停及删除，保护最后一个启用的管理员。
 
 ### 4.3 UI 展示规则
 
@@ -134,8 +135,13 @@ Stage3 目标：
 - src/router/index.ts：新增三页面路由与角色守卫
 - src/pages/ManagePage.vue：独立维护页与三个 Tab
 - src/components/MemberManager.vue：族人表格、搜索筛选、分页、全字段表单弹窗与档案 Drawer
-- src/components/MemberForm.vue：旧工作区桥接表单与谱载代数字段
-- src/pages/FamilyWorkspace.vue：保留总览与事件轨迹、资料备份桥接分区
+- src/pages/FamilyWorkspace.vue：仅保留只读总览，不再提供管理端桥接分区
+- src/components/ActivityManager.vue：事件、GPX 与轨迹管理
+- src/components/ImportManager.vue：完整业务备份与恢复预览
+- src/components/PartDataImportPanel.vue、src/components/import/*：Markdown 预览和确认导入
+- src/components/OcrImportManager.vue：图片/文字识别核对界面，保留现有实验解析规则
+- src/pages/SystemPage.vue：独立账号管理与 D1 诊断页面
+- src/services/backupFiles.ts：文件类型校验、时间戳备份文件名与下载资源清理
 - src/services/memberProfile.ts：成员档案关联展示
 - src/services/importExport.ts：前后端共享严格 schema 4 契约
 - src/services/backupService.ts、src/services/sqliteService.ts：真正 SQLite 快照备份与历史格式兼容
@@ -153,7 +159,7 @@ Stage3 目标：
 
 ## 7. 验收标准
 
-以下为待逐项验证的标准，不因代码实现或文档更新自动勾选。验证命令为 `npm test`、`npm run build`；本次文档任务不运行测试，完整结果由代码验证任务汇总，不能据此声称全部通过。
+以下为逐项验收清单，不因代码实现或文档更新自动勾选。验证命令为 `npm test`、`npm run build`；管理端关键操作还需使用隔离 D1 和浏览器实际验证，不能以构建成功代替整个系统验收。
 
 - [ ] user 登录后仅可访问总览页，维护与系统管理页不可达。
 - [ ] maintainer 登录后可访问维护页并完成业务数据增删改。
@@ -166,6 +172,16 @@ Stage3 目标：
 - [ ] 无效引用、循环、重复 ID、无关 SQLite 文件被拒绝，原数据不受影响。
 - [ ] D1 保存失败、事务失败或并发修订号冲突时完整回滚，无假成功、部分写入或静默覆盖。
 - [ ] 空库不会自动填充，本地历史数据不会自动上传/删除，云端失败不会静默回退本地。
+- [x] 管理端不再挂载旧工作区；事件、轨迹、Markdown、OCR 核对、备份恢复与系统管理使用独立组件。
+- [x] 备份恢复先校验与预览，取消不写入、失败保留预览，文件可重复选择。
+- [x] 桌面与 390px 窄屏无整页横向溢出，宽表格在自身容器内滚动。
+
+### 第三阶段本地验收记录（2026-10-26）
+
+- 使用隔离 Wrangler / D1，未访问或部署生产环境。实际验证事件新增及修订号冲突后的表单保留、GPX 无效坐标拒绝与合法 `(0,0)` 上传、Markdown / OCR 文字预览及主 Tab 切换保留草稿、SQLite 导出与完整恢复、模拟保存失败保留备份预览。
+- 实际验证临时账号新增/禁用/删除、最后启用管理员的前端保护、D1 503 诊断明确失败且统计显示未知而非 0，以及恢复真实请求后重试。
+- 普通用户直链系统页重定向总览，写请求返回 403；维护人员直链系统页重定向维护页，可见维护操作但无系统菜单。四个管理界面均检查 390px 宽布局。
+- 验收后恢复原族谱快照并核对原登录账号元数据，临时账号已删除。照片 OCR 的真实识别效果、现有解析规则正确性、新图谱及全系统性能不在本次验收结论内。
 
 ---
 
@@ -195,4 +211,4 @@ Stage3 目标：
 - 登录用户角色编辑与最后一个 sysadmin 保护逻辑
 - 业务九集合与计数器的全字段保存、备份往返和合法空库
 - 网络/事务故障回滚、并发冲突与历史 localStorage 不自动迁移
-- 族人管理新界面与旧工作区桥接；OCR 已知问题、新图谱与离线同步不在本轮完成范围
+- 独立管理端与只读总览互不混入操作入口；OCR 已知语义问题、新图谱与离线同步不在本轮完成范围

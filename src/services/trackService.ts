@@ -25,6 +25,20 @@ function haversineDistanceMeters(a: GpxPoint, b: GpxPoint): number {
   return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(h))
 }
 
+export function parseGpxCoordinates(latRaw: string | null, lngRaw: string | null): GpxPoint | null {
+  const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/
+  if (latRaw === null || lngRaw === null
+    || !decimal.test(latRaw.trim()) || !decimal.test(lngRaw.trim())) {
+    return null
+  }
+  const lat = Number(latRaw)
+  const lng = Number(lngRaw)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return null
+  }
+  return { lat, lng }
+}
+
 export function parseGpx(raw: string): ParsedTrack {
   const parser = new DOMParser()
   const xml = parser.parseFromString(raw, 'application/xml')
@@ -40,16 +54,12 @@ export function parseGpx(raw: string): ParsedTrack {
 
   const points: GpxPoint[] = []
   for (const node of trackPoints) {
-    const lat = Number(node.getAttribute('lat'))
-    const lng = Number(node.getAttribute('lon'))
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      continue
-    }
+    const point = parseGpxCoordinates(node.getAttribute('lat'), node.getAttribute('lon'))
+    if (point === null) continue
 
     const eleNode = node.getElementsByTagName('ele')[0]
     const timeNode = node.getElementsByTagName('time')[0]
 
-    const point: GpxPoint = { lat, lng }
     if (eleNode?.textContent) {
       const ele = Number(eleNode.textContent)
       if (Number.isFinite(ele)) {
@@ -64,7 +74,7 @@ export function parseGpx(raw: string): ParsedTrack {
   }
 
   if (points.length < 2) {
-    throw new Error('GPX 解析失败：未提取到有效轨迹点')
+    throw new Error('GPX 解析失败：有效轨迹点不足（至少 2 个；请检查经纬度是否缺失、无效或越界）')
   }
 
   let distanceMeters = 0

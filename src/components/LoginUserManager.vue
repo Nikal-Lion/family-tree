@@ -1,231 +1,248 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import type { LoginUser, LoginUserRole } from '../types/auth'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import {
+  Alert, Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message,
+  type TableProps,
+} from 'ant-design-vue'
+import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
+import { initAuthSession, useAuth } from '../services/authService'
 import { createLoginUser, deleteLoginUser, listLoginUsers, updateLoginUser } from '../services/d1ApiService'
+import { filterLoginUsers, isLastEnabledSysadmin, normalizeLoginMobile } from './loginUserManagerHelpers'
+import type { LoginUser, LoginUserRole } from '../types/auth'
 
 const emit = defineEmits<{
   notify: [message: string, type: 'success' | 'error' | 'info']
 }>()
-
+const auth = useAuth()
 const users = ref<LoginUser[]>([])
 const loading = ref(false)
 const submitting = ref(false)
-const newMobile = ref('')
-const newRole = ref<LoginUserRole>('user')
+const loadError = ref('')
+const actionError = ref('')
+const keyword = ref('')
+const page = ref(1)
+const pageSize = ref(10)
+const editorOpen = ref(false)
+const editingId = ref<number | null>(null)
+const confirmation = ref<{ user: LoginUser; action: 'delete' | 'toggle' } | null>(null)
+const form = reactive<{ mobile: string; role: LoginUserRole }>({ mobile: '', role: 'user' })
+let epoch = 0
+let loadSequence = 0
+let alive = true
+const authorized = computed(() => auth.ready.value && auth.isSysadmin.value)
+const busy = computed(() => submitting.value || loading.value)
+const filtered = computed(() => filterLoginUsers(users.value, keyword.value))
+const roleLabels: Record<LoginUserRole, string> = {
+  user: '普通用户', maintainer: '数据维护人员', sysadmin: '系统管理员',
+}
+const roleOptions = Object.entries(roleLabels).map(([value, label]) => ({ value, label }))
+const columns: TableProps<LoginUser>['columns'] = [
+  { title: 'ID', dataIndex: 'id', width: 72 },
+  { title: '登录手机号', dataIndex: 'mobile', width: 180 },
+  { title: '角色', key: 'role', width: 150 },
+  { title: '状态', key: 'enabled', width: 90 },
+  { title: '更新时间', key: 'updatedAt', width: 180 },
+  { title: '操作', key: 'actions', width: 230 },
+]
+const isCurrent = (started: number) => alive && authorized.value && started === epoch
+const errorText = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 
-function sortUsers(items: LoginUser[]): LoginUser[] {
-  const rank: Record<LoginUserRole, number> = {
-    sysadmin: 0,
-    maintainer: 1,
-    user: 2,
-  }
-
-  return [...items].sort((a, b) => {
-    if (a.role !== b.role) {
-      return rank[a.role] - rank[b.role]
-    }
-    return a.id - b.id
-  })
+function notify(text: string) {
+  message.success(text)
+  emit('notify', text, 'success')
 }
 
 async function refreshUsers(showToast = false): Promise<void> {
+  if (!authorized.value) return
+  const started = epoch
+  const sequence = ++loadSequence
   loading.value = true
+  loadError.value = ''
   try {
-    users.value = sortUsers(await listLoginUsers())
-    if (showToast) {
-      emit('notify', '登录用户列表已刷新', 'success')
+    const result = await listLoginUsers()
+    if (!isCurrent(started) || sequence !== loadSequence) return
+    users.value = result
+    page.value = Math.min(page.value, Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
+    if (showToast) notify('登录用户列表已刷新')
+  } catch (error) {
+    if (isCurrent(started) && sequence === loadSequence) {
+      loadError.value = errorText(error, '加载登录用户失败')
     }
-  } catch (error) {
-    emit('notify', error instanceof Error ? error.message : '加载登录用户失败', 'error')
   } finally {
-    loading.value = false
+    if (isCurrent(started) && sequence === loadSequence) loading.value = false
   }
 }
 
-async function handleCreateUser(): Promise<void> {
-  if (submitting.value) {
-    return
-  }
+function isProtected(id: number) {
+  const item = users.value.find((entry) => entry.id === id)
+  return item ? isLastEnabledSysadmin(users.value, item) : true
+}
 
-  const mobile = newMobile.value.trim()
-  if (!mobile) {
-    emit('notify', '手机号不能为空', 'error')
-    return
-  }
+function openEditor(id?: number) {
+  if (busy.value || !authorized.value) return
+  const item = users.value.find((entry) => entry.id === id)
+  if (id !== undefined && !item) return
+  editingId.value = item?.id ?? null
+  Object.assign(form, { mobile: item?.mobile ?? '', role: item?.role ?? 'user' })
+  actionError.value = ''
+  editorOpen.value = true
+}
 
+async function mutate(operation: () => Promise<unknown>, success: string, close: () => void) {
+  if (busy.value || !authorized.value) return
+  const started = epoch
   submitting.value = true
+  actionError.value = ''
+  ++loadSequence
   try {
-    const created = await createLoginUser({ mobile, role: newRole.value })
-    users.value = sortUsers([...users.value, created])
-    newMobile.value = ''
-    newRole.value = 'user'
-    emit('notify', '登录用户创建成功', 'success')
+    await operation()
+    if (!isCurrent(started)) return
+    close()
+    notify(success)
+    await refreshUsers()
   } catch (error) {
-    emit('notify', error instanceof Error ? error.message : '创建登录用户失败', 'error')
+    if (isCurrent(started)) actionError.value = errorText(error, '操作失败，请重试')
   } finally {
-    submitting.value = false
+    if (isCurrent(started)) submitting.value = false
   }
 }
 
-async function handleToggleEnabled(item: LoginUser): Promise<void> {
-  if (submitting.value) {
+function save() {
+  const mobile = normalizeLoginMobile(form.mobile)
+  if (!mobile) { actionError.value = '手机号不能为空'; return }
+  const id = editingId.value
+  const current = users.value.find((item) => item.id === id)
+  if (id !== null && !current) { actionError.value = '账号已不存在，请刷新列表'; return }
+  if (current && isLastEnabledSysadmin(users.value, current) && form.role !== 'sysadmin') {
+    actionError.value = '至少保留一个启用中的 sysadmin'
     return
   }
-
-  submitting.value = true
-  try {
-    const updated = await updateLoginUser(item.id, { enabled: !item.enabled })
-    users.value = sortUsers(users.value.map((entry) => (entry.id === item.id ? updated : entry)))
-    emit('notify', updated.enabled ? '用户已启用' : '用户已禁用', 'success')
-  } catch (error) {
-    emit('notify', error instanceof Error ? error.message : '更新用户状态失败', 'error')
-  } finally {
-    submitting.value = false
-  }
+  const input = { mobile, role: form.role }
+  void mutate(
+    () => id === null ? createLoginUser(input) : updateLoginUser(id, input),
+    id === null ? '登录用户创建成功' : '登录用户已更新',
+    () => { editorOpen.value = false },
+  )
 }
 
-async function handleRoleChange(item: LoginUser, roleRaw: string): Promise<void> {
-  if (submitting.value) {
-    return
-  }
-
-  const role: LoginUserRole =
-    roleRaw === 'sysadmin' || roleRaw === 'maintainer' ? roleRaw : 'user'
-
-  if (item.role === role) {
-    return
-  }
-
-  submitting.value = true
-  try {
-    const updated = await updateLoginUser(item.id, { role })
-    users.value = sortUsers(users.value.map((entry) => (entry.id === item.id ? updated : entry)))
-    emit('notify', `角色已更新为 ${role}`, 'success')
-  } catch (error) {
-    emit('notify', error instanceof Error ? error.message : '更新用户角色失败', 'error')
-  } finally {
-    submitting.value = false
-  }
+function requestAction(id: number, action: 'delete' | 'toggle') {
+  if (busy.value || !authorized.value) return
+  const item = users.value.find((entry) => entry.id === id)
+  if (!item) return
+  actionError.value = ''
+  confirmation.value = { user: item, action }
 }
 
-function onRoleSelectChange(item: LoginUser, event: Event): void {
-  const target = event.target as HTMLSelectElement | null
-  if (!target) {
+function confirmAction() {
+  const pending = confirmation.value
+  if (!pending) return
+  const current = users.value.find((item) => item.id === pending.user.id)
+  if (!current) { actionError.value = '账号已不存在，请刷新列表'; return }
+  if (isLastEnabledSysadmin(users.value, current) && (pending.action === 'delete' || current.enabled)) {
+    actionError.value = '至少保留一个启用中的 sysadmin'
     return
   }
-  void handleRoleChange(item, target.value)
+  void mutate(
+    () => pending.action === 'delete'
+      ? deleteLoginUser(current.id) : updateLoginUser(current.id, { enabled: !current.enabled }),
+    pending.action === 'delete' ? '登录用户已删除' : current.enabled ? '用户已禁用' : '用户已启用',
+    () => { confirmation.value = null },
+  )
 }
 
-async function handleDelete(item: LoginUser): Promise<void> {
-  if (submitting.value) {
-    return
-  }
-
-  const confirmed = window.confirm(`确认删除登录用户 ${item.mobile} 吗？`)
-  if (!confirmed) {
-    return
-  }
-
-  submitting.value = true
-  try {
-    await deleteLoginUser(item.id)
-    users.value = users.value.filter((entry) => entry.id !== item.id)
-    emit('notify', '登录用户已删除', 'success')
-  } catch (error) {
-    emit('notify', error instanceof Error ? error.message : '删除登录用户失败', 'error')
-  } finally {
-    submitting.value = false
-  }
-}
-
-onMounted(() => {
-  void refreshUsers()
-})
+watch(keyword, () => { page.value = 1 })
+watch(() => [auth.ready.value, auth.user.value, auth.isSysadmin.value] as const, () => {
+  ++epoch
+  ++loadSequence
+  users.value = []
+  loadError.value = ''
+  actionError.value = ''
+  loading.value = false
+  submitting.value = false
+  editorOpen.value = false
+  confirmation.value = null
+  page.value = 1
+  if (authorized.value) void refreshUsers()
+}, { immediate: true, flush: 'sync' })
+onMounted(() => { void initAuthSession() })
+onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
 </script>
 
 <template>
-  <section class="panel-block">
-    <h3>登录用户管理</h3>
+  <div class="login-user-manager">
+    <Alert v-if="!auth.ready.value" type="info" show-icon message="正在验证登录权限…" />
+    <Alert v-else-if="!authorized" type="error" show-icon message="仅系统管理员（sysadmin）可管理登录账号" />
+    <Card v-else :bordered="false" title="登录账号管理">
+      <template #extra><Tag color="blue">{{ users.length }} 个账号</Tag></template>
+      <Alert v-if="loadError" type="error" show-icon message="账号列表刷新失败" :description="`${loadError}；当前列表可能不是最新状态，请重试。`" class="account-alert">
+        <template #action><Button size="small" :disabled="busy" @click="refreshUsers()">重试</Button></template>
+      </Alert>
+      <div class="account-toolbar">
+        <Input v-model:value="keyword" allow-clear placeholder="搜索手机号、ID、角色或状态" class="account-search">
+          <template #prefix><SearchOutlined /></template>
+        </Input>
+        <Space wrap>
+          <Button :disabled="busy" @click="refreshUsers(true)"><template #icon><ReloadOutlined /></template>刷新</Button>
+          <Button type="primary" :disabled="busy || !!loadError" @click="openEditor()"><template #icon><PlusOutlined /></template>新增账号</Button>
+        </Space>
+      </div>
+      <Table
+        :columns="columns" :data-source="filtered" row-key="id" :loading="loading"
+        :scroll="{ x: 1000 }"
+        :pagination="{ current: page, pageSize, showSizeChanger: true, showTotal: (total: number) => `共 ${total} 个账号`, onChange: (next: number, size: number) => { page = next; pageSize = size } }"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'role'"><Tag :color="record.role === 'sysadmin' ? 'purple' : record.role === 'maintainer' ? 'blue' : 'default'">{{ roleLabels[record.role as LoginUserRole] }} · {{ record.role }}</Tag></template>
+          <template v-else-if="column.key === 'enabled'"><Tag :color="record.enabled ? 'success' : 'default'">{{ record.enabled ? '启用' : '禁用' }}</Tag></template>
+          <template v-else-if="column.key === 'updatedAt'">{{ record.updatedAt ? new Date(record.updatedAt).toLocaleString('zh-CN') : '未记录' }}</template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4">
+              <Button type="link" size="small" :disabled="busy || !!loadError" @click="openEditor(record.id)">编辑</Button>
+              <Button type="link" size="small" :danger="record.enabled" :disabled="busy || !!loadError || isProtected(record.id)" @click="requestAction(record.id, 'toggle')">{{ record.enabled ? '禁用' : '启用' }}</Button>
+              <Button type="link" size="small" danger :disabled="busy || !!loadError || isProtected(record.id)" @click="requestAction(record.id, 'delete')">删除</Button>
+            </Space>
+          </template>
+        </template>
+        <template #emptyText>{{ loadError ? '无法读取账号，请重试' : keyword.trim() ? '没有匹配的账号' : '暂无登录账号，请新增' }}</template>
+      </Table>
+      <p class="account-note">支持普通用户、数据维护人员及 sysadmin 三种角色；旧账号继续由服务端兼容。至少保留一个启用中的 sysadmin。修改仅在云端确认后生效，禁用会撤销该账号会话。</p>
+    </Card>
 
-    <div class="field-row login-user-create-row">
-      <input
-        v-model="newMobile"
-        type="tel"
-        class="search-input"
-        placeholder="输入手机号"
-      />
-      <select v-model="newRole">
-        <option value="user">普通用户</option>
-        <option value="maintainer">数据维护人员</option>
-        <option value="sysadmin">sysadmin</option>
-      </select>
-      <button class="btn-primary" type="button" :disabled="submitting" @click="handleCreateUser">
-        {{ submitting ? '处理中...' : '新增' }}
-      </button>
-    </div>
-
-    <div class="btn-row login-user-tools">
-      <button class="btn-ghost" type="button" :disabled="loading || submitting" @click="refreshUsers(true)">
-        {{ loading ? '刷新中...' : '刷新列表' }}
-      </button>
-    </div>
-
-    <ul class="member-list">
-      <li v-for="item in users" :key="item.id" class="member-item">
-        <div class="member-text">
-          <strong>{{ item.mobile }}</strong>
-          <span>
-            角色: {{ item.role }} · 状态: {{ item.enabled ? '启用' : '禁用' }}
-          </span>
+    <Modal :open="authorized && editorOpen" :title="editingId === null ? '新增登录账号' : '编辑登录账号'" :footer="null" width="min(520px, calc(100vw - 32px))" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" destroy-on-close @cancel="editorOpen = false">
+      <Alert v-if="actionError" type="error" show-icon :message="actionError" class="account-alert" />
+      <Form :model="form" layout="vertical" :disabled="submitting" @finish="save">
+        <Form.Item name="mobile" label="登录手机号" :rules="[{ required: true, whitespace: true, message: '请输入手机号' }]">
+          <Input v-model:value="form.mobile" type="tel" autocomplete="off" placeholder="保留国际区号；格式由服务端验证" />
+        </Form.Item>
+        <Form.Item name="role" label="角色" :rules="[{ required: true, message: '请选择角色' }]">
+          <Select v-model:value="form.role" :options="roleOptions" />
+        </Form.Item>
+        <div class="account-form-actions">
+          <Button :disabled="submitting" @click="editorOpen = false">取消</Button>
+          <Button type="primary" html-type="submit" :loading="submitting">保存到云端</Button>
         </div>
-
-        <div class="member-actions">
-          <select
-            class="role-select"
-            :value="item.role"
-            :disabled="submitting"
-            @change="onRoleSelectChange(item, $event)"
-          >
-            <option value="user">普通用户</option>
-            <option value="maintainer">数据维护人员</option>
-            <option value="sysadmin">sysadmin</option>
-          </select>
-          <button class="btn-ghost" type="button" :disabled="submitting" @click="handleToggleEnabled(item)">
-            {{ item.enabled ? '禁用' : '启用' }}
-          </button>
-          <button class="btn-danger" type="button" :disabled="submitting" @click="handleDelete(item)">
-            删除
-          </button>
-        </div>
-      </li>
-
-      <li v-if="!loading && users.length === 0" class="member-empty">
-        暂无登录用户，请先新增。
-      </li>
-    </ul>
-  </section>
+      </Form>
+    </Modal>
+    <Modal :open="authorized && confirmation !== null" :title="confirmation?.action === 'delete' ? '确认删除登录账号？' : confirmation?.user.enabled ? '确认禁用登录账号？' : '确认启用登录账号？'" :confirm-loading="submitting" :ok-button-props="{ danger: confirmation?.action === 'delete' || confirmation?.user.enabled, disabled: busy }" :cancel-button-props="{ disabled: submitting }" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" ok-text="确认" cancel-text="取消" width="min(480px, calc(100vw - 32px))" @ok="confirmAction" @cancel="confirmation = null">
+      <Alert v-if="actionError" type="error" show-icon :message="actionError" class="account-alert" />
+      <p>账号：{{ confirmation?.user.mobile }}</p>
+      <p>{{ confirmation?.action === 'delete' ? '此操作无法撤销，将同时删除该账号的登录会话。' : confirmation?.user.enabled ? '禁用后该账号无法登录，已有登录会话将被撤销。' : '启用后该账号可再次登录。' }}</p>
+    </Modal>
+  </div>
 </template>
 
 <style scoped>
-.login-user-create-row {
-  grid-template-columns: minmax(0, 1fr) auto auto;
-}
-
-.login-user-create-row select {
-  border: 1px solid #ccbfa1;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: #fffdf8;
-}
-
-.login-user-tools {
-  margin-bottom: 10px;
-}
-
-.role-select {
-  border: 1px solid #ccbfa1;
-  border-radius: 8px;
-  padding: 6px 10px;
-  background: #fffdf8;
+.login-user-manager { width: 100%; min-width: 0; }
+.account-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.account-search { width: 320px; max-width: 100%; }
+.account-alert { margin-bottom: 16px; }
+.account-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.account-note { color: #64748b; margin: 16px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+.login-user-manager :deep(.ant-card-body) { min-width: 0; }
+.login-user-manager :deep(.ant-table-wrapper) { max-width: 100%; min-width: 0; }
+.login-user-manager :deep(.ant-pagination) { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .login-user-manager :deep(.ant-card-body) { padding: 16px; }
+  .account-search { width: 100%; }
 }
 </style>

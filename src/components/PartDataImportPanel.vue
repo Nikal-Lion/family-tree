@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { Alert, Button, Card, Modal, Space, Tabs, Tag, message } from 'ant-design-vue'
+import { UploadOutlined } from '@ant-design/icons-vue'
+import { useAuth } from '../services/authService'
 import { useFamilyStore } from '../stores/familyStore'
 import ImportStatsCard from './import/ImportStatsCard.vue'
 import ImportIssuesList from './import/ImportIssuesList.vue'
@@ -9,85 +12,86 @@ import type { FamilyData } from '../types/member'
 import type { PartDataImportReport } from '../services/partDataImportV2'
 
 const store = useFamilyStore()
+const { canMaintain } = useAuth()
 const fileInput = ref<HTMLInputElement | null>(null)
-const previewState = ref<{ data: FamilyData; report: PartDataImportReport; rawText: string } | null>(null)
-const importing = ref(false)
-const errorMsg = ref<string>('')
+const preview = ref<{ data: FamilyData; report: PartDataImportReport; rawText: string; filename: string } | null>(null)
+const reading = ref(false)
+const error = ref('')
+const busy = computed(() => reading.value || store.saving.value)
 
-async function onFile(e: Event) {
-  const input = e.target as HTMLInputElement
+async function onFile(event: Event) {
+  const input = event.target as HTMLInputElement
   const file = input.files?.[0]
-  if (!file) return
+  if (!file || busy.value || !canMaintain.value) return
+  reading.value = true
+  error.value = ''
   try {
-    const raw = await file.text()
-    const result = store.previewPartDataV2(raw)
+    const rawText = await file.text()
+    const result = store.previewPartDataV2(rawText)
     if (!result.ok || !result.data || !result.report) {
-      errorMsg.value = result.message ?? '解析失败'
-      previewState.value = null
-      return
+      throw new Error(result.message ?? '无法解析谱文')
     }
-    errorMsg.value = ''
-    previewState.value = { data: result.data, report: result.report, rawText: raw }
-  } catch (error) {
-    errorMsg.value = error instanceof Error ? error.message : '读取谱文文件失败'
-    previewState.value = null
+    preview.value = { data: result.data, report: result.report, rawText, filename: file.name }
+  } catch (cause) {
+    preview.value = null
+    error.value = cause instanceof Error ? cause.message : '读取谱文文件失败'
   } finally {
+    reading.value = false
     input.value = ''
   }
 }
 
-async function confirmImport() {
-  if (!previewState.value) return
-  if (!confirm('重新导入将替换现有成员、配偶、子女声明、别名、葬地和时间记录。事件与轨迹保留，但原成员关联会清空；登录用户不变。请先导出完整备份，确认继续？')) return
-  importing.value = true
-  try {
-    const r = await store.importPartDataV2(previewState.value.rawText)
-    if (r.ok) {
-      previewState.value = null
-      alert(r.message)
-    } else {
-      errorMsg.value = r.message ?? '导入失败'
-    }
-  } catch (error) {
-    errorMsg.value = error instanceof Error ? error.message : '导入失败'
-  } finally {
-    importing.value = false
-  }
+function confirmImport() {
+  if (!preview.value || busy.value || !canMaintain.value) return
+  const source = preview.value
+  Modal.confirm({
+    title: `导入 ${source.data.members.length} 位族人的谱文？`,
+    content: '将替换现有成员、配偶、子女声明、别名、关系、葬地和时间记录。事件与轨迹保留，但原人物关联清空；登录账号不变。请先导出完整备份。',
+    okText: '替换并保存到云端', cancelText: '取消', okButtonProps: { danger: true },
+    async onOk() {
+      const result = await store.importPartDataV2(source.rawText)
+      if (!result.ok) {
+        error.value = result.message ?? '谱文导入失败'
+        message.error(error.value)
+        throw new Error(error.value)
+      }
+      preview.value = null
+      error.value = ''
+      message.success(result.message ?? '谱文已保存到云端')
+    },
+  })
 }
-
-function cancel() { previewState.value = null }
 </script>
 
 <template>
-  <div class="part-data-import-panel">
-    <h3>📜 从族谱 Markdown 导入</h3>
-    <input ref="fileInput" type="file" accept=".md,.markdown,.txt" @change="onFile" />
-    <p v-if="errorMsg" class="err">{{ errorMsg }}</p>
-
-    <div v-if="previewState" class="preview">
-      <ImportStatsCard :data="previewState.data" :report="previewState.report" />
-      <ImportIssuesList :data="previewState.data" :report="previewState.report" />
-      <MemberPreviewList :data="previewState.data" />
-      <LineSampleViewer :raw-text="previewState.rawText" :data="previewState.data" />
-
-      <div class="sticky-actions">
-        <button @click="cancel">取消</button>
-        <button class="primary" :disabled="importing" @click="confirmImport">
-          {{ importing ? '导入中…' : '确认导入' }}
-        </button>
+  <Card v-if="canMaintain" title="族谱 Markdown 导入" :bordered="false" class="markdown-manager">
+    <p class="markdown-description">先预览成员、关系及问题清单，确认后再替换。预览不会写入云端。</p>
+    <Space wrap>
+      <Button :disabled="busy" :loading="reading" @click="fileInput?.click()"><template #icon><UploadOutlined /></template>选择 Markdown 谱文</Button>
+      <Tag v-if="preview" color="blue" class="markdown-filename">{{ preview.filename }}</Tag>
+    </Space>
+    <input ref="fileInput" type="file" accept=".md,.markdown,.txt" class="markdown-file-input" :disabled="busy" @change="onFile" />
+    <Alert v-if="error" type="error" show-icon :message="error" class="markdown-section" />
+    <template v-if="preview">
+      <div class="markdown-section"><ImportStatsCard :data="preview.data" :report="preview.report" /></div>
+      <Tabs default-active-key="issues">
+        <Tabs.TabPane key="issues" tab="问题清单"><ImportIssuesList :data="preview.data" :report="preview.report" /></Tabs.TabPane>
+        <Tabs.TabPane key="members" tab="成员预览"><MemberPreviewList :data="preview.data" /></Tabs.TabPane>
+        <Tabs.TabPane key="source" tab="原文解析"><LineSampleViewer :raw-text="preview.rawText" :data="preview.data" /></Tabs.TabPane>
+      </Tabs>
+      <div class="markdown-actions">
+        <Button :disabled="busy" @click="preview=null">取消预览</Button>
+        <Button type="primary" :disabled="busy" :loading="store.saving.value" @click="confirmImport">确认导入谱文</Button>
       </div>
-    </div>
-  </div>
+    </template>
+  </Card>
 </template>
 
 <style scoped>
-.part-data-import-panel { padding: 16px; }
-.preview { margin-top: 12px; }
-.sticky-actions {
-  position: sticky; bottom: 0; padding: 12px;
-  background: #fffef7; border-top: 1px solid #ddd;
-  display: flex; gap: 12px; justify-content: flex-end;
-}
-.primary { background: #2d5e2c; color: #fff; padding: 8px 16px; border: none; border-radius: 6px; }
-.err { color: #c0392b; }
+.markdown-manager { min-width: 0; }
+.markdown-description { color: #667085; line-height: 1.7; }
+.markdown-filename { white-space: normal; overflow-wrap: anywhere; }
+.markdown-file-input { display: none; }
+.markdown-section { margin-top: 16px; }
+.markdown-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
 </style>

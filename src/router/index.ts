@@ -18,8 +18,9 @@ const router = createRouter({
           path: entry.mode,
           component: entry.mode === 'manage'
             ? () => import('../pages/ManagePage.vue')
-            : () => import('../pages/FamilyWorkspace.vue'),
-          props: entry.mode === 'manage' ? false : { mode: entry.mode },
+            : entry.mode === 'system'
+              ? () => import('../pages/SystemPage.vue')
+              : () => import('../pages/FamilyWorkspace.vue'),
           meta: { title: entry.title, description: entry.description, allowedRoles: entry.roles },
         })),
       ],
