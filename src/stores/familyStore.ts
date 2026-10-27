@@ -2,7 +2,7 @@ import { computed, reactive, ref } from 'vue'
 import { analyzeFamilyDataImport, summarizeFamilyDataImport, summarizePartDataImportV2, type FamilyDataImportSummary } from '../services/importDiagnostics'
 import { normalizeFamilyData, parseImportedJson } from '../services/importExport'
 import { parsePartDataMarkdown } from '../services/partDataImport'
-import { parsePartDataMarkdownV2, type PartDataImportReport } from '../services/partDataImportV2'
+import { parsePartDataMarkdownV2, type PartDataImportReport, type PartDataParsingNote } from '../services/partDataImportV2'
 import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
 import { parseGpx } from '../services/trackService'
@@ -575,11 +575,12 @@ function previewPartDataV2(raw: string): {
   message: string
 } {
   try {
-    const data = parsePartDataMarkdownV2(raw)
+    const parsingNotes: PartDataParsingNote[] = []
+    const data = parsePartDataMarkdownV2(raw, (note) => parsingNotes.push(note))
     if (data.members.length === 0) {
       return { ok: false, data: null, report: null, message: '未识别到任何成员' }
     }
-    const report = summarizePartDataImportV2(data)
+    const report = summarizePartDataImportV2(data, parsingNotes)
     report.totalLines = raw.split(/\r?\n/).length
     return { ok: true, data, report, message: `识别 ${data.members.length} 位成员` }
   } catch (error) {

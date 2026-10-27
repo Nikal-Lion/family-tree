@@ -66,6 +66,8 @@ function confirmImport() {
 <template>
   <Card v-if="canMaintain" title="族谱 Markdown 导入" :bordered="false" class="markdown-manager">
     <p class="markdown-description">先预览成员、关系及问题清单，确认后再替换。预览不会写入云端。</p>
+    <Alert type="warning" show-icon message="保留原字与长幼顺序，请核对后再导入" description="优先按原名匹配；姓名不同或同名待消歧时，仅在同分支、下一世代、父亲记载及排行唯一一致时自动关联，并列出依据。排行关联本身不改名、不归并人物。没有明确排行时，只有同父、同性别记录完整且顺序无冲突才按原文排序推定。嵌套、无名、缺字及冲突记载保留复核提示；缺字不前移后续排行。问题数量不是正确性证明。" class="markdown-section" />
+    <Alert type="info" show-icon message="同名也可能是出继复载，不一律视为冲突" description="同分支同代有明确的生父出继、兄弟承继及双处正文对应时，整理为同一人物并保留两处原文。生父用于主树，承继父单独记录；只有同名而没有这些依据时不合并。已建立承继父关联的成员不再计为孤立成员。" class="markdown-section" />
     <Space wrap>
       <Button :disabled="busy" :loading="reading" @click="fileInput?.click()"><template #icon><UploadOutlined /></template>选择 Markdown 谱文</Button>
       <Tag v-if="preview" color="blue" class="markdown-filename">{{ preview.filename }}</Tag>

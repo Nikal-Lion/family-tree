@@ -104,6 +104,39 @@ describe('子女声明边界 — 前缀与跨辈叙述', () => {
     expect(childClaims[0].rawText).toContain('生子恭忠')
   })
 
+  describe('真实谱文的附加边界', () => {
+    it('已录人物配上不会被当作配偶说明丢弃', () => {
+      const { members, childClaims } = parsePartDataMarkdownV2('# 分支\n## 十七世\n进臣 ，生二子：华上、配上。\n## 十八世\n配上 进臣次子。')
+      expect(childClaims.map((claim) => claim.claimedName)).toEqual(['华上', '配上'])
+      expect(childClaims[1].resolvedMemberId).toBe(members[1].id)
+    })
+
+    it.each([
+      ['生子：照臣，嗣徙居汀洲城内。', ['照臣']],
+      ['生子：公上、原发、生财、子敬。', ['公上', '原发', '生财', '子敬']],
+      ['生子:培兴,养女:邱春英。', ['培兴', '邱春英']],
+      ['女二女：谷娣、连娣。', ['谷娣', '连娣']],
+      ['生一子：鸣凤，生子：长福、长茂(止)、寿福止、遐福。', ['鸣凤']],
+      ['生二子。往建阳。坤山艮向。', []],
+    ])('%s', (declaration, names) => {
+      const { childClaims } = parseDeclaration(declaration)
+      expect(childClaims.map((claim) => claim.claimedName)).toEqual(names)
+    })
+
+    it('集体状态限于当前声明组，分开的出继只附于前一位', () => {
+      const { childClaims } = parseDeclaration('生二子：宽英、乾英俱往外，女：春兰；生二子：荣华，出继、永发。')
+      expect(childClaims.map((claim) => claim.statusFlags)).toEqual([['out-married'], ['out-married'], [], [], []])
+      expect(childClaims.map((claim) => claim.isAdoptive)).toEqual([false, false, false, true, false])
+    })
+
+    it('保留过继目的地和括号里的状态，不把括号内逗号拆成姓名', () => {
+      const { childClaims } = parseDeclaration('生子：庆良，出继与爱良承嗣、石良（失考，无后）、财良，出继德煌承嗣、金良出继上村。')
+      expect(childClaims.map((claim) => claim.claimedName)).toEqual(['庆良', '石良', '财良', '金良'])
+      expect(childClaims.map((claim) => claim.outAdoptedToHint)).toEqual(['爱良', '', '德煌', '上村'])
+      expect(childClaims[1].statusFlags).toEqual(['no-grandchildren', 'lost-record'])
+    })
+  })
+
   it('文秀之后的生子恭忠往外属于嵌套叙述，不升格为珀臣子女', () => {
     const result = parsePartDataMarkdownV2('# 分支\n## 九世父辈\n珀臣 ，生二子：文秀，生子恭忠往外，廷秀。')
 

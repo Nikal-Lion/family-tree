@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { Alert, Button, Card, Descriptions, Modal, Space, Spin, Tag, message } from 'ant-design-vue'
 import { DownloadOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons-vue'
-import OcrImportManager from './OcrImportManager.vue'
 import PartDataImportPanel from './PartDataImportPanel.vue'
 import { useAuth } from '../services/authService'
 import { createBackupDownload, downloadBackup, readBackupFile, type BackupFormat } from '../services/backupFiles'
@@ -114,7 +113,7 @@ async function restore() {
     </Spin>
     <template v-if="!initializing && !loadError">
       <PartDataImportPanel />
-      <OcrImportManager :members="store.members.value" />
+      <Alert type="info" show-icon message="OCR 暂缓开放" description="本轮不提供图片识别或 OCR 核对导入；请使用族人管理、Markdown 预览或完整业务备份。" />
     </template>
   </Space>
   <Modal v-model:open="restoreOpen" title="确认恢复业务备份" ok-text="恢复并保存到云端" cancel-text="取消" :confirm-loading="store.saving.value" :ok-button-props="{danger:true, disabled:busy}" :cancel-button-props="{disabled:busy}" :mask-closable="!busy" :closable="!busy" :keyboard="!busy" @ok="restore">

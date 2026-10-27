@@ -7,7 +7,8 @@ const props = defineProps<{ data: FamilyData; rawText: string }>()
 const samples = computed(() => props.rawText.split(/\r?\n/)
   .map(line => line.trim()).filter(line => line && !line.startsWith('#')).slice(0, 20)
   .map((line, index) => ({
-    id: index, line, matched: props.data.members.find(member => member.biography === line)?.name ?? '未匹配 / 跳过',
+    id: index, line, matched: props.data.members.find(member =>
+      member.biography?.split('\n').some(source => source === line.replace(/\s+/g, ' ')))?.name ?? '未匹配 / 跳过',
   })))
 const columns = [
   { title: '原文（前 20 行）', dataIndex: 'line', width: 420 },

@@ -10,8 +10,9 @@ const cards = computed(() => [
   { label: '配偶记录', value: props.data.spouses.length, issue: false },
   { label: '子女声明', value: props.data.childClaims.length, issue: false },
   { label: '孤立成员', value: props.report.isolatedMembers.length, issue: true },
-  { label: '不匹配', value: props.report.unmatchedClaims.length, issue: true },
-  { label: '矛盾', value: props.report.contradictions.length, issue: true },
+  { label: '待关联子女声明', value: props.report.unmatchedClaims.length, issue: true },
+  { label: '待消歧', value: props.report.ambiguousAdoptions.length, issue: true },
+  { label: '解析复核提示', value: props.report.parsingNotes.length, issue: true },
 ])
 </script>
 

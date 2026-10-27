@@ -4,7 +4,7 @@ import { Alert, Button, Card, Form, Input, Modal, Select, Space, Table, Tag, mes
 import { PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons-vue'
 import { useFamilyStore } from '../stores/familyStore'
 import { useAuth } from '../services/authService'
-import { buildNavigationUrl } from '../services/navigationBridge'
+import { openTrackNavigation } from '../services/navigationBridge'
 import {
   ACTIVITY_EVENT_TYPES, activityMemberName, filterActivityEvents, filterActivityTracks,
   type ActivityMemberFilter,
@@ -203,21 +203,7 @@ function navigate(id: number): void {
   try {
     const track = store.tracks.value.find((item) => item.id === id)
     if (!track) throw new Error('轨迹不存在，请刷新列表')
-    const point = track.endPoint
-    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)
-      || Math.abs(point.lat) > 90 || Math.abs(point.lng) > 180) {
-      throw new Error('轨迹终点坐标无效，无法导航')
-    }
-    // Opening a blank window avoids noopener's null return on a successful open.
-    const popup = window.open('about:blank', '_blank')
-    if (!popup || popup.closed) throw new Error('导航页面被拦截，请允许弹窗后重试')
-    try {
-      popup.opener = null
-      popup.location.replace(buildNavigationUrl(point))
-    } catch (error) {
-      popup.close()
-      throw error
-    }
+    openTrackNavigation(track.endPoint)
     message.success('已打开终点导航页面')
   } catch (error) {
     actionError.value = errorText(error, '无法打开导航页面，请允许弹窗后重试')

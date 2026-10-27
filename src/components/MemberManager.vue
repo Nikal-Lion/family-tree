@@ -9,6 +9,7 @@ import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-
 import { useFamilyStore } from '../stores/familyStore'
 import { createMemberInput } from '../services/memberProfile'
 import { computeGenerations } from '../services/generationService'
+import { childClaimAdoptionLabel } from '../services/childClaimService'
 import { canAssignParent } from '../services/validators'
 import type { Member, UncertaintyFlag } from '../types/member'
 import type { SpouseInput, SpouseRelation } from '../types/spouse'
@@ -63,7 +64,7 @@ const columns: TableProps<Member>['columns'] = [
 ]
 const relationLabels: Record<string, string> = {
   father: '父系', mother: '母系', spouse: '配偶', 'step-parent': '继亲',
-  'adoptive-parent': '养亲', 'adopted-child': '养子女', successor: '承继', other: '其他',
+  'adoptive-parent': '养亲 / 承继父', 'adopted-child': '养子女', successor: '承继', other: '其他',
 }
 
 async function load(refresh = false) {
@@ -255,7 +256,7 @@ function removeSpouse(id: number) {
       </Card>
       <Card title="谱载子女声明" size="small" class="member-detail-card">
         <p v-if="!selectedClaims.length" class="member-save-note">暂无子女声明</p>
-        <p v-for="claim in selectedClaims" :key="claim.id"><Tag>{{ claim.status === 'matched' ? '已匹配' : claim.status === 'ambiguous' ? '待消歧' : '未匹配' }}</Tag>{{ claim.claimedName }}<span v-if="claim.resolvedMemberId"> → {{ nameOf(claim.resolvedMemberId) }}</span><br /><span class="member-save-note">{{ claim.rawText }}</span></p>
+        <p v-for="claim in selectedClaims" :key="claim.id"><Tag>{{ claim.status === 'matched' ? '已匹配' : claim.status === 'ambiguous' ? '待消歧' : '待关联' }}</Tag>{{ claim.claimedName }}<Tag v-if="claim.isAdoptive">{{ childClaimAdoptionLabel({ relations: store.relations.value }, claim) }}</Tag><span v-if="claim.resolvedMemberId"> → {{ nameOf(claim.resolvedMemberId) }}</span><br /><span class="member-save-note">{{ claim.rawText }}</span></p>
       </Card>
       <Card title="别名、关系与谱文证据" size="small" class="member-detail-card">
         <p v-for="alias in selectedAliases" :key="`alias-${alias.id}`"><Tag>别名</Tag>{{ alias.name }} {{ alias.note }} {{ alias.rawText }}</p>
