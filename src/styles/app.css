@@ -52,7 +52,7 @@ button, input, textarea, select { font: inherit; }
 .workspace-menu .ant-menu-item { height: 44px; line-height: 44px; }
 .workspace-sidebar-note { margin: 32px 20px; padding: 16px; border-radius: 12px; background: #f5f5ff; color: #667085; display: grid; gap: 8px; font-size: 12px; }
 .workspace-sidebar-note strong { color: #4f46e5; font-weight: 500; }
-.workspace-header { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; gap: 12px; padding: 0 20px; }
+.workspace-header { display: flex; flex: 1; align-items: center; justify-content: space-between; min-width: 0; gap: 12px; padding: 0 20px; }
 .workspace-header-context, .workspace-account { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .workspace-browse-label { color: #667085; font-size: 13px; }
 .workspace-account-button { display: flex; align-items: center; gap: 8px; height: 42px; min-width: 0; }
@@ -78,17 +78,19 @@ button, input, textarea, select { font: inherit; }
 .workspace-shell-browse .workspace-brand-icon { background: #2d5e2c; }
 @media (max-width: 767px) {
   .workspace-brand { padding: 0 8px; gap: 8px; font-size: 16px; }
-  .workspace-shell-browse header > div:first-child { flex-shrink: 0; }
+  .workspace-shell header > div:first-child { flex-shrink: 0; }
+  .workspace-shell header .workspace-brand-name { display: none; }
   .workspace-header { padding: 0 8px; gap: 4px; }
   .workspace-header-context, .workspace-account { gap: 4px; }
   .workspace-browse-label, .workspace-role { display: none; }
-  .workspace-header-context { flex: 1; overflow: hidden; }
-  .workspace-header-context .ant-breadcrumb { overflow: hidden; white-space: nowrap; }
-  .workspace-account { flex-shrink: 1; }
-  .workspace-account > .ant-btn:not(.workspace-account-button) { flex-shrink: 0; }
+  .workspace-header-context { flex: 0 0 auto; }
+  .workspace-header-context .ant-breadcrumb { display: none; }
+  .workspace-navigation-toggle.ant-btn { flex: 0 0 44px; width: 44px; height: 44px; padding: 0; }
+  .workspace-account { flex: 1; justify-content: flex-end; }
+  .workspace-header-switch.ant-btn { flex-shrink: 0; height: 44px; padding-inline: 8px; }
   .workspace-shell-browse .workspace-header-context { display: none; }
-  .workspace-account-name { max-width: 64px; }
-  .workspace-account-button { padding-inline: 4px; gap: 4px; }
+  .workspace-account-name { max-width: 96px; }
+  .workspace-account-button { height: 44px; padding-inline: 4px; gap: 4px; }
   .member-manager .ant-card-body { padding: 14px; }
   .member-table-toolbar > .ant-space { max-width: 100%; }
   .workspace-shell .legacy-workspace .page { padding: 14px; }

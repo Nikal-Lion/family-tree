@@ -94,7 +94,7 @@ async function handleLogout() {
     <template #logo>
       <RouterLink class="workspace-brand" to="/app/overview" aria-label="家族云谱首页">
         <span class="workspace-brand-icon"><BookOutlined /></span>
-        <span v-if="!collapsed || browsing || mobile">家族云谱</span>
+        <span v-if="!collapsed || browsing || mobile" class="workspace-brand-name">家族云谱</span>
       </RouterLink>
     </template>
 
@@ -124,6 +124,7 @@ async function handleLogout() {
           <Button
             v-if="!browsing"
             type="text"
+            class="workspace-navigation-toggle"
             :aria-label="collapsed ? '展开导航' : '收起导航'"
             :aria-expanded="!collapsed"
             @click="collapsed = !collapsed"
@@ -137,11 +138,11 @@ async function handleLogout() {
           </Breadcrumb>
         </div>
         <div class="workspace-account">
-          <Button v-if="browsing && canMaintain" @click="navigate('/app/manage')">进入管理</Button>
-          <Button v-else-if="!browsing" type="text" @click="navigate('/app/overview')">浏览族谱</Button>
+          <Button v-if="browsing && canMaintain" class="workspace-header-switch" @click="navigate('/app/manage')">进入管理</Button>
+          <Button v-else-if="!browsing" type="text" class="workspace-header-switch" @click="navigate('/app/overview')">浏览族谱</Button>
           <Tag color="blue" class="workspace-role">{{ roleLabels[role] }}</Tag>
           <Dropdown :trigger="['click']">
-            <Button type="text" class="workspace-account-button" aria-label="账号菜单">
+            <Button type="text" class="workspace-account-button" :aria-label="`账号菜单：${accountName}`">
               <span class="workspace-avatar" aria-hidden="true">{{ avatarText }}</span>
               <span class="workspace-account-name" :title="accountName">{{ accountName }}</span>
             </Button>
