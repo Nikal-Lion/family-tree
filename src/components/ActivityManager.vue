@@ -5,6 +5,7 @@ import { PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@a
 import { useFamilyStore } from '../stores/familyStore'
 import { useAuth } from '../services/authService'
 import { openTrackNavigation } from '../services/navigationBridge'
+import { trackMemberIds, validateGpxFile } from '../services/trackService'
 import {
   ACTIVITY_EVENT_TYPES, activityMemberName, filterActivityEvents, filterActivityTracks,
   type ActivityMemberFilter,
@@ -37,7 +38,10 @@ const filteredEvents = computed(() => filterActivityEvents(
 const filteredTracks = computed(() => filterActivityTracks(
   store.tracks.value, store.members.value, trackKeyword.value, trackMember.value,
 ))
-const focusedTrackCount = computed(() => store.tracks.value.filter((track) => track.memberId === store.selectedId.value).length)
+const focusedTrackCount = computed(() => {
+  const id = store.selectedId.value
+  return id === null ? 0 : store.tracks.value.filter((track) => trackMemberIds(track).includes(id)).length
+})
 const eventColumns: TableProps<FamilyEvent>['columns'] = [
   { title: '日期', dataIndex: 'date', width: 130, sorter: (a, b) => a.date.localeCompare(b.date) },
   { title: '类型', key: 'type', width: 80 },
@@ -63,7 +67,7 @@ const eventForm = reactive<FamilyEventInput>({ memberId: null, type: '其他', t
 const trackOpen = ref(false)
 const trackId = ref<number | null>(null)
 const trackError = ref('')
-const trackForm = reactive<{ name: string; memberId: number | null }>({ name: '', memberId: null })
+const trackForm = reactive<{ name: string; memberIds: number[] }>({ name: '', memberIds: [] })
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const deletion = ref<{ kind: 'event' | 'track'; id: number; name: string } | null>(null)
@@ -127,7 +131,7 @@ function openTrack(id?: number): void {
   const track = id === undefined ? undefined : store.tracks.value.find((item) => item.id === id)
   if (id !== undefined && !track) { message.error('轨迹不存在，请刷新列表'); return }
   trackId.value = track?.id ?? null
-  Object.assign(trackForm, { name: track?.name ?? '', memberId: track?.memberId ?? null })
+  Object.assign(trackForm, { name: track?.name ?? '', memberIds: track ? [...trackMemberIds(track)] : [] })
   selectedFile.value = null
   if (fileInput.value) fileInput.value.value = ''
   trackError.value = ''
@@ -138,18 +142,33 @@ function selectFile(event: Event): void {
   if (!(input instanceof HTMLInputElement)) return
   const file = input.files?.[0]
   if (file) {
-    selectedFile.value = file
-    trackError.value = ''
+    try {
+      validateGpxFile(file)
+      selectedFile.value = file
+      trackError.value = ''
+    } catch (error) {
+      selectedFile.value = null
+      trackError.value = errorText(error, '无法选择 GPX 文件')
+    }
   }
   // Keep the File separately so failed uploads are retryable, including the same file.
   input.value = ''
+}
+function moveTrackMember(index: number, offset: number): void {
+  const next = index + offset
+  if (!writable.value || next < 0 || next >= trackForm.memberIds.length) return
+  const ids = [...trackForm.memberIds]
+  const [id] = ids.splice(index, 1)
+  if (id === undefined) return
+  ids.splice(next, 0, id)
+  trackForm.memberIds = ids
 }
 async function saveTrack(): Promise<void> {
   if (!writable.value) return
   trackError.value = ''
   try {
     if (trackId.value !== null) {
-      const result = await store.updateTrackMeta(trackId.value, trackForm.name, trackForm.memberId)
+      const result = await store.updateTrackMeta(trackId.value, trackForm.name, [...trackForm.memberIds])
       if (!result.ok) {
         trackError.value = result.message ?? '轨迹信息保存失败'
         return
@@ -157,11 +176,12 @@ async function saveTrack(): Promise<void> {
     } else {
       const file = selectedFile.value
       if (!file) { trackError.value = '请选择 GPX 文件'; return }
+      validateGpxFile(file)
       readingFile.value = true
       const raw = await file.text()
       if (!canMaintain.value) { trackError.value = '当前账号没有维护权限'; return }
       const name = trackForm.name.trim() || file.name.replace(/\.gpx$/i, '')
-      const result = await store.addTrackFromGpx(raw, name, trackForm.memberId)
+      const result = await store.addTrackFromGpx(raw, name, [...trackForm.memberIds])
       if (!result.ok) {
         trackError.value = result.message ?? '轨迹上传失败'
         return
@@ -271,7 +291,7 @@ function navigate(id: number): void {
       <p v-if="store.selectedId.value !== null" class="activity-note">当前选中成员：{{ memberName(store.selectedId.value) }} · 关联 {{ focusedTrackCount }} 条轨迹</p>
       <Table :columns="trackColumns" :data-source="filteredTracks" row-key="id" :loading="initializing" :scroll="{x:1090}" :pagination="{pageSize:10, showTotal:(total:number)=>`共 ${total} 条轨迹`}" :locale="{emptyText:'暂无匹配轨迹，可上传 GPX 文件'}">
         <template #bodyCell="{column, record}">
-          <template v-if="column.key === 'member'">{{ memberName(record.memberId) }}</template>
+          <template v-if="column.key === 'member'">{{ trackMemberIds({ memberId: record.memberId, memberIds: record.memberIds }).map((id, index) => `${index + 1}. ${memberName(id)}`).join(' → ') || '未关联成员' }}</template>
           <template v-else-if="column.key === 'distance'">{{ Math.round(record.stats.distanceMeters / 100) / 10 }} km</template>
           <template v-else-if="column.key === 'points'">{{ record.stats.pointCount }} 点</template>
           <template v-else-if="column.key === 'elevation'">{{ record.stats.elevationGainMeters === null ? '未记录' : `${record.stats.elevationGainMeters} m` }}</template>
@@ -309,10 +329,21 @@ function navigate(id: number): void {
     <Alert v-if="!canMaintain" type="warning" message="维护权限已失效，无法保存。" class="activity-error" />
     <Form :model="trackForm" layout="vertical" :disabled="busy || !canMaintain" @finish="saveTrack">
       <Form.Item label="轨迹名称（可选）"><Input v-model:value="trackForm.name" :placeholder="trackId === null ? '留空时使用 GPX 文件名' : '留空时保存为未命名轨迹'" /></Form.Item>
-      <Form.Item label="关联成员（可选）"><Select :value="trackForm.memberId ?? undefined" allow-clear show-search option-filter-prop="label" :options="memberOptions" placeholder="未关联成员" @change="value=>trackForm.memberId=typeof value==='number'?value:null" /></Form.Item>
+      <Form.Item label="关联族人（可多选，按下方顺序保存）">
+        <Select v-model:value="trackForm.memberIds" mode="multiple" allow-clear show-search option-filter-prop="label" :options="memberOptions" placeholder="搜索并选择族人" />
+        <ol v-if="trackForm.memberIds.length" class="track-member-order">
+          <li v-for="(id, index) in trackForm.memberIds" :key="id">
+            <span>{{ index + 1 }}. {{ memberName(id) }} · #{{ id }}</span>
+            <Space :size="4">
+              <Button size="small" :aria-label="`上移 ${memberName(id)}`" :disabled="!writable || index === 0" @click="moveTrackMember(index, -1)">上移</Button>
+              <Button size="small" :aria-label="`下移 ${memberName(id)}`" :disabled="!writable || index === trackForm.memberIds.length - 1" @click="moveTrackMember(index, 1)">下移</Button>
+            </Space>
+          </li>
+        </ol>
+      </Form.Item>
       <Form.Item v-if="trackId === null" label="GPX 文件（上限 10MB）" required>
-        <input ref="fileInput" type="file" accept=".gpx,application/gpx+xml" hidden :disabled="busy || !canMaintain" @change="selectFile" />
-        <Button :disabled="busy || !canMaintain" @click="fileInput?.click()"><template #icon><UploadOutlined /></template>{{ selectedFile ? '重新选择文件' : '选择 GPX 文件' }}</Button>
+        <input ref="fileInput" type="file" class="gpx-file-input" aria-label="选择 GPX 文件" :disabled="busy || !canMaintain" @change="selectFile" />
+        <p class="activity-note">可从手机“文件”中选择 .gpx 文件；系统文件列表不过滤类型，选取后校验格式与大小。</p>
         <p class="activity-file" aria-live="polite">{{ selectedFile ? selectedFile.name : '尚未选择文件' }}</p>
       </Form.Item>
       <div class="activity-form-actions"><Button :disabled="busy" @click="trackOpen=false">取消</Button><Button type="primary" html-type="submit" :disabled="!writable" :loading="busy">{{ trackId === null ? '上传到云端' : '保存到云端' }}</Button></div>
@@ -342,6 +373,11 @@ function navigate(id: number): void {
 .activity-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .activity-error { margin-bottom: 16px; }
 .activity-file { margin: 8px 0 0; overflow-wrap: anywhere; }
+.gpx-file-input { display: block; width: 100%; min-width: 0; }
+.gpx-file-input::file-selector-button { padding: 6px 12px; margin-right: 8px; border: 1px solid #d0d5dd; border-radius: 6px; background: white; cursor: pointer; }
+.track-member-order { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.track-member-order li { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.track-member-order li > span { min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
   .activity-manager :deep(.ant-card-body) { padding: 16px; }
   .activity-toolbar { flex-direction: column; }

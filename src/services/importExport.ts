@@ -145,6 +145,15 @@ export function normalizeFamilyData(value: unknown): FamilyData {
     createdAt: text(row, 'createdAt'), updatedAt: text(row, 'updatedAt'),
   }))
   const tracks = rows<FamilyData['tracks'][number]>(root, 'tracks', (row) => {
+    const memberId = reference(row.memberId)
+    if (row.memberIds !== undefined && !Array.isArray(row.memberIds)) invalid('轨迹关联成员必须为数组')
+    const memberIds = Array.isArray(row.memberIds)
+      ? row.memberIds.map((id) => integer(id, '轨迹关联成员 ID'))
+      : (memberId === null ? [] : [memberId])
+    if (new Set(memberIds).size !== memberIds.length) invalid('轨迹关联成员重复')
+    if (row.memberIds !== undefined && row.memberId !== undefined && memberId !== (memberIds[0] ?? null)) {
+      invalid('轨迹首位成员与旧版关联不一致')
+    }
     if (!Array.isArray(row.points) || row.points.length === 0) invalid('轨迹缺少有效点')
     const points = row.points.map(point)
     const stats = record(row.stats)
@@ -152,7 +161,7 @@ export function normalizeFamilyData(value: unknown): FamilyData {
     const elevation = stats.elevationGainMeters ?? null
     if (elevation !== null && (typeof elevation !== 'number' || !Number.isFinite(elevation))) invalid('轨迹爬升不合法')
     return {
-      id: integer(row.id, '轨迹 ID'), name: text(row, 'name'), memberId: reference(row.memberId), points,
+      id: integer(row.id, '轨迹 ID'), name: text(row, 'name'), memberId: memberIds[0] ?? null, memberIds, points,
       startPoint: point(row.startPoint), endPoint: point(row.endPoint),
       stats: { distanceMeters: stats.distanceMeters, pointCount: points.length, elevationGainMeters: elevation },
       createdAt: text(row, 'createdAt'), updatedAt: text(row, 'updatedAt'),
@@ -166,6 +175,7 @@ export function normalizeFamilyData(value: unknown): FamilyData {
 
   for (const member of members) memberRef(member.parentId)
   for (const item of [...aliases, ...burials, ...temporals, ...events, ...tracks]) memberRef(item.memberId)
+  for (const track of tracks) for (const id of track.memberIds ?? []) memberRef(id)
   for (const item of [...burials, ...relations]) temporalRef(item.temporalId)
   for (const relation of relations) {
     memberRef(relation.fromMemberId)

@@ -17,7 +17,7 @@ export function isLastEnabledSysadmin(users: readonly LoginUser[], target: Login
 export function filterLoginUsers(users: readonly LoginUser[], keyword: string): LoginUser[] {
   const query = keyword.trim().toLowerCase()
   return users.filter((user) => !query || [
-    user.mobile, String(user.id), user.role, roleSearch[user.role], user.enabled ? '启用' : '禁用',
+    user.mobile, user.name ?? '', String(user.id), user.role, roleSearch[user.role], user.enabled ? '启用' : '禁用',
   ].some((value) => value.toLowerCase().includes(query)))
     .sort((a, b) => roleRank[a.role] - roleRank[b.role] || a.id - b.id)
 }

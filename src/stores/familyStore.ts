@@ -5,7 +5,7 @@ import { parsePartDataMarkdown } from '../services/partDataImport'
 import { parsePartDataMarkdownV2, type PartDataImportReport, type PartDataParsingNote } from '../services/partDataImportV2'
 import { loadFamilyDataFromD1 } from '../services/d1ApiService'
 import { initializeStorage, saveFamilyData } from '../services/storage'
-import { parseGpx } from '../services/trackService'
+import { parseGpx, trackMemberIds } from '../services/trackService'
 import { canAssignParent, validateName } from '../services/validators'
 import { createSpouse, deleteSpouse, deleteSpousesByHusband } from '../services/spouseService'
 import { deleteChildClaimsByParent } from '../services/childClaimService'
@@ -469,11 +469,11 @@ function deleteMember(id: number): ActionResult {
   )
   state.members = state.members.filter((member) => !deletionIds.has(member.id))
   state.events = state.events.filter((event) => event.memberId === null || !deletionIds.has(event.memberId))
-  state.tracks = state.tracks.map((track) =>
-    track.memberId !== null && deletionIds.has(track.memberId)
-      ? { ...track, memberId: null, updatedAt: new Date().toISOString() }
-      : track,
-  )
+  state.tracks = state.tracks.map((track) => {
+    const memberIds = trackMemberIds(track).filter((id) => !deletionIds.has(id))
+    return memberIds.length === trackMemberIds(track).length ? track
+      : { ...track, memberId: memberIds[0] ?? null, memberIds, updatedAt: new Date().toISOString() }
+  })
   state.aliases = state.aliases.filter((alias) => !deletionIds.has(alias.memberId))
   state.temporals = state.temporals.filter(
     (temporal) => temporal.memberId === null || !deletionIds.has(temporal.memberId),
@@ -597,7 +597,7 @@ async function importPartDataV2(raw: string): Promise<{ ok: boolean; message: st
   applyLoadedData({
     ...data,
     events: state.events.map((event) => ({ ...event, memberId: null })),
-    tracks: state.tracks.map((track) => ({ ...track, memberId: null })),
+    tracks: state.tracks.map((track) => ({ ...track, memberId: null, memberIds: [] })),
     nextEventId: state.nextEventId,
     nextTrackId: state.nextTrackId,
   })
@@ -684,26 +684,29 @@ function normalizeTrackName(name: string): string {
   return trimmed.length > 0 ? trimmed : '未命名轨迹'
 }
 
-function normalizeTrackMemberId(memberId: number | null): number | null {
-  if (memberId === null) {
-    return null
+function normalizeTrackMembers(value: number[] | number | null): number[] {
+  const ids = value === null ? [] : typeof value === 'number' ? [value] : [...value]
+  if (new Set(ids).size !== ids.length) throw new Error('轨迹关联成员不能重复')
+  if (ids.some((id) => !Number.isSafeInteger(id) || !state.members.some((member) => member.id === id))) {
+    throw new Error('轨迹关联成员不存在，请重新选择')
   }
-  const exists = state.members.some((member) => member.id === memberId)
-  return exists ? memberId : null
+  return ids
 }
 
-function addTrackFromGpx(raw: string, name: string, memberId: number | null): ActionResult {
+function addTrackFromGpx(raw: string, name: string, selection: number[] | number | null): ActionResult {
   if (raw.length > 10 * 1024 * 1024) {
     return { ok: false, message: 'GPX 文件过大（上限 10MB）' }
   }
 
   try {
+    const memberIds = normalizeTrackMembers(selection)
     const parsed = parseGpx(raw)
     const now = new Date().toISOString()
     const track: Track = {
       id: state.nextTrackId,
       name: normalizeTrackName(name),
-      memberId: normalizeTrackMemberId(memberId),
+      memberId: memberIds[0] ?? null,
+      memberIds,
       points: parsed.points,
       startPoint: parsed.startPoint,
       endPoint: parsed.endPoint,
@@ -724,14 +727,21 @@ function addTrackFromGpx(raw: string, name: string, memberId: number | null): Ac
   }
 }
 
-function updateTrackMeta(id: number, name: string, memberId: number | null): ActionResult {
+function updateTrackMeta(id: number, name: string, selection: number[] | number | null): ActionResult {
   const target = state.tracks.find((track) => track.id === id)
   if (!target) {
     return { ok: false, message: '轨迹不存在' }
   }
 
+  let memberIds: number[]
+  try {
+    memberIds = normalizeTrackMembers(selection)
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : '轨迹关联无效' }
+  }
   target.name = normalizeTrackName(name)
-  target.memberId = normalizeTrackMemberId(memberId)
+  target.memberId = memberIds[0] ?? null
+  target.memberIds = memberIds
   target.updatedAt = new Date().toISOString()
   return { ok: true, message: '轨迹信息已更新' }
 }

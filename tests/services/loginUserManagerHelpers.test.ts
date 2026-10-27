@@ -33,5 +33,6 @@ describe('login account management presentation', () => {
     expect(filterLoginUsers(users, '禁用').map((user) => user.id)).toEqual([2])
     expect(filterLoginUsers(users, '+852123457').map((user) => user.id)).toEqual([7])
     expect(filterLoginUsers(users, '不存在')).toEqual([])
+    expect(filterLoginUsers([{ ...users[0]!, name: '测试名称' }], '测试名称').map((user) => user.id)).toEqual([7])
   })
 })

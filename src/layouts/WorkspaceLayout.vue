@@ -23,6 +23,9 @@ const entries = computed(() => getWorkspaceEntries(role.value))
 const roleLabels = { anonymous: '未登录', user: '家族成员', maintainer: '维护人员', sysadmin: '系统管理员' }
 const icons = { overview: ApartmentOutlined, manage: TeamOutlined, system: SettingOutlined }
 const selectedKeys = computed(() => [route.path])
+const accountName = computed(() => user.value?.name?.trim() || user.value?.mobile || '账号')
+const avatarText = computed(() => user.value?.name?.trim()
+  ? Array.from(user.value.name.trim())[0] : user.value?.mobile.slice(-2))
 const collapsed = ref(false)
 const loggingOut = ref(false)
 const media = window.matchMedia('(max-width: 767px)')
@@ -137,11 +140,12 @@ async function handleLogout() {
           <Tag color="blue" class="workspace-role">{{ roleLabels[role] }}</Tag>
           <Dropdown :trigger="['click']">
             <Button type="text" class="workspace-account-button" aria-label="账号菜单">
-              <span class="workspace-avatar">{{ user?.mobile.slice(-2) }}</span>
-              <span class="workspace-account-mobile">{{ user?.mobile }}</span>
+              <span class="workspace-avatar" aria-hidden="true">{{ avatarText }}</span>
+              <span class="workspace-account-name" :title="accountName">{{ accountName }}</span>
             </Button>
             <template #overlay>
               <Menu @click="handleLogout">
+                <Menu.Item key="identity" disabled>{{ accountName }} · {{ user?.mobile }}</Menu.Item>
                 <Menu.Item key="logout" :disabled="loggingOut">
                   <template #icon><LogoutOutlined /></template>
                   退出登录

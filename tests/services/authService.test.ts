@@ -64,6 +64,16 @@ describe('authentication lifecycle', () => {
     expect(auth.useAuth().role.value).toBe('maintainer')
     expect(saved.get('family_auth_session_token')).toBe('session')
   })
+  it('updates the displayed profile only when the saved account is the current user', async () => {
+    api.loginWithMobile.mockResolvedValue({ user: { ...user, name: '旧名称' }, token: 'session' })
+    const auth = await import('../../src/services/authService')
+    await auth.loginAsUserByMobile(user.mobile)
+    auth.updateCurrentLoginUser({ ...user, id: 2, name: '其他账号' })
+    expect(auth.useAuth().user.value?.name).toBe('旧名称')
+    auth.updateCurrentLoginUser({ ...user, name: '新名称' })
+    expect(auth.useAuth().user.value?.name).toBe('新名称')
+    expect(saved.get('family_auth_session_token')).toBe('session')
+  })
 
   it('does not accept a non-admin account in the sysadmin login flow', async () => {
     api.loginAsSysadmin.mockResolvedValue({ user, token: 'wrong-role', expiresAt: '2026-12-01' })

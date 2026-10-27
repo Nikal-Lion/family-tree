@@ -112,6 +112,7 @@ export interface Track {
   id: number
   name: string
   memberId: number | null
+  memberIds?: number[]
   points: GpxPoint[]
   startPoint: GpxPoint
   endPoint: GpxPoint

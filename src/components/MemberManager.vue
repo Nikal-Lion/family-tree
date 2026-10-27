@@ -13,8 +13,11 @@ import { childClaimAdoptionLabel } from '../services/childClaimService'
 import { canAssignParent } from '../services/validators'
 import type { Member, UncertaintyFlag } from '../types/member'
 import type { SpouseInput, SpouseRelation } from '../types/spouse'
+import MemberCardList from './MemberCardList.vue'
+import { useMobile } from '../composables/useMobile'
 
 const store = useFamilyStore()
+const mobile = useMobile()
 const initializing = ref(true)
 const loadError = ref('')
 const keyword = ref('')
@@ -185,7 +188,8 @@ function removeSpouse(id: number) {
           <Button type="primary" :disabled="busy || initializing || !!loadError" @click="openEditor()"><template #icon><PlusOutlined /></template>新增族人</Button>
         </Space>
       </div>
-      <Table :columns="columns" :data-source="filtered" row-key="id" :loading="initializing" :scroll="{x:1100}" :pagination="{pageSize:10, showTotal:(total:number)=>`共 ${total} 人`}">
+      <MemberCardList v-if="mobile" :members="filtered" :all-members="members" :loading="initializing" @select="openDetail" />
+      <Table v-else :columns="columns" :data-source="filtered" row-key="id" :loading="initializing" :scroll="{x:1100}" :pagination="{pageSize:10, showTotal:(total:number)=>`共 ${total} 人`}">
         <template #bodyCell="{column, record}">
           <template v-if="column.key === 'name'"><Button type="link" @click="openDetail(record.id)">{{ record.name }}</Button></template>
           <template v-else-if="column.key === 'parent'">{{ record.parentId === null ? '始祖 / 未录父亲' : nameOf(record.parentId) }}</template>
@@ -229,6 +233,7 @@ function removeSpouse(id: number) {
         <Tag color="blue">ID {{ selected.id }}</Tag><Tag>{{ selected.gender }}</Tag>
         <Button :disabled="busy" @click="openEditor(selected)">编辑档案</Button>
         <Button :disabled="busy" @click="openEditor(undefined, selected.id)">添加子女</Button>
+        <Button danger :disabled="busy" @click="remove(selected.id)">删除</Button>
       </Space>
       <Image v-if="selected.photoUrl" :src="selected.photoUrl" :width="120" :alt="selected.name" />
       <Descriptions bordered :column="1" size="small">

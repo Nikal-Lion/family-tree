@@ -1,4 +1,14 @@
-import type { GpxPoint, TrackStats } from '../types/member'
+import type { GpxPoint, Track, TrackStats } from '../types/member'
+
+export function trackMemberIds(track: Pick<Track, 'memberId' | 'memberIds'>): number[] {
+  return track.memberIds ?? (track.memberId === null ? [] : [track.memberId])
+}
+
+export function validateGpxFile(file: Pick<File, 'name' | 'size'>): void {
+  if (!/\.gpx$/i.test(file.name)) throw new Error('请选择 .gpx 格式的轨迹文件')
+  if (file.size > 10 * 1024 * 1024) throw new Error('GPX 文件过大（上限 10MB）')
+  if (file.size === 0) throw new Error('GPX 文件为空')
+}
 
 export interface ParsedTrack {
   points: GpxPoint[]

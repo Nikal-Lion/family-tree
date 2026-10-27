@@ -23,6 +23,12 @@ describe('real SQLite family backups', () => {
     const data = familyFixture()
     expect(await readSqliteBackup(new TextEncoder().encode(JSON.stringify(data)))).toEqual(data)
   })
+  it('preserves the order of multiple track members through SQLite backups', async () => {
+    const data = familyFixture()
+    data.tracks[0]!.memberId = 2
+    data.tracks[0]!.memberIds = [2, 1, 3]
+    expect((await readSqliteBackup(await createSqliteBackup(data))).tracks[0]?.memberIds).toEqual([2, 1, 3])
+  })
   it('preserves biological and adoptive parents and both source claims across SQLite backup', async () => {
     const data = normalizeFamilyData(parsePartDataMarkdownV2('# 本房\n## 十世\n祥甫 ，生子：贤敬（出继）。\n俊甫 ，继子：贤敬。\n## 十一世\n贤敬 俊甫继子。'))
     expect(data.relations.map((relation) => relation.type)).toEqual(['father', 'adoptive-parent'])

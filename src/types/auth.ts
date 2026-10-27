@@ -5,6 +5,7 @@ export type LoginUserRole = 'user' | 'maintainer' | 'sysadmin'
 export interface LoginUser {
   id: number
   mobile: string
+  name?: string
   role: LoginUserRole
   enabled: boolean
   createdAt: string
