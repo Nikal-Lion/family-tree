@@ -1,4 +1,4 @@
-:root {
+.legacy-workspace {
   --bg: #fffef7;
   --panel: #f5f0e2;
   --accent: #2d5e2c;
@@ -7,13 +7,12 @@
   --line: #d8cdb4;
   --danger: #b54f3f;
   --shadow: 0 12px 32px rgba(69, 49, 26, 0.12);
-}
 
 * {
   box-sizing: border-box;
 }
 
-body {
+& {
   margin: 0;
   color: var(--text);
   font-family: "Noto Serif SC", "Microsoft YaHei", serif;
@@ -741,4 +740,6 @@ select {
     bottom: 12px;
     max-width: calc(100vw - 24px);
   }
+}
+
 }

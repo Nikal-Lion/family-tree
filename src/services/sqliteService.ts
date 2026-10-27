@@ -11,7 +11,7 @@ const SQLITE_DB_KEY = 'family-tree.db'
 let sqlRuntimePromise: Promise<SqlJsStatic> | null = null
 let dbInstance: Database | null = null
 
-function getSqlRuntime(): Promise<SqlJsStatic> {
+export function getSqlRuntime(): Promise<SqlJsStatic> {
   if (!sqlRuntimePromise) {
     sqlRuntimePromise = initSqlJs({
       locateFile: () => wasmUrl,

@@ -1,11 +1,11 @@
 import type { LoginUser, LoginUserRole } from '../types/auth'
 import type { FamilyData } from '../types/member'
-import type { ChildClaim } from '../types/childClaim'
-import type { Spouse } from '../types/spouse'
+import { normalizeFamilyData } from './importExport'
 
 const API_BASE_URL = import.meta.env.VITE_D1_API_BASE_URL?.trim()
 
 let sessionToken: string | null = null
+let familyRevision: number | null = null
 
 export interface D1SelfCheckResult {
   ok: boolean
@@ -77,7 +77,9 @@ function buildFamilyDataUrl(): string {
 }
 
 export function setSessionToken(token: string | null): void {
-  sessionToken = token?.trim() || null
+  const nextToken = token?.trim() || null
+  if (sessionToken !== nextToken) familyRevision = null
+  sessionToken = nextToken
 }
 
 export function getD1ApiDiagnosticsConfig(): { tokenConfigured: boolean } {
@@ -142,144 +144,35 @@ export async function runD1SelfCheck(): Promise<D1SelfCheckResult> {
   }
 }
 
-// TODO Worker side: /api/spouses route not yet implemented in cloudflare-d1-worker repo
-async function fetchSpousesFromD1(): Promise<Spouse[]> {
-  try {
-    const response = await fetch(resolveApiUrl('/api/spouses'), {
-      method: 'GET',
-      headers: buildHeaders(),
-      cache: 'no-store',
-    })
-    if (!response.ok) {
-      console.warn(`[D1] /api/spouses responded ${response.status} — using empty spouses array`)
-      return []
-    }
-    const payload = (await response.json()) as { spouses?: Spouse[] }
-    return Array.isArray(payload.spouses) ? payload.spouses : []
-  } catch (error) {
-    console.warn('[D1] fetchSpousesFromD1 failed, using empty array:', error)
-    return []
-  }
-}
-
-// TODO Worker side: /api/child-claims route not yet implemented in cloudflare-d1-worker repo
-async function fetchChildClaimsFromD1(): Promise<ChildClaim[]> {
-  try {
-    const response = await fetch(resolveApiUrl('/api/child-claims'), {
-      method: 'GET',
-      headers: buildHeaders(),
-      cache: 'no-store',
-    })
-    if (!response.ok) {
-      console.warn(`[D1] /api/child-claims responded ${response.status} — using empty childClaims array`)
-      return []
-    }
-    const payload = (await response.json()) as { childClaims?: ChildClaim[] }
-    return Array.isArray(payload.childClaims) ? payload.childClaims : []
-  } catch (error) {
-    console.warn('[D1] fetchChildClaimsFromD1 failed, using empty array:', error)
-    return []
-  }
-}
-
 export async function loadFamilyDataFromD1(): Promise<FamilyData | null> {
+  const tokenAtStart = sessionToken
   const response = await fetch(buildFamilyDataUrl(), {
     method: 'GET',
     headers: buildHeaders(),
     cache: 'no-store',
   })
 
-  const payload = await parseJsonResponse<{ data: FamilyData | null }>(response)
-  if (!payload.data) {
-    return null
-  }
-
-  // Fetch spouses and child_claims in parallel from dedicated endpoints.
-  // If Worker endpoints are not yet deployed (404 / network error), fall back to
-  // whatever the main payload already contains (or empty arrays).
-  const [spouses, childClaims] = await Promise.all([
-    fetchSpousesFromD1(),
-    fetchChildClaimsFromD1(),
-  ])
-
-  return {
-    ...payload.data,
-    // Strip legacy spouse_ids field from each member if present (v3 payload compat).
-    members: payload.data.members.map(({ ...member }) => {
-      delete (member as Record<string, unknown>)['spouseIds']
-      return member
-    }),
-    spouses: spouses.length > 0 ? spouses : (payload.data.spouses ?? []),
-    childClaims: childClaims.length > 0 ? childClaims : (payload.data.childClaims ?? []),
-  }
-}
-
-// TODO Worker side: /api/sync-spouses route not yet implemented in cloudflare-d1-worker repo
-export async function syncSpousesToD1(spouses: Spouse[]): Promise<void> {
-  try {
-    const response = await fetch(resolveApiUrl('/api/sync-spouses'), {
-      method: 'PUT',
-      headers: buildHeaders(),
-      body: JSON.stringify({ spouses }),
-    })
-    if (!response.ok) {
-      console.warn(`[D1] syncSpousesToD1 responded ${response.status} — spouses not persisted to D1`)
-    }
-  } catch (error) {
-    console.warn('[D1] syncSpousesToD1 failed (Worker endpoint not yet available):', error)
-  }
-}
-
-// TODO Worker side: /api/sync-child-claims route not yet implemented in cloudflare-d1-worker repo
-export async function syncChildClaimsToD1(childClaims: ChildClaim[]): Promise<void> {
-  try {
-    const response = await fetch(resolveApiUrl('/api/sync-child-claims'), {
-      method: 'PUT',
-      headers: buildHeaders(),
-      body: JSON.stringify({ childClaims }),
-    })
-    if (!response.ok) {
-      console.warn(`[D1] syncChildClaimsToD1 responded ${response.status} — childClaims not persisted to D1`)
-    }
-  } catch (error) {
-    console.warn('[D1] syncChildClaimsToD1 failed (Worker endpoint not yet available):', error)
-  }
+  const payload = await parseJsonResponse<{ data: unknown; revision: number }>(response)
+  if (!Number.isSafeInteger(payload.revision) || payload.revision < 0) throw new Error('服务端数据版本不兼容，请更新服务端')
+  const data = payload.data === null ? null : normalizeFamilyData(payload.data)
+  if (sessionToken !== tokenAtStart) throw new Error('登录会话已变更，请重新加载数据')
+  familyRevision = payload.revision
+  return data
 }
 
 export async function saveFamilyDataToD1(data: FamilyData): Promise<void> {
+  if (familyRevision === null) throw new Error('请先加载云端数据，再进行保存')
+  const tokenAtStart = sessionToken
   const response = await fetch(resolveApiUrl('/api/family-data'), {
     method: 'PUT',
-    headers: buildHeaders(),
+    headers: buildHeaders({ extra: { 'If-Match': `"${familyRevision}"` } }),
     body: JSON.stringify({ data }),
   })
 
-  if (!response.ok) {
-    throw new Error(await parseError(response))
-  }
-}
-
-export async function exportD1BackupBinary(): Promise<Uint8Array> {
-  const data = await loadFamilyDataFromD1()
-  const encoded = new TextEncoder().encode(JSON.stringify(data ?? null, null, 2))
-  return encoded
-}
-
-export async function importD1BackupBinary(binary: Uint8Array): Promise<FamilyData> {
-  const raw = new TextDecoder().decode(binary)
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    throw new Error('导入失败：备份文件不是有效 JSON')
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('导入失败：备份数据结构错误')
-  }
-
-  const data = parsed as FamilyData
-  await saveFamilyDataToD1(data)
-  return data
+  const payload = await parseJsonResponse<{ revision: number }>(response)
+  if (sessionToken !== tokenAtStart) throw new Error('登录会话已变更，请重新加载数据')
+  if (!Number.isSafeInteger(payload.revision) || payload.revision < 0) throw new Error('保存响应缺少有效数据版本，请重新加载确认云端状态')
+  familyRevision = payload.revision
 }
 
 interface LoginResponsePayload {

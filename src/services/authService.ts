@@ -8,6 +8,7 @@ import {
   setSessionToken,
 } from './d1ApiService'
 import type { LoginUser, UserRole } from '../types/auth'
+import { getDefaultAppPath } from './accessControl'
 
 const STORAGE_KEY_SESSION_TOKEN = 'family_auth_session_token'
 
@@ -167,13 +168,7 @@ export function useAuth() {
   const canMaintain = computed(() => role.value === 'maintainer' || role.value === 'sysadmin')
 
   function resolveDefaultAppPath(): string {
-    if (role.value === 'sysadmin' || role.value === 'maintainer') {
-      return '/app/manage'
-    }
-    if (role.value === 'user') {
-      return '/app/overview'
-    }
-    return '/login'
+    return getDefaultAppPath(role.value)
   }
 
   return {

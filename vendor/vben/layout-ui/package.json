@@ -1,0 +1,37 @@
+{
+  "name": "@vben-core/layout-ui",
+  "version": "5.7.0",
+  "homepage": "https://github.com/vbenjs/vue-vben-admin",
+  "bugs": "https://github.com/vbenjs/vue-vben-admin/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vbenjs/vue-vben-admin.git",
+    "directory": "packages/@vben-core/uikit/layout-ui"
+  },
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "production": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "dependencies": {
+    "@vben-core/composables": "5.7.0",
+    "@vben-core/icons": "5.7.0",
+    "@vben-core/shadcn-ui": "5.7.0",
+    "@vben-core/shared": "5.7.0",
+    "@vben-core/typings": "5.7.0",
+    "@vueuse/core": "^14.3.0",
+    "vue": "^3.5.34"
+  }
+}

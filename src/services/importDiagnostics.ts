@@ -1,5 +1,5 @@
 import type { FamilyData, Member } from '../types/member'
-import type { PartDataImportReport } from './partDataImportV2'
+import type { PartDataImportReport, PartDataParsingNote } from './partDataImportV2'
 
 export interface FamilyDataImportSummary {
   memberCount: number
@@ -118,10 +118,10 @@ export function analyzeFamilyDataImport(data: FamilyData): string[] {
   return warnings
 }
 
-export function summarizePartDataImportV2(data: FamilyData): PartDataImportReport {
+export function summarizePartDataImportV2(data: FamilyData, parsingNotes: PartDataParsingNote[] = []): PartDataImportReport {
   const isolated = data.members
     .filter((m) => m.uncertaintyFlags?.includes('missing'))
-    .map((m) => ({ id: m.id, name: m.name, reason: 'parentId=null and gen > minGen' }))
+    .map((m) => ({ id: m.id, name: m.name, reason: '非起始世代，尚未建立生父或承继父关联' }))
 
   const unmatched = data.childClaims
     .filter((c) => c.status === 'missing')
@@ -132,7 +132,7 @@ export function summarizePartDataImportV2(data: FamilyData): PartDataImportRepor
 
   const ambiguous = data.childClaims
     .filter((c) => c.status === 'ambiguous')
-    .map((c) => ({ memberId: c.parentId, name: c.claimedName, note: 'ambiguous match' }))
+    .map((c) => ({ memberId: c.parentId, name: c.claimedName, note: '候选不唯一或记载冲突，需核对父系与出继依据；不能仅凭同名判断是否同一人' }))
 
   const claimedSet = new Set(data.childClaims.filter((c) => c.resolvedMemberId).map((c) => c.resolvedMemberId))
   const unclaimed = data.members
@@ -149,5 +149,6 @@ export function summarizePartDataImportV2(data: FamilyData): PartDataImportRepor
     unclaimedChildren: unclaimed,
     ambiguousAdoptions: ambiguous,
     contradictions: [],
+    parsingNotes,
   }
 }

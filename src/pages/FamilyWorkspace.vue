@@ -1,869 +1,274 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import AuthManager from '../components/AuthManager.vue'
-import FamilyTreeChart from '../components/FamilyTreeChart.vue'
-import MemberDetail from '../components/MemberDetail.vue'
-import EventManager from '../components/EventManager.vue'
-import LoginUserManager from '../components/LoginUserManager.vue'
-import MemberForm from '../components/MemberForm.vue'
-import MemberList from '../components/MemberList.vue'
-import OcrImportManager from '../components/OcrImportManager.vue'
-import PartDataImportPanel from '../components/PartDataImportPanel.vue'
-import StatsDashboard from '../components/StatsDashboard.vue'
-import TrackManager from '../components/TrackManager.vue'
-import { initAuthSession, useAuth } from '../services/authService'
 import {
-  getD1ApiDiagnosticsConfig,
-  runD1SelfCheck,
-  type D1SelfCheckResult,
-} from '../services/d1ApiService'
-import { exportAsJson } from '../services/importExport'
-import { computeGenerations } from '../services/generationService'
-import { buildNavigationUrl } from '../services/navigationBridge'
-import { exportSqliteData, importSqliteData } from '../services/storage'
+  Alert, Button, Card, Drawer, Empty, Input, Select, Space, Statistic,
+  Table, Tabs, Tag, message, type TableProps,
+} from 'ant-design-vue'
+import { DownloadOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
+import FamilyTreeChart from '../components/FamilyTreeChart.vue'
+import MemberArchive from '../components/MemberArchive.vue'
+import { ACTIVITY_EVENT_TYPES, filterActivityEvents, filterActivityTracks } from '../services/activityManager'
+import { computeGenerations, countByGeneration, getMaxGeneration } from '../services/generationService'
+import { openTrackNavigation } from '../services/navigationBridge'
+import { filterOverviewMembers, getAncestorIds, getBranchTreeMembers } from '../services/overview'
 import { useFamilyStore } from '../stores/familyStore'
-import type { FamilyEventInput, Gender, MemberInput, Track } from '../types/member'
-import type { DuplicateAction, TempMember } from '../types/ocr'
+import type { FamilyEvent, FamilyEventType, Member, Track } from '../types/member'
 
-type WorkspaceMode = 'overview' | 'manage' | 'system'
-
-const props = withDefaults(
-  defineProps<{
-    mode?: WorkspaceMode
-  }>(),
-  {
-    mode: 'overview',
-  },
-)
-
-const router = useRouter()
-const route = useRoute()
 const store = useFamilyStore()
-const { isSysadmin, isAuthenticated, ready, canMaintain } = useAuth()
-const isOverviewMode = computed(() => props.mode === 'overview')
-const isManageMode = computed(() => props.mode === 'manage')
-const isSystemMode = computed(() => props.mode === 'system')
-const showDataWorkspace = computed(() => isOverviewMode.value || isManageMode.value)
-const isViewerMode = computed(() => !isManageMode.value || !canMaintain.value)
-const navItems = computed(() => {
-  const items: Array<{ key: WorkspaceMode; label: string; path: string }> = [
-    { key: 'overview', label: '数据总览', path: '/app/overview' },
-  ]
-
-  if (canMaintain.value) {
-    items.push({ key: 'manage', label: '数据维护', path: '/app/manage' })
+const initializing = ref(true)
+const refreshing = ref(false)
+const loadError = ref('')
+const syncError = ref('')
+const detailOpen = ref(false)
+const keyword = ref('')
+const branch = ref<string>()
+const gender = ref<Member['gender']>()
+const page = ref(1)
+const rootId = ref<number | null>(null)
+const chart = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
+const members = computed(() => store.members.value)
+const selected = computed(() => store.selectedMember.value)
+const generations = computed(() => computeGenerations(members.value))
+const filtered = computed(() => filterOverviewMembers(members.value, store.aliases.value, {
+  keyword: keyword.value, branch: branch.value, gender: gender.value,
+}))
+const branchOptions = computed(() => [...new Set(members.value.map((member) => member.lineageBranch ?? ''))]
+  .sort((a, b) => a.localeCompare(b, 'zh-CN')).map((value) => ({ label: value || '未记录分支', value })))
+const treeMembers = computed(() => getBranchTreeMembers(members.value, branch.value))
+const highlighted = computed(() => keyword.value.trim() || gender.value
+  ? filtered.value.map((member) => member.id) : [])
+const stats = computed(() => [
+  { title: '族人', value: members.value.length, suffix: '人' },
+  { title: '配偶记录', value: store.spouses.value.length, suffix: '条' },
+  { title: '相对树层级', value: getMaxGeneration(generations.value), suffix: '层' },
+  { title: '未录父亲', value: members.value.filter((member) => member.parentId === null).length, suffix: '人' },
+])
+const relativeCounts = computed(() => [...countByGeneration(generations.value)]
+  .sort(([a], [b]) => a - b).map(([generation, count]) => ({ generation, count })))
+const recordedCounts = computed(() => {
+  const counts = new Map<number, number>()
+  for (const member of members.value) {
+    const generation = member.generationNumber ?? 0
+    counts.set(generation, (counts.get(generation) ?? 0) + 1)
   }
-  if (isSysadmin.value) {
-    items.push({ key: 'system', label: '系统管理', path: '/app/system' })
-  }
-
-  return items
+  return [...counts].sort(([a], [b]) => a - b).map(([generation, count]) => ({ generation, count }))
 })
-const canShowManageActions = computed(() => isManageMode.value && canMaintain.value)
-const canShowSystemPanels = computed(() => isSystemMode.value && isSysadmin.value)
-const canShowImportActions = computed(() => canShowManageActions.value)
+const generationColumns = [{ title: '代数 / 层级', key: 'generation' }, { title: '人数', dataIndex: 'count' }]
+const memberColumns: TableProps<Member>['columns'] = [
+  { title: '姓名', key: 'name', width: 180 },
+  { title: '性别', dataIndex: 'gender', width: 70 },
+  { title: '父亲', key: 'parent', width: 180 },
+  { title: '谱载代数', key: 'generation', width: 110, sorter: (a, b) => (a.generationNumber ?? 0) - (b.generationNumber ?? 0) },
+  { title: '分支', dataIndex: 'lineageBranch', width: 160 },
+]
+const eventKeyword = ref('')
+const eventType = ref<FamilyEventType>()
+const trackKeyword = ref('')
+const events = computed(() => filterActivityEvents(store.events.value, members.value, eventKeyword.value, eventType.value, undefined))
+const tracks = computed(() => filterActivityTracks(store.tracks.value, members.value, trackKeyword.value, undefined))
+const eventColumns: TableProps<FamilyEvent>['columns'] = [
+  { title: '日期', dataIndex: 'date', width: 130 },
+  { title: '类型', dataIndex: 'type', width: 70 },
+  { title: '标题', dataIndex: 'title', width: 180 },
+  { title: '关联族人', key: 'member', width: 160 },
+  { title: '说明', dataIndex: 'description', width: 260 },
+]
+const trackColumns: TableProps<Track>['columns'] = [
+  { title: '轨迹名称', dataIndex: 'name', width: 180 },
+  { title: '关联族人', key: 'member', width: 160 },
+  { title: '距离', key: 'distance', width: 100 },
+  { title: '轨迹点', key: 'points', width: 90 },
+  { title: '累计爬升', key: 'elevation', width: 110 },
+  { title: '操作', key: 'actions', width: 140 },
+]
 
-watch(
-  [() => ready.value, () => isAuthenticated.value],
-  ([authReady, authenticated]) => {
-    if (!authReady || authenticated) {
-      return
-    }
-    void router.replace({
-      path: '/login',
-      query: {
-        redirect: route.fullPath,
-      },
-    })
-  },
-  { immediate: true },
-)
-
-function navigateTo(path: string): void {
-  if (route.path === path) {
-    return
-  }
-  void router.push(path)
+function nameOf(id: number) { return members.value.find((member) => member.id === id)?.name ?? `成员 #${id}` }
+function select(id: number) {
+  if (!members.value.some((member) => member.id === id)) { message.error('人物不存在，请刷新云端数据'); return }
+  if (!treeMembers.value.some((member) => member.id === id)) branch.value = undefined
+  if (rootId.value !== null && !getAncestorIds(members.value, [id]).has(rootId.value)) rootId.value = null
+  store.selectMember(id)
+  detailOpen.value = true
 }
-
-const editingId = ref<number | null>(null)
-const formModel = ref<MemberInput>({
-  name: '',
-  parentId: null,
-  gender: '男' as Gender,
-  birthDate: '',
-  photoUrl: '',
-  biography: '',
-  generationLabelRaw: '',
-  generationNumber: 0,
-  lineageBranch: '',
-  rawNotes: '',
-  uncertaintyFlags: [],
-} as unknown as MemberInput)
-const fileInputRef = ref<HTMLInputElement | null>(null)
-const treeChartRef = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
-const searchKeyword = ref('')
-const isBootstrapping = ref(true)
-const bootstrapError = ref('')
-const selfCheckResult = ref<D1SelfCheckResult | null>(null)
-const selfCheckPending = ref(false)
-
-type ToastType = 'success' | 'error' | 'info'
-
-const toast = ref<{ visible: boolean; message: string; type: ToastType }>({
-  visible: false,
-  message: '',
-  type: 'info',
+function focusSelected() {
+  if (!selected.value) return
+  if (!treeMembers.value.some((member) => member.id === selected.value?.id)) branch.value = undefined
+  rootId.value = selected.value.id
+  detailOpen.value = false
+}
+watch([keyword, branch, gender], () => { page.value = 1 })
+watch(branch, () => { rootId.value = null }, { flush: 'sync' })
+watch(members, () => {
+  if (rootId.value !== null && !members.value.some((member) => member.id === rootId.value)) rootId.value = null
+  if (branch.value !== undefined && !branchOptions.value.some((option) => option.value === branch.value)) branch.value = undefined
+  if (!selected.value) detailOpen.value = false
+  page.value = Math.min(page.value, Math.max(1, Math.ceil(filtered.value.length / 10)))
 })
-let toastTimerId: number | null = null
 
-function showToast(message: string, type: ToastType = 'info'): void {
-  toast.value = {
-    visible: true,
-    message,
-    type,
-  }
-
-  if (toastTimerId !== null) {
-    window.clearTimeout(toastTimerId)
-  }
-
-  toastTimerId = window.setTimeout(() => {
-    toast.value.visible = false
-  }, 2200)
+async function load() {
+  if (refreshing.value) return
+  initializing.value = true
+  loadError.value = ''
+  try { await store.init() }
+  catch (error) { loadError.value = error instanceof Error ? error.message : '无法加载云端族谱' }
+  finally { initializing.value = false }
 }
-
-function notifySuccess(message: string): void {
-  showToast(message, 'success')
-}
-
-function notifyError(message: string): void {
-  showToast(message, 'error')
-}
-
-function notifyInfo(message: string): void {
-  showToast(message, 'info')
-}
-
-function formatDisplayTime(value: string | null | undefined): string {
-  if (!value) {
-    return '未检测'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return date.toLocaleString('zh-CN', { hour12: false })
-}
-
-async function refreshD1Diagnostics(notify = false): Promise<void> {
-  selfCheckPending.value = true
-  try {
-    const result = await runD1SelfCheck()
-    selfCheckResult.value = result
-    if (notify) {
-      if (result.ok) {
-        notifySuccess('D1 自检完成')
-      } else {
-        notifyError(`D1 自检失败：${result.message}`)
-      }
-    }
-  } finally {
-    selfCheckPending.value = false
-  }
-}
-
-async function bootstrapStore() {
-  bootstrapError.value = ''
-  isBootstrapping.value = true
-  try {
-    await store.init()
-  } catch (error) {
-    bootstrapError.value = error instanceof Error ? error.message : '云端 D1 数据初始化失败'
-  } finally {
-    isBootstrapping.value = false
-  }
-}
-
-async function refreshCloudDataOnFocus(): Promise<void> {
-  if (isBootstrapping.value || !store.ready.value) {
-    return
-  }
-
+async function refresh() {
+  if (initializing.value || refreshing.value || !store.ready.value || store.saving.value) return
+  refreshing.value = true
   try {
     await store.syncFromCloud()
+    syncError.value = ''
   } catch (error) {
-    console.warn('切回页面时同步 D1 数据失败', error)
-  }
+    syncError.value = error instanceof Error ? error.message : '同步云端数据失败'
+  } finally { refreshing.value = false }
 }
-
-function handleWindowFocus(): void {
-  void refreshCloudDataOnFocus()
-}
-
-function handleVisibilityChange(): void {
-  if (document.visibilityState !== 'visible') {
-    return
-  }
-  void refreshCloudDataOnFocus()
-}
-
+function onFocus() { void refresh() }
+function onVisibility() { if (document.visibilityState === 'visible') void refresh() }
 onMounted(() => {
-  void initAuthSession()
-  void bootstrapStore()
-  if (isSysadmin.value) {
-    void refreshD1Diagnostics()
-  }
-  window.addEventListener('focus', handleWindowFocus)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
+  void load()
+  window.addEventListener('focus', onFocus)
+  document.addEventListener('visibilitychange', onVisibility)
 })
-
 onBeforeUnmount(() => {
-  if (toastTimerId !== null) {
-    window.clearTimeout(toastTimerId)
-  }
-  window.removeEventListener('focus', handleWindowFocus)
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('focus', onFocus)
+  document.removeEventListener('visibilitychange', onVisibility)
 })
-
-const editingMember = computed(() => {
-  if (editingId.value === null) {
-    return null
-  }
-  return store.members.value.find((member) => member.id === editingId.value) ?? null
-})
-
-const members = computed(() => store.members.value)
-const tracks = computed(() => store.tracks.value)
-const events = computed(() => store.events.value)
-const aliases = computed(() => store.aliases.value)
-const relations = computed(() => store.relations.value)
-const temporals = computed(() => store.temporals.value)
-const burials = computed(() => store.burials.value)
-const selectedMember = computed(() => store.selectedMember.value)
-
-const selectedAliases = computed(() => {
-  const id = store.selectedId.value
-  if (id === null) {
-    return []
-  }
-  return aliases.value.filter((alias) => alias.memberId === id)
-})
-
-const selectedRelations = computed(() => {
-  const id = store.selectedId.value
-  if (id === null) {
-    return []
-  }
-  return relations.value.filter((relation) => relation.fromMemberId === id || relation.toMemberId === id)
-})
-
-const selectedBurials = computed(() => {
-  const id = store.selectedId.value
-  if (id === null) {
-    return []
-  }
-  return burials.value.filter((burial) => burial.memberId === id)
-})
-
-const generationMap = computed(() => computeGenerations(members.value))
-
-const selectedGeneration = computed(() => {
-  const id = store.selectedId.value
-  if (id === null) return null
-  return generationMap.value.get(id) ?? null
-})
-
-const d1Config = computed(() => getD1ApiDiagnosticsConfig())
-const d1ApiUrl = `${window.location.origin}/api/family-data`
-const diagnostics = computed(() => selfCheckResult.value)
-const diagnosticsTone = computed(() => diagnostics.value?.status ?? 'warning')
-const diagnosticsTitle = computed(() => {
-  if (selfCheckPending.value && !diagnostics.value) {
-    return '正在检测 D1 连接'
-  }
-  if (!diagnostics.value) {
-    return '尚未执行 D1 自检'
-  }
-  if (diagnostics.value.status === 'ok') {
-    return 'D1 连接正常'
-  }
-  if (diagnostics.value.status === 'warning') {
-    return 'D1 已连通，但状态需要确认'
-  }
-  return 'D1 自检失败'
-})
-const diagnosticsSummary = computed(() => {
-  if (selfCheckPending.value && !diagnostics.value) {
-    return '正在向 Cloudflare Worker 发起请求并验证 D1 返回。'
-  }
-  return diagnostics.value?.message ?? '点击“重新检测”后，可确认当前页面是否已连接到 D1。'
-})
-const diagnosticsTimeText = computed(() => formatDisplayTime(diagnostics.value?.checkedAt))
-const diagnosticsHttpStatusText = computed(() => {
-  const status = diagnostics.value?.httpStatus
-  return typeof status === 'number' ? String(status) : '无'
-})
-const diagnosticsSchemaText = computed(() => {
-  const schemaVersion = diagnostics.value?.schemaVersion
-  return typeof schemaVersion === 'number' ? String(schemaVersion) : '无'
-})
-const diagnosticsStatusLabel = computed(() => {
-  if (selfCheckPending.value) {
-    return '检测中'
-  }
-  if (!diagnostics.value) {
-    return '未检测'
-  }
-  if (diagnostics.value.status === 'ok') {
-    return '正常'
-  }
-  if (diagnostics.value.status === 'warning') {
-    return '空库'
-  }
-  return '失败'
-})
-
-const highlightedIds = computed(() => {
-  const keyword = searchKeyword.value.trim().toLowerCase()
-  if (!keyword) {
-    return [] as number[]
-  }
-
-  return members.value
-    .filter((member) => {
-      return member.name.toLowerCase().includes(keyword) || String(member.id).includes(keyword)
-    })
-    .map((member) => member.id)
-})
-
-function countDeletionImpact(rootId: number): number {
-  const byParent = new Map<number, number[]>()
-
-  for (const member of members.value) {
-    if (member.parentId === null) {
-      continue
-    }
-    const children = byParent.get(member.parentId) ?? []
-    children.push(member.id)
-    byParent.set(member.parentId, children)
-  }
-
-  let count = 0
-  const stack = [rootId]
-
-  while (stack.length > 0) {
-    const current = stack.pop()!
-    count += 1
-    stack.push(...(byParent.get(current) ?? []))
-  }
-
-  return count
-}
-
-function findParentName(parentId: number | null): string {
-  if (parentId === null) {
-    return '始祖'
-  }
-  const parent = members.value.find((member) => member.id === parentId)
-  return parent?.name ?? '未知'
-}
-
-function resolveMemberName(id: number): string {
-  const target = members.value.find((member) => member.id === id)
-  return target?.name ?? `成员#${id}`
-}
-
-function handleSubmit(payload: MemberInput, id?: number) {
-  const result = typeof id === 'number' ? store.updateMember(id, payload) : store.addMember(payload)
-  if (!result.ok) {
-    notifyError(result.message ?? '保存失败')
-    return
-  }
-  editingId.value = null
-  notifySuccess(typeof id === 'number' ? '编辑成功' : '新增成功')
-}
-
-function handleEdit(id: number) {
-  store.selectMember(id)
-  editingId.value = id
-}
-
-function handleCancelEdit() {
-  editingId.value = null
-}
-
-function handleRemove(id: number) {
-  const target = members.value.find((member) => member.id === id)
-  if (!target) {
-    return
-  }
-
-  const impactCount = countDeletionImpact(id)
-  const confirmed = window.confirm(
-    `确认删除 ${target.name} 及其全部后代吗？预计删除 ${impactCount} 位成员。`,
-  )
-  if (!confirmed) {
-    return
-  }
-
-  const result = store.deleteMember(id)
-  if (!result.ok) {
-    notifyError(result.message ?? '删除失败')
-    return
-  }
-
-  editingId.value = null
-  notifySuccess(result.message ?? '删除成功')
-}
-
-function handleAddChild(parentId: number) {
-  editingId.value = null
-  formModel.value = {
-    name: '',
-    parentId,
-    gender: '男',
-    birthDate: '',
-    photoUrl: '',
-    biography: '',
-    generationLabelRaw: '',
-    generationNumber: 0,
-    lineageBranch: '',
-    rawNotes: '',
-    uncertaintyFlags: [],
-  } as unknown as MemberInput
-  notifyInfo('已自动填充父亲，请输入子女姓名后保存')
-}
-
-function handleExport() {
-  const json = exportAsJson(store.exportData())
-  const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = 'family-tree-backup.json'
-  anchor.click()
-  URL.revokeObjectURL(url)
-  notifySuccess('导出 JSON 成功')
-}
-
-async function handleExportSqlite() {
+function exportTree() {
   try {
-    const binary = await exportSqliteData()
-    const binaryBuffer = binary.buffer.slice(
-      binary.byteOffset,
-      binary.byteOffset + binary.byteLength,
-    ) as ArrayBuffer
-    const blob = new Blob([binaryBuffer], { type: 'application/octet-stream' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'family-tree-backup.sqlite'
-    anchor.click()
-    URL.revokeObjectURL(url)
-    notifySuccess('导出 SQLite 成功')
-  } catch (error) {
-    notifyError(error instanceof Error ? error.message : '导出 SQLite 失败')
-  }
+    if (!chart.value) throw new Error('图谱尚未完成加载')
+    chart.value.exportAsPng()
+    message.success('树图 PNG 已生成')
+  } catch (error) { message.error(error instanceof Error ? error.message : '导出树图失败') }
 }
-
-function handleExportTreePng() {
-  treeChartRef.value?.exportAsPng()
-  notifySuccess('族谱树图已导出为 PNG')
-}
-
-function handleTrackUpload(payload: { raw: string; name: string; memberId: number | null }) {
-  const result = store.addTrackFromGpx(payload.raw, payload.name, payload.memberId)
-  if (!result.ok) {
-    notifyError(result.message ?? '轨迹上传失败')
-    return
+function navigate(id: number) {
+  try {
+    const track = store.tracks.value.find((item) => item.id === id)
+    if (!track) throw new Error('轨迹不存在，请刷新云端数据')
+    openTrackNavigation(track.endPoint)
   }
-  notifySuccess(result.message ?? '轨迹上传成功')
-}
-
-function handleTrackRemove(id: number) {
-  const confirmed = window.confirm('确认删除该轨迹吗？')
-  if (!confirmed) {
-    return
-  }
-
-  const result = store.deleteTrack(id)
-  if (!result.ok) {
-    notifyError(result.message ?? '轨迹删除失败')
-    return
-  }
-  notifySuccess(result.message ?? '轨迹已删除')
-}
-
-function handleTrackNavigate(track: Track) {
-  const url = buildNavigationUrl(track.endPoint)
-  const popup = window.open(url, '_blank', 'noopener,noreferrer')
-  if (popup) {
-    notifyInfo('导航页面已打开')
-    return
-  }
-  notifyError('导航页面被拦截，请允许弹窗后重试')
-}
-
-function handleTrackMetaUpdate(payload: { id: number; name: string; memberId: number | null }) {
-  const result = store.updateTrackMeta(payload.id, payload.name, payload.memberId)
-  if (!result.ok) {
-    notifyError(result.message ?? '轨迹更新失败')
-    return
-  }
-  notifySuccess(result.message ?? '轨迹信息已更新')
-}
-
-function handleOcrImport(payload: { members: TempMember[]; duplicateAction: DuplicateAction }) {
-  const result = store.importOcrMembers(payload.members, {
-    duplicateAction: payload.duplicateAction,
-  })
-  if (!result.ok) {
-    notifyError(result.message ?? 'OCR 导入失败')
-    return
-  }
-  notifySuccess(result.message ?? 'OCR 导入成功')
-}
-
-function handleEventAdd(payload: FamilyEventInput) {
-  const result = store.addEvent(payload)
-  if (!result.ok) {
-    notifyError(result.message ?? '事件新增失败')
-    return
-  }
-  notifySuccess(result.message ?? '事件新增成功')
-}
-
-function handleEventUpdate(payload: { id: number; input: FamilyEventInput }) {
-  const result = store.updateEvent(payload.id, payload.input)
-  if (!result.ok) {
-    notifyError(result.message ?? '事件更新失败')
-    return
-  }
-  notifySuccess(result.message ?? '事件更新成功')
-}
-
-function handleEventRemove(id: number) {
-  const result = store.deleteEvent(id)
-  if (!result.ok) {
-    notifyError(result.message ?? '事件删除失败')
-    return
-  }
-  notifySuccess(result.message ?? '事件已删除')
-}
-
-function openImportDialog() {
-  if (!canShowImportActions.value) {
-    notifyError('当前角色无导入权限')
-    return
-  }
-  fileInputRef.value?.click()
-}
-
-async function handleImport(event: Event) {
-  if (!canShowImportActions.value) {
-    notifyError('当前角色无导入权限')
-    return
-  }
-
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) {
-    return
-  }
-
-  const lowerName = file.name.toLowerCase()
-
-  if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown')) {
-    const text = await file.text()
-    const preview = store.previewDataFromMarkdown(text)
-    if (!preview.ok) {
-      notifyError(preview.message ?? 'Markdown 预览失败')
-      input.value = ''
-      return
-    }
-
-    const summary = preview.summary
-    const summaryText = summary
-      ? `成员 ${summary.memberCount}，始祖分支 ${summary.rootCount}，别名 ${summary.aliasCount}，时间表达 ${summary.temporalCount}，葬地 ${summary.burialCount}`
-      : '未生成统计信息'
-    const warningPreview =
-      preview.warnings.length > 0
-        ? preview.warnings
-            .slice(0, 4)
-            .map((item, index) => `${index + 1}. ${item}`)
-            .join('\n')
-        : '未检测到明显结构风险'
-
-    const confirmCover = window.confirm(
-      `Markdown 预览结果：\n${summaryText}\n\n风险提示（最多展示 4 条）：\n${warningPreview}\n\n导入将覆盖当前数据，是否继续？`,
-    )
-    if (!confirmCover) {
-      input.value = ''
-      return
-    }
-
-    const result = await store.importDataFromMarkdown(text)
-    if (!result.ok) {
-      notifyError(result.message ?? 'Markdown 导入失败')
-    } else {
-      editingId.value = null
-      notifySuccess(result.message ?? 'Markdown 导入成功')
-    }
-    input.value = ''
-    return
-  }
-
-  const confirmCover = window.confirm('导入将覆盖当前数据，是否继续？')
-  if (!confirmCover) {
-    input.value = ''
-    return
-  }
-
-  if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
-    try {
-      const buffer = await file.arrayBuffer()
-      const imported = await importSqliteData(new Uint8Array(buffer))
-      store.replaceData(imported)
-      editingId.value = null
-      notifySuccess('SQLite 导入成功')
-    } catch (error) {
-      notifyError(error instanceof Error ? error.message : 'SQLite 导入失败')
-    }
-    input.value = ''
-    return
-  }
-
-  const text = await file.text()
-  const result = await store.importDataFromJson(text)
-  if (!result.ok) {
-    notifyError(result.message ?? '导入失败')
-  } else {
-    editingId.value = null
-    notifySuccess(result.message ?? '导入成功')
-  }
-
-  input.value = ''
+  catch (error) { message.error(error instanceof Error ? error.message : '打开导航失败') }
 }
 </script>
 
 <template>
-  <div class="page">
-    <header class="topbar">
-      <div class="topbar-main">
-        <div>
-          <h1>家族云谱</h1>
-          <p>记录家族世系，传承家族文化</p>
-        </div>
-        <AuthManager @notify="(msg, type) => showToast(msg, type)" />
-      </div>
-
-      <nav class="workspace-nav" aria-label="工作区导航">
-        <button
-          v-for="item in navItems"
-          :key="item.key"
-          class="workspace-nav-item"
-          :class="{ 'workspace-nav-item-active': route.path === item.path }"
-          type="button"
-          @click="navigateTo(item.path)"
-        >
-          {{ item.label }}
-        </button>
-      </nav>
-
-      <div v-if="canShowManageActions" class="top-actions">
-        <button class="btn-ghost" type="button" @click="openImportDialog">导入 JSON/SQLite/Markdown</button>
-        <button class="btn-primary" type="button" @click="handleExport">导出 JSON</button>
-        <button class="btn-ghost" type="button" @click="handleExportSqlite">导出 SQLite</button>
-        <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
-      </div>
-
-      <div v-else-if="isOverviewMode" class="top-actions top-actions-readonly">
-        <span class="readonly-tip">当前为只读总览页面</span>
-        <button class="btn-ghost" type="button" @click="handleExportTreePng">导出树图 PNG</button>
-      </div>
-
-      <input
-        ref="fileInputRef"
-        type="file"
-        accept="application/json,text/markdown,.md,.markdown,.sqlite,.db"
-        class="hidden-input"
-        @change="handleImport"
-      />
+  <div class="family-overview">
+    <header class="overview-heading">
+      <div><h1>读懂世系，留住家族记忆</h1><p>浏览族人档案、世系与家族足迹。此页面只读，不修改族谱资料。</p></div>
+      <Button :loading="refreshing" :disabled="initializing || !!loadError || store.saving.value" @click="refresh"><template #icon><ReloadOutlined /></template>刷新云端</Button>
     </header>
-
-    <section v-if="isBootstrapping" class="status-panel">
-      <h3>正在连接云端存储</h3>
-      <p>请稍候，系统正在初始化 Cloudflare D1 数据并恢复内容。</p>
-    </section>
-
-    <section v-else-if="bootstrapError" class="status-panel status-panel-error">
-      <h3>初始化失败</h3>
-      <p>{{ bootstrapError }}</p>
-      <button class="btn-primary" type="button" @click="bootstrapStore">重试</button>
-    </section>
-
-    <main v-if="showDataWorkspace && !isBootstrapping && !bootstrapError" class="main-layout">
-      <section class="left-pane">
-        <FamilyTreeChart
-          ref="treeChartRef"
-          :members="members"
-          :selected-id="store.selectedId.value"
-          :highlight-ids="highlightedIds"
-          @select="store.selectMember"
-        />
-      </section>
-
-      <aside class="right-pane">
-        <StatsDashboard
-          :members="members"
-          :tracks="tracks"
-          :events="events"
-        />
-
-        <MemberForm
-          v-if="canShowManageActions"
-          v-model:form="formModel"
-          :members="members"
-          :editing-member="editingMember"
-          @submit="handleSubmit"
-          @cancel="handleCancelEdit"
-        />
-
-        <MemberList
-          :members="members"
-          :selected-id="store.selectedId.value"
-          :find-parent-name="findParentName"
-          :generation-map="generationMap"
-          :readonly="isViewerMode"
-          @select="store.selectMember"
-          @edit="handleEdit"
-          @remove="handleRemove"
-          @search="searchKeyword = $event"
-        />
-
-        <TrackManager
-          :tracks="tracks"
-          :members="members"
-          :selected-member-id="store.selectedId.value"
-          :readonly="isViewerMode"
-          @upload="handleTrackUpload"
-          @remove="handleTrackRemove"
-          @navigate="handleTrackNavigate"
-          @update-meta="handleTrackMetaUpdate"
-        />
-
-        <EventManager
-          :events="events"
-          :members="members"
-          :readonly="isViewerMode"
-          @add="handleEventAdd"
-          @update="handleEventUpdate"
-          @remove="handleEventRemove"
-        />
-
-        <OcrImportManager
-          v-if="canShowManageActions"
-          :members="members"
-          @import-members="handleOcrImport"
-        />
-
-        <section class="manage-section">
-          <PartDataImportPanel />
-        </section>
-
-        <MemberDetail
-          :member="selectedMember"
-          :find-parent-name="findParentName"
-          :generation="selectedGeneration"
-          :aliases="selectedAliases"
-          :relations="selectedRelations"
-          :temporals="temporals"
-          :burials="selectedBurials"
-          :resolve-member-name="resolveMemberName"
-          :readonly="isViewerMode"
-          @edit="handleEdit"
-          @remove="handleRemove"
-          @add-child="handleAddChild"
-        />
-      </aside>
-    </main>
-
-    <main v-if="canShowSystemPanels" class="system-layout">
-      <section class="diagnostic-panel" :class="`diagnostic-panel-${diagnosticsTone}`">
-        <div class="diagnostic-header">
-          <div>
-            <p class="diagnostic-kicker">D1 自检面板</p>
-            <h3>{{ diagnosticsTitle }}</h3>
-            <p>{{ diagnosticsSummary }}</p>
-          </div>
-          <button class="btn-ghost" type="button" :disabled="selfCheckPending" @click="refreshD1Diagnostics(true)">
-            {{ selfCheckPending ? '检测中...' : '重新检测' }}
-          </button>
-        </div>
-
-        <div class="diagnostic-grid">
-          <div class="diagnostic-item">
-            <span>状态</span>
-            <strong>{{ diagnosticsStatusLabel }}</strong>
-          </div>
-          <div class="diagnostic-item diagnostic-item-wide">
-            <span>API 地址</span>
-            <strong>{{ d1ApiUrl }}</strong>
-          </div>
-          <div class="diagnostic-item">
-            <span>Token</span>
-            <strong>{{ d1Config.tokenConfigured ? '已配置' : '未配置' }}</strong>
-          </div>
-          <div class="diagnostic-item">
-            <span>HTTP 状态</span>
-            <strong>{{ diagnosticsHttpStatusText }}</strong>
-          </div>
-          <div class="diagnostic-item">
-            <span>最近检测</span>
-            <strong>{{ diagnosticsTimeText }}</strong>
-          </div>
-          <div class="diagnostic-item">
-            <span>Schema</span>
-            <strong>{{ diagnosticsSchemaText }}</strong>
-          </div>
-          <div class="diagnostic-item">
-            <span>云端成员</span>
-            <strong>{{ diagnostics?.memberCount ?? 0 }}</strong>
-          </div>
-          <div class="diagnostic-item">
-            <span>云端轨迹</span>
-            <strong>{{ diagnostics?.trackCount ?? 0 }}</strong>
-          </div>
-          <div class="diagnostic-item">
-            <span>云端事件</span>
-            <strong>{{ diagnostics?.eventCount ?? 0 }}</strong>
-          </div>
-        </div>
-      </section>
-
-      <LoginUserManager
-        @notify="(msg, type) => showToast(msg, type)"
-      />
-    </main>
-
-    <footer class="footer">
-      <p>数据默认存储在 Cloudflare D1 云端数据库，请定期导出备份。</p>
-    </footer>
-
-    <transition name="toast-fade">
-      <div
-        v-if="toast.visible"
-        class="app-toast"
-        :class="`app-toast-${toast.type}`"
-        role="status"
-        aria-live="polite"
-      >
-        {{ toast.message }}
-      </div>
-    </transition>
+    <Alert v-if="loadError" type="error" show-icon message="族谱加载失败" :description="loadError">
+      <template #action><Button @click="load">重试</Button></template>
+    </Alert>
+    <Alert v-if="syncError" type="error" show-icon message="同步失败，仍显示上次加载的数据" :description="syncError">
+      <template #action><Button :loading="refreshing" @click="refresh">重试同步</Button></template>
+    </Alert>
+    <Card v-if="initializing" :loading="true" title="正在加载云端族谱" />
+    <template v-else-if="!loadError">
+      <div class="overview-stats"><Card v-for="stat in stats" :key="stat.title" :bordered="false"><Statistic :title="stat.title" :value="stat.value" :suffix="stat.suffix" /></Card></div>
+      <Card :bordered="false" class="overview-content">
+        <Tabs default-active-key="genealogy">
+          <Tabs.TabPane key="genealogy" tab="族谱与族人">
+            <div class="overview-filters">
+              <Input v-model:value="keyword" allow-clear placeholder="搜索姓名、ID、分支或别名" aria-label="搜索族人" class="overview-search"><template #prefix><SearchOutlined /></template></Input>
+              <Select v-model:value="branch" allow-clear placeholder="全部分支" aria-label="筛选分支" :options="branchOptions" class="overview-select" />
+              <Select v-model:value="gender" allow-clear placeholder="全部性别" aria-label="筛选性别" :options="[{label:'男',value:'男'},{label:'女',value:'女'}]" class="overview-select" />
+              <Tag color="blue">名录 {{ filtered.length }} / {{ members.length }} 人</Tag>
+            </div>
+            <div class="overview-tree-heading">
+              <div><h2>父系世系图</h2><p>谱载代数与相对树层级分别展示，不以树层级代替谱载代数。分支筛选保留已记录的祖先路径；子树按当前分支范围显示。</p></div>
+              <Space wrap>
+                <Button :disabled="!selected" @click="focusSelected">查看所选子树</Button>
+                <Button v-if="rootId !== null" @click="rootId = null">返回当前分支全图</Button>
+                <Button :disabled="!treeMembers.length" @click="exportTree"><template #icon><DownloadOutlined /></template>导出 PNG</Button>
+              </Space>
+            </div>
+            <p v-if="selected" class="overview-selection">当前人物：<Button type="link" @click="select(selected.id)">{{ selected.name }} · #{{ selected.id }}</Button><Tag v-if="rootId !== null" color="blue">子树视图</Tag></p>
+            <FamilyTreeChart ref="chart" :members="treeMembers" :selected-id="store.selectedId.value" :highlight-ids="highlighted" :root-id="rootId" @select="select" />
+            <h2 class="overview-directory-title">族人名录</h2>
+            <Table :columns="memberColumns" :data-source="filtered" row-key="id" :scroll="{x:700}" :pagination="{current:page,pageSize:10,showSizeChanger:false,showTotal:(total:number)=>`共 ${total} 人`,onChange:(value:number)=>page=value}">
+              <template #bodyCell="{column, record}">
+                <template v-if="column.key === 'name'"><Button type="link" @click="select(record.id)">{{ record.name }} · #{{ record.id }}</Button></template>
+                <template v-else-if="column.key === 'parent'"><Button v-if="record.parentId !== null" type="link" @click="select(record.parentId)">{{ nameOf(record.parentId) }}</Button><span v-else>未录父亲</span></template>
+                <template v-else-if="column.key === 'generation'">{{ record.generationNumber || '未记录' }}</template>
+              </template>
+              <template #emptyText><Empty :image="Empty.PRESENTED_IMAGE_SIMPLE" :description="members.length ? '没有符合条件的族人，请调整筛选' : '暂无族谱资料，请由维护人员添加或导入'" /></template>
+            </Table>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="statistics" tab="世代统计">
+            <Alert type="info" show-icon message="谱载代数来自原始记录；相对树层级仅按已记录父系计算，两者不能互相替代。" />
+            <Space wrap class="overview-gender">
+              <Tag color="blue">男性 {{ members.filter(member=>member.gender==='男').length }} 人</Tag>
+              <Tag color="purple">女性 {{ members.filter(member=>member.gender==='女').length }} 人</Tag>
+            </Space>
+            <div class="overview-generation-grid">
+              <section><h2 class="overview-directory-title">谱载代数分布</h2>
+                <Table :columns="generationColumns" :data-source="recordedCounts" row-key="generation" :pagination="false">
+                  <template #bodyCell="{column, record}"><template v-if="column.key === 'generation'">{{ record.generation ? `第 ${record.generation} 世` : '未记录' }}</template></template>
+                </Table>
+              </section>
+              <section><h2 class="overview-directory-title">相对树层级分布</h2>
+                <Table :columns="generationColumns" :data-source="relativeCounts" row-key="generation" :pagination="false">
+                  <template #bodyCell="{column, record}"><template v-if="column.key === 'generation'">第 {{ record.generation }} 层</template></template>
+                </Table>
+              </section>
+            </div>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="events" :tab="`家族事件 · ${store.events.value.length}`">
+            <Space wrap class="overview-filters">
+              <Input v-model:value="eventKeyword" allow-clear placeholder="搜索事件或关联族人" aria-label="搜索事件" />
+              <Select v-model:value="eventType" allow-clear placeholder="全部类型" aria-label="事件类型" :options="ACTIVITY_EVENT_TYPES.map(type=>({label:type,value:type}))" style="width:130px" />
+            </Space>
+            <Table :columns="eventColumns" :data-source="events" row-key="id" :scroll="{x:800}" :pagination="{pageSize:10,showSizeChanger:false}">
+              <template #bodyCell="{column, record}"><template v-if="column.key === 'member'"><Button v-if="record.memberId !== null" type="link" @click="select(record.memberId)">{{ nameOf(record.memberId) }}</Button><span v-else>家族公共事件</span></template></template>
+            </Table>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="tracks" :tab="`寻根足迹 · ${store.tracks.value.length}`">
+            <Input v-model:value="trackKeyword" allow-clear placeholder="搜索轨迹或关联族人" aria-label="搜索轨迹" class="overview-search overview-filters" />
+            <Table :columns="trackColumns" :data-source="tracks" row-key="id" :scroll="{x:780}" :pagination="{pageSize:10,showSizeChanger:false}">
+              <template #bodyCell="{column, record}">
+                <template v-if="column.key === 'member'"><Button v-if="record.memberId !== null" type="link" @click="select(record.memberId)">{{ nameOf(record.memberId) }}</Button><span v-else>未关联族人</span></template>
+                <template v-else-if="column.key === 'distance'">{{ (record.stats.distanceMeters / 1000).toFixed(2) }} km</template>
+                <template v-else-if="column.key === 'points'">{{ record.stats.pointCount }}</template>
+                <template v-else-if="column.key === 'elevation'">{{ record.stats.elevationGainMeters === null ? '未记录' : `${record.stats.elevationGainMeters.toFixed(0)} m` }}</template>
+                <template v-else-if="column.key === 'actions'"><Button type="link" @click="navigate(record.id)">导航到终点 ↗</Button></template>
+              </template>
+            </Table>
+            <p class="overview-note">导航将打开外部 Google 地图；本页不采集当前位置，也不修改轨迹。</p>
+          </Tabs.TabPane>
+        </Tabs>
+      </Card>
+      <footer class="overview-note">资料来自 Cloudflare D1 云端。未记录、待匹配及待消歧不等于已确认事实；同音异字不会自动合并。请由维护人员定期导出备份。</footer>
+    </template>
+    <Drawer v-model:open="detailOpen" :title="selected ? `${selected.name} · 人物档案` : '人物档案'" width="min(680px, 100vw)">
+      <template #extra><Button :disabled="!selected" @click="focusSelected">查看此人及后代</Button></template>
+      <MemberArchive :member="selected" @select="select" />
+    </Drawer>
   </div>
 </template>
+
+<style scoped>
+.family-overview { max-width: 1600px; margin: 0 auto; padding: 28px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.overview-heading, .overview-tree-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.overview-heading h1 { font-size: 24px; font-weight: 650; color: #1e293b; margin: 0 0 8px; }
+.overview-heading p, .overview-tree-heading p, .overview-note { color: #64748b; font-size: 13px; line-height: 1.8; margin: 0; }
+.overview-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.overview-content { min-width: 0; }
+.overview-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.overview-search { width: min(100%, 320px); }
+.overview-select { width: 160px; }
+.overview-tree-heading h2, .overview-directory-title { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
+.overview-directory-title { margin-top: 24px; }
+.overview-gender { margin-top: 16px; }
+.overview-generation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.overview-selection { margin: 8px 0; color: #64748b; font-size: 13px; }
+.overview-content :deep(.ant-table-cell) { overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 767px) {
+  .family-overview { padding: 16px 12px; gap: 16px; }
+  .overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .overview-heading h1 { font-size: 20px; }
+  .overview-content :deep(.ant-card-body) { padding: 14px; }
+  .overview-select { width: calc(50% - 6px); }
+  .overview-generation-grid { grid-template-columns: minmax(0, 1fr); }
+}
+</style>

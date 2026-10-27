@@ -1,109 +1,51 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import LoginPage from '../pages/LoginPage.vue'
-import FamilyWorkspace from '../pages/FamilyWorkspace.vue'
+import { getDefaultAppPath, resolveLoginRedirect, workspaceEntries } from '../services/accessControl'
 import { initAuthSession, useAuth } from '../services/authService'
 import type { UserRole } from '../types/auth'
-
-interface RouteMetaWithRoles {
-  requiresAuth?: boolean
-  allowedRoles?: UserRole[]
-}
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    {
-      path: '/',
-      redirect: '/login',
-    },
-    {
-      path: '/login',
-      component: LoginPage,
-    },
+    { path: '/', redirect: '/app' },
+    { path: '/login', component: () => import('../pages/LoginPage.vue'), meta: { title: '登录' } },
     {
       path: '/app',
-      redirect: '/app/overview',
+      component: () => import('../layouts/WorkspaceLayout.vue'),
+      meta: { requiresAuth: true },
+      children: [
+        { path: '', name: 'AppEntry', component: { render: () => null } },
+        ...workspaceEntries.map((entry) => ({
+          path: entry.mode,
+          component: entry.mode === 'manage'
+            ? () => import('../pages/ManagePage.vue')
+            : entry.mode === 'system'
+              ? () => import('../pages/SystemPage.vue')
+              : () => import('../pages/FamilyWorkspace.vue'),
+          meta: { title: entry.title, description: entry.description, allowedRoles: entry.roles },
+        })),
+      ],
     },
-    {
-      path: '/app/overview',
-      component: FamilyWorkspace,
-      props: {
-        mode: 'overview',
-      },
-      meta: {
-        requiresAuth: true,
-        allowedRoles: ['user', 'maintainer', 'sysadmin'],
-      } satisfies RouteMetaWithRoles,
-    },
-    {
-      path: '/app/manage',
-      component: FamilyWorkspace,
-      props: {
-        mode: 'manage',
-      },
-      meta: {
-        requiresAuth: true,
-        allowedRoles: ['maintainer', 'sysadmin'],
-      } satisfies RouteMetaWithRoles,
-    },
-    {
-      path: '/app/system',
-      component: FamilyWorkspace,
-      props: {
-        mode: 'system',
-      },
-      meta: {
-        requiresAuth: true,
-        allowedRoles: ['sysadmin'],
-      } satisfies RouteMetaWithRoles,
-    },
-    {
-      path: '/:pathMatch(.*)*',
-      redirect: '/login',
-    },
+    { path: '/:pathMatch(.*)*', redirect: '/app' },
   ],
 })
 
 router.beforeEach(async (to) => {
   await initAuthSession()
-  const { isAuthenticated, role, resolveDefaultAppPath } = useAuth()
-
-  if (to.path === '/app') {
-    if (!isAuthenticated.value) {
-      return {
-        path: '/login',
-        query: {
-          redirect: to.fullPath,
-        },
-      }
-    }
-    return resolveDefaultAppPath()
-  }
-
+  const { isAuthenticated, role } = useAuth()
   if (to.meta.requiresAuth && !isAuthenticated.value) {
-    return {
-      path: '/login',
-      query: {
-        redirect: to.fullPath,
-      },
-    }
+    return { path: '/login', query: { redirect: to.fullPath } }
   }
-
-  const routeMeta = (to.meta ?? {}) as RouteMetaWithRoles
-  if (routeMeta.allowedRoles?.length) {
-    const currentRole = role.value
-    if (!routeMeta.allowedRoles.includes(currentRole)) {
-      return resolveDefaultAppPath()
-    }
-  }
-
+  if (to.name === 'AppEntry') return getDefaultAppPath(role.value)
+  const allowedRoles = to.meta.allowedRoles as UserRole[] | undefined
+  if (allowedRoles && !allowedRoles.includes(role.value)) return getDefaultAppPath(role.value)
   if (to.path === '/login' && isAuthenticated.value) {
-    const redirectRaw = typeof to.query.redirect === 'string' ? to.query.redirect : resolveDefaultAppPath()
-    const redirectPath = redirectRaw.startsWith('/') ? redirectRaw : resolveDefaultAppPath()
-    return redirectPath
+    return resolveLoginRedirect(to.query.redirect, role.value)
   }
-
   return true
+})
+
+router.afterEach((to) => {
+  document.title = `${to.meta.title ?? '族谱'} · 家族云谱`
 })
 
 export default router
