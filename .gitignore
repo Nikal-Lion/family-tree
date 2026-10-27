@@ -5,6 +5,9 @@ node_modules/
 dist/
 coverage/
 
+# Local genealogy source documents
+/data/
+
 # Logs
 logs/
 *.log
@@ -37,4 +40,3 @@ Thumbs.db
 
 # Wrangler local dev state (D1, KV, R2 local data, deploy cache)
 .wrangler/
-

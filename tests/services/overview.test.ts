@@ -12,7 +12,7 @@ const members: Member[] = [
   { id: 5, name: '太琳', gender: '男', parentId: null, lineageBranch: '二房' },
 ]
 const ids = (items: Member[]) => items.map((item) => item.id)
-const treeIds = (node: TreeNode): (number | 'root')[] => [node.id, ...(node.children ?? []).flatMap(treeIds)]
+const treeIds = (node: TreeNode): TreeNode['id'][] => [node.id, ...(node.children ?? []).flatMap(treeIds)]
 
 describe('只读总览检索与图谱范围', () => {
   it('按姓名、ID、分支和别名检索，不改变原始成员', () => {
