@@ -78,6 +78,7 @@ async function handleLogout() {
     :sidebar-width="224"
     :side-collapse-width="64"
     :sidebar-draggable="false"
+    :sidebar-expand-on-hover="true"
     :sidebar-fixed-button="false"
     :sidebar-collapsed-button="false"
     :header-toggle-sidebar-button="false"
@@ -88,7 +89,7 @@ async function handleLogout() {
     header-theme="light"
     :content-padding="0"
     class="workspace-shell"
-    :class="{ 'workspace-shell-browse': browsing }"
+    :class="{ 'workspace-shell-browse': browsing, 'workspace-shell-collapsed': collapsed && !mobile }"
   >
     <template #logo>
       <RouterLink class="workspace-brand" to="/app/overview" aria-label="家族云谱首页">
@@ -124,6 +125,7 @@ async function handleLogout() {
             v-if="!browsing"
             type="text"
             :aria-label="collapsed ? '展开导航' : '收起导航'"
+            :aria-expanded="!collapsed"
             @click="collapsed = !collapsed"
           >
             <template #icon><MenuUnfoldOutlined v-if="collapsed" /><MenuFoldOutlined v-else /></template>

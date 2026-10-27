@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   Alert, Button, Card, Checkbox, Descriptions, Drawer, Empty, Form, Image, Input,
   InputNumber, List, Modal, Select, Space, Table, Tag, message,
@@ -22,6 +22,8 @@ const initializing = ref(true)
 const loadError = ref('')
 const keyword = ref('')
 const gender = ref<string>()
+const page = ref(1)
+const pageSize = ref(10)
 const editingId = ref<number | null>(null)
 const editorOpen = ref(false)
 const detailOpen = ref(false)
@@ -46,6 +48,14 @@ const filtered = computed(() => {
     ].some((value) => value.toLowerCase().includes(query)))
   ))
 })
+watch([keyword, gender], () => { page.value = 1 })
+watch(() => filtered.value.length, (total) => {
+  page.value = Math.min(page.value, Math.max(1, Math.ceil(total / pageSize.value)))
+})
+function changePage(next: number, size: number) {
+  page.value = size === pageSize.value ? next : 1
+  pageSize.value = size
+}
 const parentOptions = computed(() => members.value
   .filter((member) => editingId.value === null || canAssignParent(members.value, editingId.value, member.id))
   .map((member) => ({ label: `${member.name} · #${member.id}`, value: member.id })))
@@ -189,7 +199,7 @@ function removeSpouse(id: number) {
         </Space>
       </div>
       <MemberCardList v-if="mobile" :members="filtered" :all-members="members" :loading="initializing" @select="openDetail" />
-      <Table v-else :columns="columns" :data-source="filtered" row-key="id" :loading="initializing" :scroll="{x:1100}" :pagination="{pageSize:10, showTotal:(total:number)=>`共 ${total} 人`}">
+      <Table v-else :columns="columns" :data-source="filtered" row-key="id" :loading="initializing" :scroll="{x:1100}" :pagination="{current:page, pageSize, showSizeChanger:true, showTotal:(total:number)=>`共 ${total} 人`, onChange:changePage}">
         <template #bodyCell="{column, record}">
           <template v-if="column.key === 'name'"><Button type="link" @click="openDetail(record.id)">{{ record.name }}</Button></template>
           <template v-else-if="column.key === 'parent'">{{ record.parentId === null ? '始祖 / 未录父亲' : nameOf(record.parentId) }}</template>

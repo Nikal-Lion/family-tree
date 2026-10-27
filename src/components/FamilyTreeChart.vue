@@ -3,126 +3,113 @@ import * as echarts from 'echarts/core'
 import { TreeChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import { TooltipComponent } from 'echarts/components'
+import { LabelLayout } from 'echarts/features'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Alert, Button, Empty, Select, Space } from 'ant-design-vue'
-import { buildTreeData, type TreeNode } from '../services/treeBuilder'
-import { getAncestorIds } from '../services/overview'
+import { buildTreeData } from '../services/treeBuilder'
+import { buildTreeView, indexTreeView, measureTreeView, renderTreeScene, revealTreePaths, type TreeNodePosition } from '../services/treeView'
 import type { Member } from '../types/member'
 
-echarts.use([TreeChart, TooltipComponent, CanvasRenderer])
+echarts.use([TreeChart, TooltipComponent, CanvasRenderer, LabelLayout])
 
 const props = defineProps<{
   members: Member[]
   selectedId: number | null
   highlightIds: number[]
   rootId?: number | null
+  generations?: ReadonlyMap<number, number>
 }>()
-const emit = defineEmits<{ select: [id: number] }>()
+const emit = defineEmits<{ select: [id: number]; inspect: [id: number] }>()
 const chartRef = ref<HTMLElement | null>(null)
 const direction = ref<'LR' | 'TB'>('LR')
 const depth = ref(4)
 const chartError = ref('')
 const canvasSize = ref({ width: '100%', height: '560px' })
-const treeData = computed(() => buildTreeData(props.members, props.rootId ?? null))
+const treeData = computed(() => buildTreeData(props.members, props.rootId ?? null, props.generations))
+const expansion = ref(new Map<number, boolean>())
+const treeView = computed(() => buildTreeView(treeData.value, depth.value, expansion.value))
+const viewIndex = computed(() => indexTreeView(treeView.value))
+const selectedNode = computed(() => props.selectedId === null ? undefined : viewIndex.value.get(props.selectedId))
+const extent = computed(() => measureTreeView(treeView.value))
+const canToggleSelected = computed(() => !!selectedNode.value?.children?.length)
 let chart: echarts.ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
-const collapsedNodes = new Set<number>()
-const expandedNodes = new Set<number>()
-
-interface DisplayNode extends TreeNode {
-  collapsed: boolean
-  children?: DisplayNode[]
-  itemStyle?: { color: string; borderColor: string; borderWidth: number }
-}
+let renderFrame: number | null = null
+let resetPending = false
+let nodePositions = new Map<number, TreeNodePosition>()
+let pendingAnchor: { id: number; point: TreeNodePosition } | null = null
+let focusId: number | null = null
 
 function renderChart(reset = false) {
   if (!chart) return
-  const highlighted = new Set(props.highlightIds)
-  const expandedPath = getAncestorIds(props.members, [
-    ...props.highlightIds, ...(props.selectedId === null ? [] : [props.selectedId]),
-  ])
-  function decorate(node: TreeNode, level: number): DisplayNode {
-    const selected = node.id === props.selectedId
-    const matched = typeof node.id === 'number' && highlighted.has(node.id)
-    return {
-      ...node,
-      collapsed: typeof node.id === 'number' && (collapsedNodes.has(node.id)
-        || (!expandedNodes.has(node.id) && depth.value !== -1 && level >= depth.value
-          && !expandedPath.has(node.id))),
-      children: node.children?.map((child) => decorate(child, level + 1)),
-      itemStyle: selected
-        ? { color: '#1677ff', borderColor: '#0958d9', borderWidth: 3 }
-        : matched ? { color: '#d48806', borderColor: '#ad6800', borderWidth: 2 } : undefined,
-    }
-  }
-  const decorated = decorate(treeData.value, 0)
-  function measure(node: DisplayNode): { leaves: number; levels: number } {
-    if (node.collapsed || !node.children?.length) return { leaves: 1, levels: 1 }
-    const children = node.children.map(measure)
-    return {
-      leaves: children.reduce((sum, child) => sum + child.leaves, 0),
-      levels: Math.max(...children.map((child) => child.levels)) + 1,
-    }
-  }
-  const extent = measure(decorated)
   const viewport = chartRef.value?.parentElement
+  const previousScroll = { left: viewport?.scrollLeft ?? 0, top: viewport?.scrollTop ?? 0 }
+  const anchor = reset ? null : pendingAnchor
+  const targetId = reset ? null : focusId
+  pendingAnchor = null
+  focusId = null
   const width = Math.max(viewport?.clientWidth ?? 0,
-    direction.value === 'LR' ? extent.levels * 160 + 120 : extent.leaves * 112 + 120)
+    direction.value === 'LR' ? extent.value.levels * 160 + 120 : extent.value.leaves * 112 + 120)
   const height = Math.max(viewport?.clientHeight ?? 440,
-    direction.value === 'LR' ? extent.leaves * 46 + 110 : extent.levels * 90 + 100)
+    direction.value === 'LR' ? extent.value.leaves * 46 + 110 : extent.value.levels * 90 + 100)
   canvasSize.value = { width: `${width}px`, height: `${height}px` }
   if (chart.getWidth() !== width || chart.getHeight() !== height) chart.resize({ width, height })
-  if (reset && viewport) {
-    void nextTick(() => viewport.scrollTo({
-      left: direction.value === 'TB' ? Math.max(0, (width - viewport.clientWidth) / 2) : 0,
-      top: direction.value === 'LR' ? Math.max(0, (height - viewport.clientHeight) / 2) : 0,
-    }))
+  nodePositions = renderTreeScene(chart, treeView.value, {
+    direction: direction.value, selectedId: props.selectedId, highlightIds: props.highlightIds, reset,
+  })
+  if (viewport) {
+    const anchoredPosition = anchor ? nodePositions.get(anchor.id) : undefined
+    const focusedPosition = targetId === null ? undefined : nodePositions.get(targetId)
+    void nextTick(() => {
+      if (!chart) return
+      if (reset) {
+        viewport.scrollTo({
+          left: direction.value === 'TB' ? Math.max(0, (width - viewport.clientWidth) / 2) : 0,
+          top: direction.value === 'LR' ? Math.max(0, (height - viewport.clientHeight) / 2) : 0,
+        })
+      } else if (anchor && anchoredPosition) {
+        viewport.scrollTo({
+          left: previousScroll.left + anchoredPosition.x - anchor.point.x,
+          top: previousScroll.top + anchoredPosition.y - anchor.point.y,
+        })
+      } else if (focusedPosition) {
+        viewport.scrollTo({
+          left: focusedPosition.x - viewport.clientWidth / 2,
+          top: focusedPosition.y - viewport.clientHeight / 2,
+        })
+      } else viewport.scrollTo(previousScroll.left, previousScroll.top)
+    })
   }
-  chart.setOption({
-    animation: false,
-    tooltip: {
-      renderMode: 'richText',
-      trigger: 'item',
-      formatter: (params: { data?: { id?: number | string; name?: string; gender?: string } }) => {
-        const node = params.data
-        return typeof node?.id === 'number'
-          ? `姓名：${node.name}\n性别：${node.gender}\nID：${node.id}`
-          : treeData.value.name
-      },
-    },
-    series: [{
-      id: 'family-tree', type: 'tree', data: [decorated],
-      orient: direction.value, roam: true, expandAndCollapse: false,
-      ...(reset ? { center: ['50%', '50%'], zoom: 1 } : {}),
-      left: direction.value === 'LR' ? 65 : 35,
-      right: direction.value === 'LR' ? 85 : 35,
-      top: 50, bottom: 60,
-      symbol: 'roundRect', symbolSize: [92, 32],
-      edgeShape: 'polyline', edgeForkPosition: '65%',
-      lineStyle: { color: '#94a3b8', width: 1.5 },
-      itemStyle: { color: '#526b85', borderColor: '#3b536b', borderWidth: 1 },
-      label: {
-        position: 'inside', verticalAlign: 'middle', align: 'center',
-        color: '#fff', fontSize: 12, overflow: 'truncate', width: 80,
-      },
-      leaves: { label: { position: 'inside' } },
-      emphasis: { focus: 'ancestor' },
-      initialTreeDepth: -1,
-    }],
-  }, { notMerge: reset })
+  chartError.value = ''
 }
 
-function resetView() { renderChart(true) }
-function setSelectedExpanded(expanded: boolean) {
-  if (props.selectedId === null) return
-  const [add, remove] = expanded ? [expandedNodes, collapsedNodes] : [collapsedNodes, expandedNodes]
-  add.add(props.selectedId)
-  remove.delete(props.selectedId)
-  renderChart()
+function queueRender(reset = false) {
+  if (!chart) return
+  resetPending ||= reset
+  if (renderFrame !== null) return
+  renderFrame = requestAnimationFrame(() => {
+    renderFrame = null
+    const shouldReset = resetPending
+    resetPending = false
+    try { renderChart(shouldReset) }
+    catch (error) { chartError.value = error instanceof Error ? error.message : '图谱绘制失败' }
+  })
 }
-function clearExpansion() {
-  collapsedNodes.clear()
-  expandedNodes.clear()
+function revealTargets(targetIds = [
+    ...props.highlightIds, ...(props.selectedId === null ? [] : [props.selectedId]),
+  ]) {
+  revealTreePaths(props.members, targetIds, expansion.value)
+}
+function resetView() {
+  expansion.value.clear()
+  revealTargets()
+  queueRender(true)
+}
+function setSelectedExpanded(expanded: boolean) {
+  if (props.selectedId === null || !canToggleSelected.value) return
+  const point = nodePositions.get(props.selectedId)
+  if (point) pendingAnchor = { id: props.selectedId, point: { ...point } }
+  expansion.value.set(props.selectedId, expanded)
 }
 function exportAsPng() {
   if (!chart || chartError.value || !props.members.length) throw new Error('图谱尚未就绪或没有可导出的成员')
@@ -137,7 +124,7 @@ function exportAsPng() {
 defineExpose({ exportAsPng })
 
 function resize() {
-  renderChart()
+  queueRender()
 }
 function initialize() {
   if (!chartRef.value) return
@@ -147,8 +134,15 @@ function initialize() {
     chart = echarts.init(chartRef.value)
     chart.on('click', (params) => {
       const node = params.data
-      if (node && typeof node === 'object' && 'id' in node && typeof node.id === 'number') emit('select', node.id)
+      if (!node || typeof node !== 'object' || !('id' in node) || typeof node.id !== 'number') return
+      const current = viewIndex.value.get(node.id)
+      if (!current) return
+      pendingAnchor = params.event && (current.children?.length || props.selectedId !== node.id)
+        ? { id: node.id, point: { x: params.event.offsetX, y: params.event.offsetY } } : null
+      if (current.children?.length) expansion.value.set(node.id, current.collapsed)
+      emit('select', node.id)
     })
+    chart.on('treeroam', () => nodePositions.clear())
     renderChart(true)
   } catch (error) {
     chartError.value = error instanceof Error ? error.message : '图谱初始化失败'
@@ -162,20 +156,28 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
+  if (renderFrame !== null) cancelAnimationFrame(renderFrame)
   window.removeEventListener('resize', resize)
   chart?.dispose()
   chart = null
 })
 watch(() => props.members, () => {
-  clearExpansion()
-  renderChart(true)
+  const ids = new Set(props.members.map((member) => member.id))
+  for (const id of expansion.value.keys()) if (!ids.has(id)) expansion.value.delete(id)
 }, { deep: true })
-watch(() => [props.highlightIds, props.selectedId], () => {
-  clearExpansion()
-  renderChart()
-}, { deep: true })
-watch(() => props.rootId, () => { clearExpansion(); resetView() })
-watch([direction, depth], () => { clearExpansion(); resetView() })
+watch(() => props.highlightIds, (ids, previous) => {
+  if (previous && ids.length === previous.length && ids.every((id, index) => id === previous[index])) return
+  revealTargets()
+  focusId = props.highlightIds[0] ?? props.selectedId
+}, { deep: true, immediate: true })
+watch(() => props.selectedId, () => {
+  revealTargets(props.selectedId === null ? [] : [props.selectedId])
+  focusId = props.selectedId
+}, { immediate: true })
+watch([treeView, () => props.highlightIds, () => props.selectedId], () => queueRender(), { deep: true })
+watch(() => props.rootId, resetView)
+watch(direction, () => queueRender(true))
+watch(depth, resetView)
 </script>
 
 <template>
@@ -185,10 +187,11 @@ watch([direction, depth], () => { clearExpansion(); resetView() })
         <Select v-model:value="direction" aria-label="图谱方向" :options="[{label:'横向世系',value:'LR'},{label:'纵向世系',value:'TB'}]" style="width:130px" />
         <Select v-model:value="depth" aria-label="展开层级" :options="[{label:'展开 2 层',value:2},{label:'展开 4 层',value:4},{label:'展开 6 层',value:6},{label:'展开全部',value:-1}]" style="width:130px" />
         <Button @click="resetView">重置视图</Button>
-        <Button :disabled="selectedId === null" @click="setSelectedExpanded(true)">展开所选</Button>
-        <Button :disabled="selectedId === null" @click="setSelectedExpanded(false)">收起所选</Button>
+        <Button :disabled="!canToggleSelected || !selectedNode?.collapsed" @click="setSelectedExpanded(true)">展开所选</Button>
+        <Button :disabled="!canToggleSelected || !!selectedNode?.collapsed" @click="setSelectedExpanded(false)">收起所选</Button>
+        <Button :disabled="!selectedNode" @click="selectedId !== null && emit('inspect', selectedId)">查看档案</Button>
       </Space>
-      <span class="chart-hint">拖拽移动 · 滚轮 / 双指缩放 · 点击查看档案</span>
+      <span class="chart-hint">当前显示 {{ extent.members }} / {{ viewIndex.size }} 人 · 点击节点展开/收起 · 拖拽移动 · 滚轮 / 双指缩放</span>
     </div>
     <Alert v-if="chartError" type="error" show-icon :message="chartError">
       <template #action><Button size="small" @click="initialize">重试</Button></template>
@@ -197,7 +200,7 @@ watch([direction, depth], () => { clearExpansion(); resetView() })
       <div ref="chartRef" class="chart-canvas" :style="canvasSize" role="img" aria-label="族谱父系树图，可通过族人名录选择成员查看档案" />
       <Empty v-if="!members.length" class="chart-empty" description="当前范围没有族人资料" />
     </div>
-    <p class="chart-hint chart-note">连线只表示已记录的父系关系；配偶、过继及待关联的子女声明请查看人物档案。选中或搜索成员会展开其祖先路径；仅看该人物及后代可使用“查看所选子树”。</p>
+    <p class="chart-hint chart-note">“+”表示可展开，“-”表示可收起；叶节点仅选中人物。未录父亲但有代数依据者按辈分对齐，不补造父亲或连线。连线只表示已记录的父系关系；配偶、过继及待关联声明请查看档案。搜索或从名录选人会展开其祖先路径，其他分支的手动状态保留。</p>
   </div>
 </template>
 
