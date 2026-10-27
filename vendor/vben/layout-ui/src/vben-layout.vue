@@ -370,12 +370,12 @@ const maskStyle = computed((): CSSProperties => {
 
 const showHeaderToggleButton = computed(() => {
   return (
-    props.isMobile ||
-    (props.headerToggleSidebarButton &&
-      isSideMode.value &&
-      !isSidebarMixedNav.value &&
-      !isMixedNav.value &&
-      !props.isMobile)
+    props.headerToggleSidebarButton &&
+    (props.isMobile
+      ? sidebarEnableState.value
+      : isSideMode.value &&
+        !isSidebarMixedNav.value &&
+        !isMixedNav.value)
   );
 });
 
