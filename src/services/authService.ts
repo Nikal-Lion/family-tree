@@ -43,6 +43,10 @@ function applyAuthenticatedUser(nextUser: LoginUser): void {
   role.value = nextUser.role
 }
 
+export function updateCurrentLoginUser(nextUser: LoginUser): void {
+  if (user.value?.id === nextUser.id) applyAuthenticatedUser(nextUser)
+}
+
 function clearAuthState(): void {
   user.value = null
   role.value = 'anonymous'

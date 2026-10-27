@@ -5,7 +5,7 @@ import {
   type TableProps,
 } from 'ant-design-vue'
 import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
-import { initAuthSession, useAuth } from '../services/authService'
+import { initAuthSession, updateCurrentLoginUser, useAuth } from '../services/authService'
 import { createLoginUser, deleteLoginUser, listLoginUsers, updateLoginUser } from '../services/d1ApiService'
 import { filterLoginUsers, isLastEnabledSysadmin, normalizeLoginMobile } from './loginUserManagerHelpers'
 import type { LoginUser, LoginUserRole } from '../types/auth'
@@ -25,7 +25,7 @@ const pageSize = ref(10)
 const editorOpen = ref(false)
 const editingId = ref<number | null>(null)
 const confirmation = ref<{ user: LoginUser; action: 'delete' | 'toggle' } | null>(null)
-const form = reactive<{ mobile: string; role: LoginUserRole }>({ mobile: '', role: 'user' })
+const form = reactive<{ mobile: string; name: string; role: LoginUserRole }>({ mobile: '', name: '', role: 'user' })
 let epoch = 0
 let loadSequence = 0
 let alive = true
@@ -38,6 +38,7 @@ const roleLabels: Record<LoginUserRole, string> = {
 const roleOptions = Object.entries(roleLabels).map(([value, label]) => ({ value, label }))
 const columns: TableProps<LoginUser>['columns'] = [
   { title: 'ID', dataIndex: 'id', width: 72 },
+  { title: '名称', dataIndex: 'name', width: 140 },
   { title: '登录手机号', dataIndex: 'mobile', width: 180 },
   { title: '角色', key: 'role', width: 150 },
   { title: '状态', key: 'enabled', width: 90 },
@@ -83,7 +84,7 @@ function openEditor(id?: number) {
   const item = users.value.find((entry) => entry.id === id)
   if (id !== undefined && !item) return
   editingId.value = item?.id ?? null
-  Object.assign(form, { mobile: item?.mobile ?? '', role: item?.role ?? 'user' })
+  Object.assign(form, { mobile: item?.mobile ?? '', name: item?.name ?? '', role: item?.role ?? 'user' })
   actionError.value = ''
   editorOpen.value = true
 }
@@ -117,9 +118,12 @@ function save() {
     actionError.value = '至少保留一个启用中的 sysadmin'
     return
   }
-  const input = { mobile, role: form.role }
+  const input = { mobile, name: form.name.trim(), role: form.role }
   void mutate(
-    () => id === null ? createLoginUser(input) : updateLoginUser(id, input),
+    async () => {
+      const saved = await (id === null ? createLoginUser(input) : updateLoginUser(id, input))
+      updateCurrentLoginUser(saved)
+    },
     id === null ? '登录用户创建成功' : '登录用户已更新',
     () => { editorOpen.value = false },
   )
@@ -151,7 +155,7 @@ function confirmAction() {
 }
 
 watch(keyword, () => { page.value = 1 })
-watch(() => [auth.ready.value, auth.user.value, auth.isSysadmin.value] as const, () => {
+watch(() => [auth.ready.value, auth.user.value?.id, auth.isSysadmin.value] as const, () => {
   ++epoch
   ++loadSequence
   users.value = []
@@ -178,7 +182,7 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
         <template #action><Button size="small" :disabled="busy" @click="refreshUsers()">重试</Button></template>
       </Alert>
       <div class="account-toolbar">
-        <Input v-model:value="keyword" allow-clear placeholder="搜索手机号、ID、角色或状态" class="account-search">
+        <Input v-model:value="keyword" allow-clear placeholder="搜索名称、手机号、ID、角色或状态" class="account-search">
           <template #prefix><SearchOutlined /></template>
         </Input>
         <Space wrap>
@@ -211,6 +215,9 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
     <Modal :open="authorized && editorOpen" :title="editingId === null ? '新增登录账号' : '编辑登录账号'" :footer="null" width="min(520px, calc(100vw - 32px))" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" destroy-on-close @cancel="editorOpen = false">
       <Alert v-if="actionError" type="error" show-icon :message="actionError" class="account-alert" />
       <Form :model="form" layout="vertical" :disabled="submitting" @finish="save">
+        <Form.Item name="name" label="用户名称">
+          <Input v-model:value="form.name" :maxlength="100" placeholder="用于页面显示；未设置时显示手机号" />
+        </Form.Item>
         <Form.Item name="mobile" label="登录手机号" :rules="[{ required: true, whitespace: true, message: '请输入手机号' }]">
           <Input v-model:value="form.mobile" type="tel" autocomplete="off" placeholder="保留国际区号；格式由服务端验证" />
         </Form.Item>

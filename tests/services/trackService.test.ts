@@ -1,5 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parseGpx, parseGpxCoordinates } from '../../src/services/trackService'
+import { parseGpx, parseGpxCoordinates, trackMemberIds, validateGpxFile } from '../../src/services/trackService'
+
+describe('mobile GPX file selection and ordered members', () => {
+  it('accepts GPX without relying on mobile file-provider MIME types', () => {
+    expect(() => validateGpxFile({ name: '祭祖.GPX', size: 1024 })).not.toThrow()
+    expect(() => validateGpxFile({ name: 'track.gpx', size: 10 * 1024 * 1024 })).not.toThrow()
+  })
+  it.each([
+    [{ name: 'track.xml', size: 100 }, '.gpx'],
+    [{ name: 'track.gpx', size: 0 }, '为空'],
+    [{ name: 'track.gpx', size: 10 * 1024 * 1024 + 1 }, '10MB'],
+  ] as const)('rejects invalid files %j', (file, error) => {
+    expect(() => validateGpxFile(file)).toThrow(error)
+  })
+  it('uses explicit order and falls back only for legacy single-member tracks', () => {
+    expect(trackMemberIds({ memberId: 3 })).toEqual([3])
+    expect(trackMemberIds({ memberId: null })).toEqual([])
+    expect(trackMemberIds({ memberId: 3, memberIds: [3, 1, 2] })).toEqual([3, 1, 2])
+    expect(trackMemberIds({ memberId: null, memberIds: [] })).toEqual([])
+  })
+})
 
 describe('GPX coordinate parsing', () => {
   it.each([

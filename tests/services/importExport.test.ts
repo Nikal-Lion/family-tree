@@ -25,9 +25,28 @@ describe('complete family backups', () => {
   })
   it('preserves standalone public events and tracks without members', () => {
     const data = familyFixture()
-    const empty = { ...createEmptyFamilyData(), events: data.events.map((item) => ({ ...item, memberId: null })), tracks: data.tracks.map((item) => ({ ...item, memberId: null })) }
+    const empty = { ...createEmptyFamilyData(), events: data.events.map((item) => ({ ...item, memberId: null })), tracks: data.tracks.map((item) => ({ ...item, memberId: null, memberIds: [] })) }
     expect(parseImportedJson(exportAsJson(empty)).events).toHaveLength(1)
     expect(parseImportedJson(exportAsJson(empty)).tracks).toHaveLength(1)
+  })
+  it('migrates single-member tracks and preserves explicitly ordered associations', () => {
+    const data = familyFixture()
+    delete data.tracks[0]!.memberIds
+    expect(normalizeFamilyData(data).tracks[0]?.memberIds).toEqual([3])
+    data.tracks[0]!.memberId = 2
+    data.tracks[0]!.memberIds = [2, 1, 3]
+    expect(parseImportedJson(exportAsJson(data)).tracks[0]?.memberIds).toEqual([2, 1, 3])
+  })
+  it.each([
+    [3, 999], [3, 3], [3, -1], [3, 1.5], [3, '1'],
+  ])('rejects invalid ordered track associations %j', (...ids) => {
+    const data = familyFixture()
+    expect(() => normalizeFamilyData({ ...data, tracks: [{ ...data.tracks[0], memberIds: ids }] })).toThrow('数据无效')
+  })
+  it('rejects conflicting primary and ordered track associations', () => {
+    const data = familyFixture()
+    data.tracks[0]!.memberIds = [1, 3]
+    expect(() => normalizeFamilyData(data)).toThrow('不一致')
   })
   it.each([
     ['members', (data: ReturnType<typeof familyFixture>) => { data.members.push({ ...data.members[0]! }) }],

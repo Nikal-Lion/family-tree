@@ -259,6 +259,7 @@ export async function listLoginUsers(): Promise<LoginUser[]> {
 
 export async function createLoginUser(input: {
   mobile: string
+  name?: string
   role: LoginUserRole
 }): Promise<LoginUser> {
   const response = await fetch(resolveApiUrl('/api/login-users'), {
@@ -273,7 +274,7 @@ export async function createLoginUser(input: {
 
 export async function updateLoginUser(
   id: number,
-  input: Partial<{ mobile: string; role: LoginUserRole; enabled: boolean }>,
+  input: Partial<{ mobile: string; name: string; role: LoginUserRole; enabled: boolean }>,
 ): Promise<LoginUser> {
   const response = await fetch(resolveApiUrl(`/api/login-users/${id}`), {
     method: 'PUT',

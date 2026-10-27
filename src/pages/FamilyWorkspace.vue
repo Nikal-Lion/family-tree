@@ -7,6 +7,9 @@ import {
 import { DownloadOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import FamilyTreeChart from '../components/FamilyTreeChart.vue'
 import MemberArchive from '../components/MemberArchive.vue'
+import MemberCardList from '../components/MemberCardList.vue'
+import { useMobile } from '../composables/useMobile'
+import { trackMemberIds } from '../services/trackService'
 import { ACTIVITY_EVENT_TYPES, filterActivityEvents, filterActivityTracks } from '../services/activityManager'
 import { computeGenerations, countByGeneration, getMaxGeneration } from '../services/generationService'
 import { openTrackNavigation } from '../services/navigationBridge'
@@ -15,6 +18,7 @@ import { useFamilyStore } from '../stores/familyStore'
 import type { FamilyEvent, FamilyEventType, Member, Track } from '../types/member'
 
 const store = useFamilyStore()
+const mobile = useMobile()
 const initializing = ref(true)
 const refreshing = ref(false)
 const loadError = ref('')
@@ -186,7 +190,8 @@ function navigate(id: number) {
             <p v-if="selected" class="overview-selection">当前人物：<Button type="link" @click="select(selected.id)">{{ selected.name }} · #{{ selected.id }}</Button><Tag v-if="rootId !== null" color="blue">子树视图</Tag></p>
             <FamilyTreeChart ref="chart" :members="treeMembers" :selected-id="store.selectedId.value" :highlight-ids="highlighted" :root-id="rootId" :generations="generations" @select="id => select(id, false)" @inspect="select" />
             <h2 class="overview-directory-title">族人名录</h2>
-            <Table :columns="memberColumns" :data-source="filtered" row-key="id" :scroll="{x:700}" :pagination="{current:page,pageSize:10,showSizeChanger:false,showTotal:(total:number)=>`共 ${total} 人`,onChange:(value:number)=>page=value}">
+            <MemberCardList v-if="mobile" :members="filtered" :all-members="members" @select="select" />
+            <Table v-else :columns="memberColumns" :data-source="filtered" row-key="id" :scroll="{x:700}" :pagination="{current:page,pageSize:10,showSizeChanger:false,showTotal:(total:number)=>`共 ${total} 人`,onChange:(value:number)=>page=value}">
               <template #bodyCell="{column, record}">
                 <template v-if="column.key === 'name'"><Button type="link" @click="select(record.id)">{{ record.name }} · #{{ record.id }}</Button></template>
                 <template v-else-if="column.key === 'parent'"><Button v-if="record.parentId !== null" type="link" @click="select(record.parentId)">{{ nameOf(record.parentId) }}</Button><span v-else>未录父亲</span></template>
@@ -227,7 +232,7 @@ function navigate(id: number) {
             <Input v-model:value="trackKeyword" allow-clear placeholder="搜索轨迹或关联族人" aria-label="搜索轨迹" class="overview-search overview-filters" />
             <Table :columns="trackColumns" :data-source="tracks" row-key="id" :scroll="{x:780}" :pagination="{pageSize:10,showSizeChanger:false}">
               <template #bodyCell="{column, record}">
-                <template v-if="column.key === 'member'"><Button v-if="record.memberId !== null" type="link" @click="select(record.memberId)">{{ nameOf(record.memberId) }}</Button><span v-else>未关联族人</span></template>
+                <template v-if="column.key === 'member'"><template v-for="(id, index) in trackMemberIds({ memberId: record.memberId, memberIds: record.memberIds })" :key="id"><span v-if="index"> → </span><Button type="link" @click="select(id)">{{ index + 1 }}. {{ nameOf(id) }}</Button></template><span v-if="record.memberId === null">未关联族人</span></template>
                 <template v-else-if="column.key === 'distance'">{{ (record.stats.distanceMeters / 1000).toFixed(2) }} km</template>
                 <template v-else-if="column.key === 'points'">{{ record.stats.pointCount }}</template>
                 <template v-else-if="column.key === 'elevation'">{{ record.stats.elevationGainMeters === null ? '未记录' : `${record.stats.elevationGainMeters.toFixed(0)} m` }}</template>

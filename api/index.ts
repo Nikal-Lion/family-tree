@@ -48,6 +48,7 @@ type LoginUserRole = 'user' | 'maintainer' | 'sysadmin'
 interface LoginUserRecord {
   id: number
   mobile: string
+  name: string
   role: LoginUserRole
   enabled: number
   created_at: string
@@ -57,6 +58,7 @@ interface LoginUserRecord {
 interface LoginUserView {
   id: number
   mobile: string
+  name: string
   role: LoginUserRole
   enabled: boolean
   createdAt: string
@@ -257,6 +259,7 @@ function toLoginUserView(row: LoginUserRecord): LoginUserView {
   return {
     id: row.id,
     mobile: row.mobile,
+    name: row.name,
     role: row.role,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
@@ -267,7 +270,7 @@ function toLoginUserView(row: LoginUserRecord): LoginUserView {
 async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<LoginUserRecord | null> {
   const rows = await db
     .prepare(
-      'SELECT id, mobile, role, enabled, created_at, updated_at FROM login_users WHERE mobile = ? LIMIT 1',
+      'SELECT id, mobile, name, role, enabled, created_at, updated_at FROM login_users WHERE mobile = ? LIMIT 1',
     )
     .bind(mobile)
     .all<LoginUserRecord>()
@@ -277,7 +280,7 @@ async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<Lo
 
 async function findLoginUserById(db: D1Database, id: number): Promise<LoginUserRecord | null> {
   const rows = await db
-    .prepare('SELECT id, mobile, role, enabled, created_at, updated_at FROM login_users WHERE id = ? LIMIT 1')
+    .prepare('SELECT id, mobile, name, role, enabled, created_at, updated_at FROM login_users WHERE id = ? LIMIT 1')
     .bind(id)
     .all<LoginUserRecord>()
 
@@ -386,6 +389,7 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
       user: {
         id: 0,
         mobile: 'legacy-token',
+        name: '系统管理员',
         role: 'sysadmin',
         enabled: true,
         createdAt: '',
@@ -400,7 +404,7 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
   const currentTime = nowIso()
   const rows = await env.DB
     .prepare(
-      `SELECT s.id AS session_id, u.id, u.mobile, u.role, u.enabled, u.created_at, u.updated_at
+      `SELECT s.id AS session_id, u.id, u.mobile, u.name, u.role, u.enabled, u.created_at, u.updated_at
        FROM auth_sessions s
        JOIN login_users u ON u.id = s.user_id
        WHERE s.token_hash = ?
@@ -509,6 +513,7 @@ async function ensureSchema(db: D1Database): Promise<void> {
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
       member_id INTEGER,
+      member_ids_json TEXT,
       points_json TEXT NOT NULL,
       start_point_json TEXT NOT NULL,
       end_point_json TEXT NOT NULL,
@@ -596,6 +601,7 @@ async function ensureSchema(db: D1Database): Promise<void> {
     db.prepare(`CREATE TABLE IF NOT EXISTS login_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mobile TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -626,6 +632,14 @@ async function ensureSchema(db: D1Database): Promise<void> {
     db.prepare('CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at)'),
   ])
 
+  const userColumns = await db.prepare('PRAGMA table_info(login_users)').all<{ name: string }>()
+  if (!userColumns.results?.some((column) => column.name === 'name')) {
+    await db.prepare("ALTER TABLE login_users ADD COLUMN name TEXT NOT NULL DEFAULT ''").all()
+  }
+  const trackColumns = await db.prepare('PRAGMA table_info(tracks)').all<{ name: string }>()
+  if (!trackColumns.results?.some((column) => column.name === 'member_ids_json')) {
+    await db.prepare('ALTER TABLE tracks ADD COLUMN member_ids_json TEXT').all()
+  }
   await ensureLoginUsersRoleConstraint(db)
 }
 
@@ -646,6 +660,7 @@ async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
     db.prepare(`CREATE TABLE login_users__new (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mobile TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -661,10 +676,11 @@ async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES login_users__new(id) ON DELETE CASCADE
     )`),
-    db.prepare(`INSERT INTO login_users__new (id, mobile, role, enabled, created_at, updated_at)
+    db.prepare(`INSERT INTO login_users__new (id, mobile, name, role, enabled, created_at, updated_at)
       SELECT
         id,
         mobile,
+        name,
         CASE
           WHEN role IN ('user', 'maintainer', 'sysadmin') THEN role
           ELSE 'user'
@@ -715,6 +731,7 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     id: number
     name: string
     member_id: number | null
+    member_ids_json: string | null
     points_json: string
     start_point_json: string
     end_point_json: string
@@ -727,6 +744,7 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
     id: row.id,
     name: row.name,
     memberId: row.member_id,
+    ...(row.member_ids_json === null ? {} : { memberIds: JSON.parse(row.member_ids_json) as unknown }),
     points: parseJson<GpxPoint[]>(row.points_json, []),
     startPoint: parseJson<GpxPoint>(row.start_point_json, { lat: 0, lng: 0 }),
     endPoint: parseJson<GpxPoint>(row.end_point_json, { lat: 0, lng: 0 }),
@@ -1116,12 +1134,13 @@ async function writeFamilyData(db: D1Database, data: FamilyData, expectedRevisio
     statements.push(
       db
         .prepare(
-          'INSERT INTO tracks (id, name, member_id, points_json, start_point_json, end_point_json, stats_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO tracks (id, name, member_id, member_ids_json, points_json, start_point_json, end_point_json, stats_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .bind(
           track.id,
           track.name,
           track.memberId,
+          JSON.stringify(track.memberIds),
           JSON.stringify(track.points || []),
           JSON.stringify(track.startPoint || {}),
           JSON.stringify(track.endPoint || {}),
@@ -1308,7 +1327,7 @@ export default {
 
         const rows = await env.DB
           .prepare(
-            `SELECT id, mobile, role, enabled, created_at, updated_at
+            `SELECT id, mobile, name, role, enabled, created_at, updated_at
              FROM login_users
              ORDER BY CASE role
                WHEN 'sysadmin' THEN 0
@@ -1327,12 +1346,16 @@ export default {
           return denied
         }
 
-        const payload = parseJsonBody<{ mobile?: string; role?: LoginUserRole }>(await request.json())
+        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole }>(await request.json())
         if (!payload) {
           return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
         }
 
         const mobile = normalizeMobile(payload.mobile)
+        if (payload.name !== undefined && (typeof payload.name !== 'string' || payload.name.trim().length > 100)) {
+          return errorResponse('用户名称必须为不超过 100 字的文本', 400, 'INVALID_NAME')
+        }
+        const name = payload.name?.trim() ?? ''
         const role: LoginUserRole =
           payload.role === 'sysadmin' || payload.role === 'maintainer' ? payload.role : 'user'
         if (!isValidMobile(mobile)) {
@@ -1346,8 +1369,8 @@ export default {
 
         const createdAt = nowIso()
         await env.DB
-          .prepare('INSERT INTO login_users (mobile, role, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)')
-          .bind(mobile, role, createdAt, createdAt)
+          .prepare('INSERT INTO login_users (mobile, name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)')
+          .bind(mobile, name, role, createdAt, createdAt)
           .all()
 
         const created = await findLoginUserByMobile(env.DB, mobile)
@@ -1374,12 +1397,16 @@ export default {
           return errorResponse('登录用户不存在', 404, 'NOT_FOUND')
         }
 
-        const payload = parseJsonBody<{ mobile?: string; role?: LoginUserRole; enabled?: boolean }>(await request.json())
+        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole; enabled?: boolean }>(await request.json())
         if (!payload) {
           return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
         }
 
         const nextMobile = payload.mobile !== undefined ? normalizeMobile(payload.mobile) : target.mobile
+        if (payload.name !== undefined && (typeof payload.name !== 'string' || payload.name.trim().length > 100)) {
+          return errorResponse('用户名称必须为不超过 100 字的文本', 400, 'INVALID_NAME')
+        }
+        const nextName = payload.name === undefined ? target.name : payload.name.trim()
         const nextRole: LoginUserRole =
           payload.role === 'sysadmin' || payload.role === 'maintainer' || payload.role === 'user'
             ? payload.role
@@ -1407,8 +1434,8 @@ export default {
 
         const updatedAt = nowIso()
         await env.DB
-          .prepare('UPDATE login_users SET mobile = ?, role = ?, enabled = ?, updated_at = ? WHERE id = ?')
-          .bind(nextMobile, nextRole, nextEnabled ? 1 : 0, updatedAt, loginUserId)
+          .prepare('UPDATE login_users SET mobile = ?, name = ?, role = ?, enabled = ?, updated_at = ? WHERE id = ?')
+          .bind(nextMobile, nextName, nextRole, nextEnabled ? 1 : 0, updatedAt, loginUserId)
           .all()
 
         if (!nextEnabled) {

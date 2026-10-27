@@ -1,4 +1,5 @@
 import type { FamilyEvent, FamilyEventType, Member, Track } from '../types/member'
+import { trackMemberIds } from './trackService'
 
 export const ACTIVITY_EVENT_TYPES: FamilyEventType[] = ['婚', '丧', '嫁', '娶', '生', '卒', '其他']
 export type ActivityMemberFilter = number | 'unlinked' | undefined
@@ -28,8 +29,9 @@ export function filterActivityTracks(
   tracks: Track[], members: Member[], keyword: string, member: ActivityMemberFilter,
 ): Track[] {
   const query = keyword.trim().toLocaleLowerCase()
-  return tracks.filter((track) => matchesMember(track.memberId, member)
-    && (!query || [track.name, activityMemberName(members, track.memberId), String(track.id)]
+  return tracks.filter((track) => (member === undefined || (member === 'unlinked'
+    ? trackMemberIds(track).length === 0 : trackMemberIds(track).includes(member)))
+    && (!query || [track.name, ...trackMemberIds(track).map((id) => activityMemberName(members, id)), String(track.id)]
       .some((value) => value.toLocaleLowerCase().includes(query))))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id - a.id)
 }
