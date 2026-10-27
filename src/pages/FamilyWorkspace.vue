@@ -83,12 +83,12 @@ const trackColumns: TableProps<Track>['columns'] = [
 ]
 
 function nameOf(id: number) { return members.value.find((member) => member.id === id)?.name ?? `成员 #${id}` }
-function select(id: number) {
+function select(id: number, openArchive = true) {
   if (!members.value.some((member) => member.id === id)) { message.error('人物不存在，请刷新云端数据'); return }
   if (!treeMembers.value.some((member) => member.id === id)) branch.value = undefined
   if (rootId.value !== null && !getAncestorIds(members.value, [id]).has(rootId.value)) rootId.value = null
   store.selectMember(id)
-  detailOpen.value = true
+  detailOpen.value = openArchive
 }
 function focusSelected() {
   if (!selected.value) return
@@ -184,7 +184,7 @@ function navigate(id: number) {
               </Space>
             </div>
             <p v-if="selected" class="overview-selection">当前人物：<Button type="link" @click="select(selected.id)">{{ selected.name }} · #{{ selected.id }}</Button><Tag v-if="rootId !== null" color="blue">子树视图</Tag></p>
-            <FamilyTreeChart ref="chart" :members="treeMembers" :selected-id="store.selectedId.value" :highlight-ids="highlighted" :root-id="rootId" @select="select" />
+            <FamilyTreeChart ref="chart" :members="treeMembers" :selected-id="store.selectedId.value" :highlight-ids="highlighted" :root-id="rootId" :generations="generations" @select="id => select(id, false)" @inspect="select" />
             <h2 class="overview-directory-title">族人名录</h2>
             <Table :columns="memberColumns" :data-source="filtered" row-key="id" :scroll="{x:700}" :pagination="{current:page,pageSize:10,showSizeChanger:false,showTotal:(total:number)=>`共 ${total} 人`,onChange:(value:number)=>page=value}">
               <template #bodyCell="{column, record}">
@@ -196,7 +196,7 @@ function navigate(id: number) {
             </Table>
           </Tabs.TabPane>
           <Tabs.TabPane key="statistics" tab="世代统计">
-            <Alert type="info" show-icon message="谱载代数来自原始记录；相对树层级仅按已记录父系计算，两者不能互相替代。" />
+            <Alert type="info" show-icon message="谱载代数来自原始记录；相对树层级按父系逐层计算，并以谱载代数对齐独立分支。无代数依据的分支从第 1 层起算，两者不能互相替代。" />
             <Space wrap class="overview-gender">
               <Tag color="blue">男性 {{ members.filter(member=>member.gender==='男').length }} 人</Tag>
               <Tag color="purple">女性 {{ members.filter(member=>member.gender==='女').length }} 人</Tag>
