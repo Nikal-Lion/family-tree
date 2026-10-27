@@ -1,17 +1,64 @@
-# Cloudflare Workers 部署与发布门禁
+# Cloudflare 自动部署指南
 
-保留原文件路径以兼容旧链接。当前项目使用 **Cloudflare Workers + Static Assets + D1**，不是仅静态的 Cloudflare Pages 应用。只上传 `dist` 不会部署登录、权限、可靠保存或系统诊断 API。
+当前项目使用 **Cloudflare Workers + 静态资源 + D1**，不是仅上传 `dist/`
+的 Pages 静态站点。前端与 `api/index.ts` 由同一个 `family-tree` Worker 提供服务，
+部署配置位于根目录 `wrangler.jsonc`。
 
-## 1. 当前发布状态
+## 1. PR 检查
 
-- 第四阶段已迁移只读总览与图谱浏览；OCR 按范围决定暂缓，维护页不挂载实验 OCR 入口。
-- `npm test` 完整回归已通过，原有 19 条 Markdown 边界失败已修复，没有删除、跳过或放宽断言。生产环境、目标浏览器和生产网络性能仍待验收，不能将本地测试通过解释为系统可直接正式发布。
-- 本轮只进行隔离本地验证，未执行远程迁移、推送或部署。
-- 500 人浏览器场景使用只读 GET 模拟数据，不代表生产网络首屏性能、全浏览器或上千人容量验收。
+`.github/workflows/ci.yml` 在提交 PR 到 `main`、推送 `main` 和手动运行时执行：
 
-## 2. 构建与本地验证
+- `Test`：`npm ci` 后执行 `npm test`。
+- `Build`：`npm ci` 后执行 `npm run build`，包含 Vue/TypeScript 类型检查。
 
-使用支持 Vite 8 的 Node.js（例如 Node 22.12+），按锁文件安装：
+CI 使用 Node.js 22 与已提交的 `package-lock.json`。
+PR 不会部署，也不会取得 Cloudflare 发布凭据。若配置分支保护，
+请将必需检查更新为 `Test` 和 `Build`，不再使用旧的多平台测试矩阵或 ECC 校验任务。
+
+## 2. 配置发布凭据
+
+在 GitHub 仓库 **Settings → Secrets and variables → Actions** 添加：
+
+| Secret | 内容 |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | 仅授权目标账户的 Cloudflare API Token |
+| `CLOUDFLARE_ACCOUNT_ID` | `family-tree` Worker 所属账户 ID |
+
+Token 至少需要目标账户的 Workers Scripts 编辑权限与 D1 读取权限，
+以便上传 Worker 并校验已有 D1 绑定。若 Cloudflare 返回权限错误，
+根据错误补充所需的最小权限，不要使用全局 API Key。
+不要把 Token 提交到仓库或写入 `VITE_*` 变量。
+
+`wrangler.jsonc` 已配置 `DB` 绑定与现有 `family` D1 数据库。
+发布工作流不创建数据库、不执行迁移，也不导入或覆盖族谱数据。
+应用运行时的密码摘要等 Secrets 由 Cloudflare 单独管理，不是前端构建变量。
+
+## 3. 自动发布
+
+推送 `main` 后，只有 `Test` 与 `Build` 都成功，才运行 `Deploy to Cloudflare`：
+
+1. 安装锁定的依赖。
+2. 执行 `npm run build`，生成 Worker 与静态资源。
+3. 执行 `npx --no-install wrangler deploy`，使用 Vite 插件生成的部署配置发布。
+
+部署使用 Wrangler 默认环境，与现有 `npm run deploy` 一致；
+不要擅自添加 `--env production`，该环境的绑定和路由需要单独配置。
+发布任务串行执行，不会因为新提交而中途取消正在运行的发布。
+发布地址和版本 ID 见 Actions 中的 Wrangler 日志。
+
+## 4. 手动重试发布
+
+在 GitHub **Actions → CI → Run workflow** 选择 `main`。
+也可以执行：
+
+```bash
+gh workflow run ci.yml --ref main
+```
+
+手动运行同样先检查，再发布；其他分支只执行检查。
+发布失败后先修复凭据或 Cloudflare 配置，再重新运行失败任务。
+
+## 5. 本地验证与发布
 
 ```bash
 npm ci
@@ -19,45 +66,20 @@ npm test
 npm run build
 ```
 
-完整测试结果必须保留。仅为了分别验证非暂缓范围，可以运行以下命令，但它**不代替完整发布门禁**：
+本地发布需要先使用 Wrangler 登录，或通过环境变量提供发布凭据：
 
 ```bash
-npm test -- --exclude tests/services/childClaimBoundaries.test.ts
+npx wrangler login
+npm run deploy
 ```
 
-实际产物：
+本地预览使用 `npm run preview:local`；访问远程资源可使用 `npm run preview`。
 
-- `dist/client/`：浏览器资源。
-- `dist/family_tree/index.js`：真实 API 入口 `api/index.ts` 的构建产物。
-- `dist/family_tree/wrangler.json`：Vite Cloudflare 插件生成的 Worker 配置，关联上述前端资源。
+## 6. 常见问题
 
-本地预览须明确 `--local`，并将测试数据放到独立目录：
-
-```bash
-npx wrangler dev --config dist/family_tree/wrangler.json --local --port 8791 --persist-to /absolute/path/to/isolated-test-d1
-```
-
-管理员登录还需为本地 Worker 配置测试专用的 `SYSADMIN_PASSWORD_PBKDF2`。不要使用生产密码，不要将密码、hash、会话 token 或家族原始资料提交到仓库。`npm run preview` 包含 `--remote`，不能作为隔离本地验收命令。
-
-`.wrangler/deploy/config.json` 是插件生成的本机重定向配置，不是发布源文件。构建后的路径分隔符变化不应作为业务改动提交。不要为了修复此缓存删除其他会话的持久化数据库；尤其不能在共用环境中盲目清理整个 `.wrangler`。
-
-## 3. 发布前逐项确认
-
-1. 修复或正式收敛全部已知失败，完整 `npm test` 与 `npm run build` 通过。
-2. 明确目标 Cloudflare 账号、Worker 名称、D1 数据库和环境；检查构建产物中 `DB` 绑定与静态资源路径。当前 `wrangler.jsonc` 顶层有 D1 绑定，但 `env.production` 未单独声明 D1。绑定不能依靠环境继承，**不要直接加 `--env production` 后就认为数据库配置完整**。
-3. 从现网导出业务 JSON/SQLite 备份并验证能恢复；另行做 D1 数据库级备份，覆盖登录账号和会话。业务快照不包含认证数据，不是 D1 整库恢复工具。
-4. 在独立预发布数据库上验证现有库升级。`api/index.ts` 会幂等初始化 schema 并兼容升级账号 role 约束；`migrations/0001_family_schema_v4.sql` 是增量表迁移，不是完整旧库初始化脚本。不能把历史 `cloudflare-d1-worker/` 当作当前部署入口。
-5. 确认服务端 secret `SYSADMIN_PASSWORD_PBKDF2` 有效；轮换方式见 [登录说明](Login.md)。除明确的紧急兼容决策外，不启用 `ALLOW_LEGACY_API_TOKEN_AUTH`。
-6. 在预发布站点逐一验证普通用户只读、维护人员业务写入、管理员账号管理；同时检查直链守卫和真实 API 的 401/403。
-7. 验证全字段保存、JSON/SQLite 往返、409 冲突不覆盖、503/事务失败不假成功、空库不 seed，以及退出登录后的会话隔离。
-8. 验证桌面和窄屏总览、搜索、分支上下文、子树、档案、PNG、事件、轨迹及深层直链刷新。通知旧客户端刷新，以适配 `If-Match` 修订号协议。
-
-## 4. 发布与回滚顺序
-
-以下仅为人工发布参考，需先满足门禁并确认目标；本次不会执行。
-
-1. 固定已验证的提交与依赖锁文件，保留现网配置和数据库备份。
-2. 按已确认环境构建并检查生成配置。顶层目标的发布入口为 `npx wrangler deploy --config dist/family_tree/wrangler.json`；若使用命名环境，先补全该环境的非继承绑定、secret 和路由，再重新构建、检查，不混用环境产物。
-3. 发布真实 Worker 及其静态资源后，用三类账号做小范围冒烟。不要以 HTTP 200、静态页面打开或构建通过代替业务验收。
-4. 出现错误先停止维护写入并保留现场；应用回滚需选取兼容 schema 4 / 修订号协议的已验证版本，不能让不带 `If-Match` 的旧客户端静默覆盖数据。
-5. 增量表和账号约束升级不通过删表“回滚”。若确需恢复数据库，先评估发布后新增数据，再按数据库级备份恢复；不能用业务快照替代账号/会话恢复。
+- **缺少 Actions Secrets**：发布任务会明确失败；按第 2 节配置后重试。
+- **D1 绑定失败**：核对账户、数据库 ID 和 Token 的 D1 权限。
+- **推送后没有运行**：确认推送的是 `main`，并确认仓库已启用 Actions。
+- **构建失败**：先执行 `npm ci`，再按 CI 日志修复类型或构建错误，不要跳过检查发布。
+- **Wrangler 配置重定向指向旧路径**：运行 `npm run clean:wrangler` 后重新构建，
+  不要提交 `.wrangler/` 或其他机器的构建产物。
