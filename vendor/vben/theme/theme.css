@@ -360,22 +360,24 @@
     @apply m-0 appearance-none;
   }
 
-  /* Only adjust scrollbar for non-macOS */
-  html:not([data-platform='macOs']) {
-    ::-webkit-scrollbar {
-      @apply h-2.5 w-2.5;
-    }
+  /* Keep native overlay scrollbars on touch devices. */
+  @media (hover: hover) and (pointer: fine) {
+    html:not([data-platform='macOs']) {
+      ::-webkit-scrollbar {
+        @apply h-2.5 w-2.5;
+      }
 
-    ::-webkit-scrollbar-thumb {
-      @apply bg-border rounded-sm border-none;
-    }
+      ::-webkit-scrollbar-thumb {
+        @apply bg-border rounded-sm border-none;
+      }
 
-    ::-webkit-scrollbar-track {
-      @apply rounded-sm border-none bg-transparent shadow-none;
-    }
+      ::-webkit-scrollbar-track {
+        @apply rounded-sm border-none bg-transparent shadow-none;
+      }
 
-    ::-webkit-scrollbar-button {
-      @apply hidden;
+      ::-webkit-scrollbar-button {
+        @apply hidden;
+      }
     }
   }
 

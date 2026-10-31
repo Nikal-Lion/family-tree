@@ -4,6 +4,8 @@ node_modules/
 # Build output
 dist/
 coverage/
+playwright-report/
+test-results/
 
 # Local genealogy source documents
 /data/

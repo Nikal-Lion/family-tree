@@ -92,7 +92,15 @@ async function handleLogout() {
   >
     <template #logo>
       <RouterLink class="workspace-brand" to="/app/overview" aria-label="家族云谱首页">
-        <span class="workspace-brand-icon"><ApartmentOutlined /></span>
+        <span class="workspace-brand-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="3.5" r="2" />
+            <path d="M12 5.5V9M6 11V9h12v2" />
+            <circle cx="6" cy="12.5" r="1.5" />
+            <circle cx="18" cy="12.5" r="1.5" />
+            <path d="M3 16c3-1 6-.5 9 1.5 3-2 6-2.5 9-1.5v5c-3-1-6-.5-9 1-3-1.5-6-2-9-1zM12 17.5V22" />
+          </svg>
+        </span>
         <span v-if="!collapsed || browsing || mobile" class="workspace-brand-name">家族云谱</span>
       </RouterLink>
     </template>

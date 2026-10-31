@@ -1,7 +1,7 @@
 {
   "name": "family-tree-app",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "workspaces": [
     "vendor/vben/*"
@@ -16,6 +16,7 @@
     "deploy": "npm run build && wrangler deploy",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:browser": "playwright test",
     "verify:part-data-v2": "tsx scripts/verify-part-data-v2.ts"
   },
   "dependencies": {
@@ -31,6 +32,7 @@
     "vue-router": "^5.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@cloudflare/vite-plugin": "^1.65.0",
     "@types/node": "^26.6.5",
     "@types/sql.js": "^1.4.11",

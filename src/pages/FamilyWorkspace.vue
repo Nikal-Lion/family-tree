@@ -253,7 +253,7 @@ function navigate(id: number) {
 </template>
 
 <style scoped>
-.family-overview { max-width: 1600px; margin: 0 auto; padding: 28px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.family-overview { width: 100%; max-width: 1600px; margin: 0 auto; padding: 28px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .overview-heading, .overview-tree-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .overview-heading > *, .overview-tree-heading > * { min-width: 0; max-width: 100%; }
 .overview-heading h1 { font-size: 24px; font-weight: 650; color: #1e293b; margin: 0 0 8px; }

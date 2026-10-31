@@ -17,7 +17,8 @@
     "application-local Tailwind source detection",
     "explicit Vue defineModel generic types and object default factory for current Vue/TypeScript",
     "removed obsolete ts-expect-error in layout-content.vue",
-    "honor headerToggleSidebarButton and sidebar availability on mobile to avoid duplicate navigation buttons"
+    "honor headerToggleSidebarButton and sidebar availability on mobile to avoid duplicate navigation buttons",
+    "limit custom WebKit scrollbars to fine-pointer hover devices so iOS retains native overlay scrolling"
   ],
   "sourceFiles": [
     {
