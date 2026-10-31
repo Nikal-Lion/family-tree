@@ -255,6 +255,7 @@ function navigate(id: number) {
 <style scoped>
 .family-overview { max-width: 1600px; margin: 0 auto; padding: 28px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .overview-heading, .overview-tree-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.overview-heading > *, .overview-tree-heading > * { min-width: 0; max-width: 100%; }
 .overview-heading h1 { font-size: 24px; font-weight: 650; color: #1e293b; margin: 0 0 8px; }
 .overview-heading p, .overview-tree-heading p, .overview-note { color: #64748b; font-size: 13px; line-height: 1.8; margin: 0; }
 .overview-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
@@ -267,6 +268,7 @@ function navigate(id: number) {
 .overview-gender { margin-top: 16px; }
 .overview-generation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .overview-selection { margin: 8px 0; color: #64748b; font-size: 13px; }
+.overview-selection :deep(.ant-btn-link) { max-width: 100%; height: auto; white-space: normal; text-align: start; overflow-wrap: anywhere; }
 .overview-content :deep(.ant-table-cell) { overflow-wrap: anywhere; white-space: pre-wrap; }
 @media (max-width: 767px) {
   .family-overview { padding: 16px 12px; gap: 16px; }

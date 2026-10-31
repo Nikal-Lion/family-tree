@@ -4,7 +4,6 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { VbenAdminLayout } from '@vben-core/layout-ui'
 import {
   ApartmentOutlined,
-  BookOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -93,7 +92,7 @@ async function handleLogout() {
   >
     <template #logo>
       <RouterLink class="workspace-brand" to="/app/overview" aria-label="家族云谱首页">
-        <span class="workspace-brand-icon"><BookOutlined /></span>
+        <span class="workspace-brand-icon"><ApartmentOutlined /></span>
         <span v-if="!collapsed || browsing || mobile" class="workspace-brand-name">家族云谱</span>
       </RouterLink>
     </template>

@@ -35,6 +35,12 @@ Token 至少需要目标账户的 Workers Scripts 编辑权限与 D1 读取权�
 
 ## 3. 自动发布
 
+每次发布更新必须同步递增根目录 `package.json` 的版本，并更新
+`package-lock.json` 中的根包版本；对应发布提交必须创建同版本的 Git tag
+（格式为 `v<package.json version>`）。版本文件与 tag 必须一致，
+不得复用已有 tag。重试同一版本的失败部署不需要再次递增版本。
+仅修改代码或本地验证不等于发布，不自动提交、推送或创建 tag。
+
 推送 `main` 后，只有 `Test` 与 `Build` 都成功，才运行 `Deploy to Cloudflare`：
 
 1. 安装锁定的依赖。

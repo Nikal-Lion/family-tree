@@ -39,10 +39,16 @@ let resetPending = false
 let nodePositions = new Map<number, TreeNodePosition>()
 let pendingAnchor: { id: number; point: TreeNodePosition } | null = null
 let focusId: number | null = null
+let viewportSize: { width: number; height: number } | null = null
+let renderVersion = 0
 
 function renderChart(reset = false) {
   if (!chart) return
   const viewport = chartRef.value?.parentElement
+  if (!viewport || !viewport.clientWidth || !viewport.clientHeight) return
+  const version = ++renderVersion
+  const previousViewportSize = viewportSize
+  viewportSize = { width: viewport.clientWidth, height: viewport.clientHeight }
   const previousScroll = { left: viewport?.scrollLeft ?? 0, top: viewport?.scrollTop ?? 0 }
   const anchor = reset ? null : pendingAnchor
   const targetId = reset ? null : focusId
@@ -59,10 +65,19 @@ function renderChart(reset = false) {
   })
   if (viewport) {
     const anchoredPosition = anchor ? nodePositions.get(anchor.id) : undefined
-    const focusedPosition = targetId === null ? undefined : nodePositions.get(targetId)
+    const resetId = props.selectedId !== null && nodePositions.has(props.selectedId)
+      ? props.selectedId : nodePositions.keys().next().value
+    const focusedPosition = reset
+      ? resetId === undefined ? undefined : nodePositions.get(resetId)
+      : targetId === null ? undefined : nodePositions.get(targetId)
     void nextTick(() => {
-      if (!chart) return
-      if (reset) {
+      if (!chart || version !== renderVersion) return
+      if (reset && focusedPosition) {
+        viewport.scrollTo({
+          left: Math.max(0, focusedPosition.x - viewport.clientWidth / 2),
+          top: Math.max(0, focusedPosition.y - viewport.clientHeight / 2),
+        })
+      } else if (reset) {
         viewport.scrollTo({
           left: direction.value === 'TB' ? Math.max(0, (width - viewport.clientWidth) / 2) : 0,
           top: direction.value === 'LR' ? Math.max(0, (height - viewport.clientHeight) / 2) : 0,
@@ -77,7 +92,10 @@ function renderChart(reset = false) {
           left: focusedPosition.x - viewport.clientWidth / 2,
           top: focusedPosition.y - viewport.clientHeight / 2,
         })
-      } else viewport.scrollTo(previousScroll.left, previousScroll.top)
+      } else viewport.scrollTo({
+        left: previousScroll.left + ((previousViewportSize?.width ?? viewport.clientWidth) - viewport.clientWidth) / 2,
+        top: previousScroll.top + ((previousViewportSize?.height ?? viewport.clientHeight) - viewport.clientHeight) / 2,
+      })
     })
   }
   chartError.value = ''
@@ -89,6 +107,8 @@ function queueRender(reset = false) {
   if (renderFrame !== null) return
   renderFrame = requestAnimationFrame(() => {
     renderFrame = null
+    const viewport = chartRef.value?.parentElement
+    if (!viewport?.clientWidth || !viewport.clientHeight) return
     const shouldReset = resetPending
     resetPending = false
     try { renderChart(shouldReset) }
@@ -143,7 +163,8 @@ function initialize() {
       emit('select', node.id)
     })
     chart.on('treeroam', () => nodePositions.clear())
-    renderChart(true)
+    viewportSize = null
+    queueRender(true)
   } catch (error) {
     chartError.value = error instanceof Error ? error.message : '图谱初始化失败'
   }
@@ -205,10 +226,10 @@ watch(depth, resetView)
 </template>
 
 <style scoped>
-.family-chart { min-width: 0; }
+.family-chart { width: 100%; min-width: 0; max-width: 100%; }
 .chart-toolbar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .chart-hint { color: #64748b; font-size: 12px; line-height: 1.8; }
-.chart-stage { position: relative; height: 560px; overflow: auto; overscroll-behavior: contain; margin-top: 12px; }
+.chart-stage { position: relative; width: 100%; min-width: 0; height: 560px; overflow: auto; overflow-anchor: none; scrollbar-gutter: stable; overscroll-behavior: contain; margin-top: 12px; }
 .chart-canvas { touch-action: none; }
 .chart-empty { position: absolute; inset: 30% 0 auto; pointer-events: none; }
 .chart-note { margin: 0; }

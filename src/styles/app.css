@@ -6,8 +6,13 @@ body { margin: 0; background: #f4f6f9; }
 #app { min-height: 100vh; }
 *, *::before, *::after { box-sizing: border-box; }
 .workspace-shell, .workspace-shell main { min-width: 0; max-width: 100%; }
+.workspace-shell main { overflow-wrap: anywhere; }
+.workspace-shell .ant-space,
+.workspace-shell .ant-spin-nested-loading,
+.workspace-shell .ant-spin-container,
 .workspace-shell .ant-space-item,
 .workspace-shell .ant-tabs,
+.workspace-shell .ant-tabs-content-holder,
 .workspace-shell .ant-tabs-content,
 .workspace-shell .ant-tabs-tabpane,
 .workspace-shell .ant-card,
@@ -17,6 +22,9 @@ body { margin: 0; background: #f4f6f9; }
 .workspace-shell .ant-pagination { flex-wrap: wrap; }
 .workspace-shell .ant-card-head-title,
 .workspace-shell .ant-descriptions-item-content { overflow-wrap: anywhere; }
+.workspace-shell .ant-card-head-wrapper { min-width: 0; flex-wrap: wrap; gap: 8px; }
+.workspace-shell .ant-card-extra { max-width: 100%; margin-inline-start: auto; }
+.workspace-shell .ant-alert-content { min-width: 0; overflow-wrap: anywhere; }
 .workspace-data-fields { display: contents; border: 0; padding: 0; margin: 0; min-width: 0; }
 .storage-error { color: #b42318; background: #fef3f2; padding: 12px; border-radius: 8px; }
 .manage-page { padding: 24px; min-width: 0; }
@@ -44,7 +52,7 @@ button, input, textarea, select { font: inherit; }
 .ant-btn-icon-only { padding-inline: 0; }
 .workspace-shell { min-height: 100vh; background: #f4f6f9; }
 .workspace-brand { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 20px; color: #172033; font-size: 18px; font-weight: 700; white-space: nowrap; }
-.workspace-brand-icon { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border-radius: 10px; color: white; background: #4f46e5; font-size: 19px; }
+.workspace-brand-icon { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border: 1px solid #cce2dc; border-radius: 10px; color: #28685c; background: #eaf3ef; font-size: 19px; }
 .workspace-menu-caption { padding: 24px 24px 12px; color: #98a2b3; font-size: 11px; letter-spacing: 2px; }
 .workspace-menu.ant-menu { border-inline-end: 0; background: transparent; padding: 0 8px; }
 .workspace-menu.ant-menu-inline-collapsed { width: 64px; padding: 0; }
@@ -75,7 +83,6 @@ button, input, textarea, select { font: inherit; }
 .workspace-shell:not(.workspace-shell-browse) .legacy-workspace .field select { background: #fff; border-color: #d0d5dd; }
 .workspace-shell .legacy-workspace .footer { color: #98a2b3; }
 .workspace-shell-browse .legacy-workspace .page { max-width: 1600px; margin: auto; }
-.workspace-shell-browse .workspace-brand-icon { background: #2d5e2c; }
 @media (max-width: 767px) {
   .workspace-brand { padding: 0 8px; gap: 8px; font-size: 16px; }
   .workspace-shell header > div:first-child { flex-shrink: 0; }
