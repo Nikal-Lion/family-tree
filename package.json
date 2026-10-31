@@ -1,7 +1,7 @@
 {
   "name": "family-tree-app",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "workspaces": [
     "vendor/vben/*"
