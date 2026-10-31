@@ -2,6 +2,7 @@
 
 > 历史计划，基于 [Stage2 需求](stage2.md)、[扫墓轨迹需求](../product/navigation.md)与 [OCR 需求](../product/ocr.md)。
 > 文中的 localStorage 基线、排期与验收项保留当时口径；当前实现边界见[产品说明](../product/overview.md)。
+> 当前实施记录见 [Stage3 实施记录](../implementation/stage3.md)；新一轮任务以[长期产品路线、功能拆分与变现计划](../iterationPlan.md)为入口。
 
 ## 1. 当前基线与差距
 
