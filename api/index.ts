@@ -3,6 +3,8 @@ import type { Spouse } from '../src/types/spouse'
 import type { ChildClaim } from '../src/types/childClaim'
 import { FamilyDataValidationError, normalizeFamilyData } from '../src/services/importExport'
 import { FAMILY_BROWSE_CONTRACT_VERSION, isCompleteFamilySnapshot, toFamilyBrowseData } from '../src/services/familyBrowseData'
+import { guardAuthentication, readAuthJson } from './authRateLimit'
+import { validateNewPassword } from '../src/services/passwordPolicy'
 
 interface Env {
   DB: D1Database
@@ -52,10 +54,12 @@ interface LoginUserRecord {
   name: string
   role: LoginUserRole
   enabled: number
-  password_hash: string | null
   auth_version: number
   created_at: string
   updated_at: string
+  password_hash: string | null
+  credential_version: number
+  password_change_required: number
 }
 
 interface LoginUserView {
@@ -64,9 +68,10 @@ interface LoginUserView {
   name: string
   role: LoginUserRole
   enabled: boolean
-  passwordConfigured: boolean
   createdAt: string
   updatedAt: string
+  passwordConfigured: boolean
+  passwordChangeRequired: boolean
 }
 
 interface AuthContext {
@@ -75,6 +80,7 @@ interface AuthContext {
   user: LoginUserView | null
   sessionId: number | null
   legacyToken: boolean
+  credentialVersion: number | null
 }
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -206,7 +212,7 @@ function parsePbkdf2Hash(raw: string): Pbkdf2Hash | null {
 
   const saltBytes = hexToBytes(saltHex)
   const hashBytes = hexToBytes(hashHex)
-  if (!saltBytes || !hashBytes || saltBytes.length < 16 || hashBytes.length < 16) {
+  if (!saltBytes || !hashBytes || saltBytes.length < 16 || saltBytes.length > 64 || hashBytes.length < 16 || hashBytes.length > 64) {
     return null
   }
 
@@ -246,27 +252,6 @@ async function derivePbkdf2Sha256Hex(
     .join('')
 }
 
-function validateMaintainerPassword(password: unknown): Response | null {
-  if (typeof password !== 'string' || password.length < 8 || password.length > 128 || !password.trim()) {
-    return errorResponse('维护人员密码须为 8 至 128 位，且不能全部为空白', 400, 'INVALID_PASSWORD')
-  }
-  return null
-}
-
-async function hashMaintainerPassword(password: string): Promise<string> {
-  const saltHex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map((byte) => byte.toString(16).padStart(2, '0')).join('')
-  const hashHex = await derivePbkdf2Sha256Hex(password, saltHex, PBKDF2_MIN_ITERATIONS, 32)
-  return `pbkdf2_sha256$${PBKDF2_MIN_ITERATIONS}$${saltHex}$${hashHex}`
-}
-
-async function verifyMaintainerPassword(password: string, encoded: string): Promise<boolean> {
-  const hash = parsePbkdf2Hash(encoded)
-  if (!hash) throw new Error('维护人员密码记录格式无效，请联系系统管理员重置')
-  const derived = await derivePbkdf2Sha256Hex(password, hash.saltHex, hash.iterations, hash.hashLengthBytes)
-  return timingSafeEqualHex(derived, hash.hashHex)
-}
-
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = (value || '').trim().toLowerCase()
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
@@ -287,16 +272,17 @@ function toLoginUserView(row: LoginUserRecord): LoginUserView {
     name: row.name,
     role: row.role,
     enabled: row.enabled === 1,
-    passwordConfigured: Boolean(row.password_hash),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    passwordConfigured: Boolean(row.password_hash),
+    passwordChangeRequired: row.password_change_required !== 0,
   }
 }
 
 async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<LoginUserRecord | null> {
   const rows = await db
     .prepare(
-      'SELECT id, mobile, name, role, enabled, password_hash, auth_version, created_at, updated_at FROM login_users WHERE mobile = ? LIMIT 1',
+      `${LOGIN_USER_SELECT} WHERE u.mobile = ? LIMIT 1`,
     )
     .bind(mobile)
     .all<LoginUserRecord>()
@@ -306,7 +292,7 @@ async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<Lo
 
 async function findLoginUserById(db: D1Database, id: number): Promise<LoginUserRecord | null> {
   const rows = await db
-    .prepare('SELECT id, mobile, name, role, enabled, password_hash, auth_version, created_at, updated_at FROM login_users WHERE id = ? LIMIT 1')
+    .prepare(`${LOGIN_USER_SELECT} WHERE u.id = ? LIMIT 1`)
     .bind(id)
     .all<LoginUserRecord>()
 
@@ -329,23 +315,78 @@ async function createSessionForUser(
   const tokenHash = await sha256Hex(token)
   const createdAt = nowIso()
   const updatedAt = createdAt
-  const expiresAt = toIsoAfterHours(getSessionTtlHours(env))
+  const expiresAt = toIsoAfterHours(user.password_change_required ? 0.25 : getSessionTtlHours(env))
 
-  const result = await db.batch([
+  const results = await db.batch([
     db
       .prepare(
-        `INSERT INTO auth_sessions (token_hash, user_id, expires_at, revoked_at, created_at, updated_at, auth_version)
-         SELECT ?, id, ?, NULL, ?, ?, auth_version FROM login_users
-         WHERE id = ? AND enabled = 1 AND auth_version = ? AND role = ? AND password_hash IS ?
+        `INSERT INTO auth_sessions (token_hash, user_id, expires_at, revoked_at, created_at, updated_at)
+         SELECT ?, u.id, ?, NULL, ?, ? FROM login_users u
+         LEFT JOIN login_credentials c ON c.user_id = u.id
+         WHERE u.id = ? AND u.mobile = ? AND u.role = ? AND u.enabled = 1
+           AND COALESCE(c.version, 0) = ? AND u.auth_version = ?
          RETURNING id`,
       )
-      .bind(tokenHash, expiresAt, createdAt, updatedAt, user.id, user.auth_version, user.role, user.password_hash),
+      .bind(tokenHash, expiresAt, createdAt, updatedAt, user.id, user.mobile, user.role, user.credential_version, user.auth_version),
+    db.prepare(`INSERT INTO auth_session_credentials (session_id, credential_version)
+      SELECT id, ? FROM auth_sessions WHERE token_hash = ?`).bind(user.credential_version, tokenHash),
     db
       .prepare('DELETE FROM auth_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?')
       .bind(createdAt),
   ])
 
-  return result[0]?.results?.length ? { token, expiresAt } : null
+  // Bind the session to the identity and password version actually verified.
+  return results[0]?.results?.length ? { token, expiresAt } : null
+}
+
+const LOGIN_USER_SELECT = `SELECT u.id, u.mobile, u.name, u.role, u.enabled, u.auth_version, u.created_at, u.updated_at, c.password_hash,
+  COALESCE(c.version, 0) AS credential_version,
+  COALESCE(c.must_change_password, 1) AS password_change_required
+  FROM login_users u LEFT JOIN login_credentials c ON c.user_id = u.id`
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const saltHex = Array.from(salt, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  const hash = await derivePbkdf2Sha256Hex(password, saltHex, PBKDF2_MIN_ITERATIONS, 32)
+  return `pbkdf2_sha256$${PBKDF2_MIN_ITERATIONS}$${saltHex}$${hash}`
+}
+
+async function verifyAccountPassword(user: LoginUserRecord | null, password: string, env: Env): Promise<boolean> {
+  if (user?.password_hash) {
+    const parsed = parsePbkdf2Hash(user.password_hash)
+    if (!parsed) throw new Error('账号密码存储格式无效，请联系管理员')
+    const derived = await derivePbkdf2Sha256Hex(password, parsed.saltHex, parsed.iterations, parsed.hashLengthBytes)
+    return timingSafeEqualHex(derived, parsed.hashHex)
+  }
+  // Only legacy administrators may use the provisioning secret, and only to
+  // obtain a restricted session that must set an independent password.
+  if (user?.role === 'sysadmin') return verifySysadminPassword(password, env)
+  await derivePbkdf2Sha256Hex(password, '00000000000000000000000000000000', PBKDF2_MIN_ITERATIONS, 32)
+  return false
+}
+
+async function replacePassword(db: D1Database, user: LoginUserRecord, passwordHash: string, mustChange: boolean): Promise<boolean> {
+  const timestamp = nowIso()
+  const results = await db.batch([
+    db.prepare(`INSERT INTO login_credentials (user_id, password_hash, must_change_password, version)
+      SELECT id, ?, ?, 1 FROM login_users
+      WHERE id = ? AND mobile = ? AND role = ? AND enabled = ? AND auth_version = ?
+        AND COALESCE((SELECT version FROM login_credentials WHERE user_id = ?), 0) = ?
+      ON CONFLICT(user_id) DO UPDATE SET password_hash = excluded.password_hash,
+        must_change_password = excluded.must_change_password, version = login_credentials.version + 1
+      WHERE login_credentials.version = ?
+      RETURNING version`).bind(passwordHash, mustChange ? 1 : 0, user.id, user.mobile, user.role, user.enabled, user.auth_version,
+        user.id, user.credential_version, user.credential_version),
+    db.prepare(`UPDATE auth_sessions SET revoked_at = ?, updated_at = ?
+      WHERE user_id = ? AND revoked_at IS NULL AND EXISTS (
+        SELECT 1 FROM login_credentials WHERE user_id = ? AND version = ? AND password_hash = ?
+      )`).bind(timestamp, timestamp, user.id, user.id, user.credential_version + 1, passwordHash),
+    db.prepare(`UPDATE login_users SET auth_version = auth_version + 1
+      WHERE id = ? AND auth_version = ? AND EXISTS (
+        SELECT 1 FROM login_credentials WHERE user_id = ? AND version = ? AND password_hash = ?
+      )`).bind(user.id, user.auth_version, user.id, user.credential_version + 1, passwordHash),
+  ])
+  return Boolean(results[0]?.results?.length)
 }
 
 async function verifySysadminPassword(password: string, env: Env): Promise<boolean> {
@@ -406,6 +447,7 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
       user: null,
       sessionId: null,
       legacyToken: false,
+      credentialVersion: null,
     }
   }
 
@@ -421,12 +463,14 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
         name: '系统管理员',
         role: 'sysadmin',
         enabled: true,
-        passwordConfigured: false,
         createdAt: '',
         updatedAt: '',
+        passwordConfigured: true,
+        passwordChangeRequired: false,
       },
       sessionId: null,
       legacyToken: true,
+      credentialVersion: null,
     }
   }
 
@@ -434,15 +478,19 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
   const currentTime = nowIso()
   const rows = await env.DB
     .prepare(
-      `SELECT s.id AS session_id, u.id, u.mobile, u.name, u.role, u.enabled, u.password_hash, u.auth_version, u.created_at, u.updated_at
+      `SELECT s.id AS session_id, u.id, u.mobile, u.name, u.role, u.enabled, u.auth_version, u.created_at, u.updated_at, c.password_hash,
+         COALESCE(c.version, 0) AS credential_version,
+         COALESCE(c.must_change_password, 1) AS password_change_required
        FROM auth_sessions s
        JOIN login_users u ON u.id = s.user_id
+       JOIN auth_session_credentials p ON p.session_id = s.id
+       LEFT JOIN login_credentials c ON c.user_id = u.id
        WHERE s.token_hash = ?
          AND s.revoked_at IS NULL
          AND s.expires_at > ?
          AND u.enabled = 1
-         AND s.auth_version = u.auth_version
-         AND (u.role != 'maintainer' OR u.password_hash IS NOT NULL)
+         AND p.credential_version = COALESCE(c.version, 0)
+         AND (c.user_id IS NOT NULL OR u.role = 'sysadmin')
        LIMIT 1`,
     )
     .bind(tokenHash, currentTime)
@@ -460,6 +508,7 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
       user: null,
       sessionId: null,
       legacyToken: false,
+      credentialVersion: null,
     }
   }
 
@@ -474,6 +523,7 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
     user: toLoginUserView(hit),
     sessionId: hit.session_id,
     legacyToken: false,
+    credentialVersion: hit.credential_version,
   }
 }
 
@@ -677,6 +727,24 @@ async function ensureSchema(db: D1Database): Promise<void> {
   }
   await ensureLoginUsersRoleConstraint(db)
   await ensureAuthColumns(db)
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS login_credentials (
+      user_id INTEGER PRIMARY KEY,
+      password_hash TEXT NOT NULL,
+      must_change_password INTEGER NOT NULL CHECK (must_change_password IN (0, 1)),
+      version INTEGER NOT NULL CHECK (version >= 1),
+      FOREIGN KEY (user_id) REFERENCES login_users(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS auth_session_credentials (
+      session_id INTEGER PRIMARY KEY,
+      credential_version INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES auth_sessions(id) ON DELETE CASCADE
+    )`),
+    // Preserve deployed maintainer hashes, but require a personal password on upgrade.
+    // Never overwrite credentials already migrated, reset, or changed.
+    db.prepare(`INSERT OR IGNORE INTO login_credentials (user_id, password_hash, must_change_password, version)
+      SELECT id, password_hash, 1, 1 FROM login_users WHERE password_hash IS NOT NULL`),
+  ])
 }
 
 async function ensureAuthColumns(db: D1Database): Promise<void> {
@@ -1259,8 +1327,11 @@ export default {
     }
 
     try {
+      const isAuthSubmission = request.method === 'POST'
+        && (url.pathname === '/api/auth/login' || url.pathname === '/api/auth/bootstrap-sysadmin')
+      const authPayload = isAuthSubmission ? await guardAuthentication(request, env.DB) : null
+      if (authPayload instanceof Response) return authPayload
       await ensureSchema(env.DB)
-      const auth = await resolveAuth(request, env)
 
       if (request.method === 'GET' && url.pathname === '/api/auth/status') {
         const existing = await env.DB
@@ -1270,7 +1341,7 @@ export default {
       }
 
       if (request.method === 'POST' && url.pathname === '/api/auth/bootstrap-sysadmin') {
-        const payload = parseJsonBody<{ mobile?: string; password?: string }>(await request.json())
+        const payload = authPayload
         if (!payload) {
           return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
         }
@@ -1300,10 +1371,13 @@ export default {
         }
 
         const createdAt = nowIso()
-        await env.DB
-          .prepare("INSERT INTO login_users (mobile, role, enabled, created_at, updated_at) VALUES (?, 'sysadmin', 1, ?, ?)")
+        const inserted = await env.DB
+          .prepare(`INSERT INTO login_users (mobile, role, enabled, created_at, updated_at)
+            SELECT ?, 'sysadmin', 1, ?, ? WHERE NOT EXISTS (SELECT 1 FROM login_users WHERE role = 'sysadmin')
+            RETURNING id`)
           .bind(mobile, createdAt, createdAt)
           .all()
+        if (!inserted.results?.length) return errorResponse('sysadmin 已初始化', 409, 'SYSADMIN_EXISTS')
 
         const created = await findLoginUserByMobile(env.DB, mobile)
         if (!created) {
@@ -1311,7 +1385,7 @@ export default {
         }
 
         const session = await createSessionForUser(env.DB, created, env)
-        if (!session) return errorResponse('账号信息已变更，请重新登录', 401, 'CREDENTIALS_CHANGED')
+        if (!session) return errorResponse('账号已变更，请重新登录', 409, 'AUTH_CHANGED')
         return jsonResponse({
           ok: true,
           token: session.token,
@@ -1320,8 +1394,8 @@ export default {
         })
       }
 
-      if (request.method === 'POST' && ['/api/auth/login', '/api/auth/login-options'].includes(url.pathname)) {
-        const payload = parseJsonBody<{ mobile?: string; password?: string }>(await request.json())
+      if (request.method === 'POST' && url.pathname === '/api/auth/login') {
+        const payload = authPayload
         if (!payload) {
           return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
         }
@@ -1331,44 +1405,15 @@ export default {
           return errorResponse('手机号格式无效', 400, 'INVALID_MOBILE')
         }
 
+        if (!payload.password) return errorResponse('请输入手机号和密码', 401, 'PASSWORD_REQUIRED')
         const user = await findLoginUserByMobile(env.DB, mobile)
-        if (!user || user.enabled !== 1) {
-          const totalUsers = await env.DB
-            .prepare('SELECT COUNT(1) AS count FROM login_users')
-            .all<{ count: number }>()
-          const userCount = toInt(totalUsers.results?.[0]?.count, 0)
-          if (userCount === 0) {
-            return errorResponse('当前数据库尚无登录账号，请先初始化 sysadmin 或切换到远程 D1', 401, 'LOGIN_USERS_EMPTY')
-          }
-          return errorResponse('登录失败：手机号不存在或已禁用', 401, 'LOGIN_FAILED')
-        }
-
-        if (user.role === 'maintainer' && !user.password_hash) {
-          return errorResponse('此维护账号尚未设置密码，请联系系统管理员设置后登录', 403, 'PASSWORD_NOT_SET')
-        }
-        if (url.pathname === '/api/auth/login-options') {
-          return jsonResponse({ passwordRequired: user.role !== 'user' })
-        }
-
-        const password = typeof payload.password === 'string' ? payload.password : ''
-        if (user.role === 'maintainer') {
-          if (!password) return errorResponse('此账号需要密码，请输入后继续登录', 401, 'PASSWORD_REQUIRED')
-          if (password.length > 128 || !user.password_hash || !await verifyMaintainerPassword(password, user.password_hash)) {
-            return errorResponse('密码错误，请重新输入；忘记密码请联系系统管理员', 401, 'INVALID_PASSWORD')
-          }
-        } else if (user.role === 'sysadmin') {
-          if (!password) {
-            return errorResponse('此账号需要密码，请输入后继续登录', 401, 'PASSWORD_REQUIRED')
-          }
-
-          const validPassword = await verifySysadminPassword(password, env)
-          if (!validPassword) {
-            return errorResponse('sysadmin 密码错误', 401, 'INVALID_SYSADMIN_PASSWORD')
-          }
+        const validPassword = await verifyAccountPassword(user?.enabled === 1 ? user : null, payload.password, env)
+        if (!user || user.enabled !== 1 || !validPassword) {
+          return errorResponse('手机号或密码错误，或账号不可用；未设置密码请联系管理员', 401, 'LOGIN_FAILED')
         }
 
         const session = await createSessionForUser(env.DB, user, env)
-        if (!session) return errorResponse('账号信息已变更，请重新登录', 401, 'CREDENTIALS_CHANGED')
+        if (!session) return errorResponse('账号已变更，请重新登录', 409, 'AUTH_CHANGED')
 
         return jsonResponse({
           ok: true,
@@ -1377,6 +1422,8 @@ export default {
           user: toLoginUserView(user),
         })
       }
+
+      const auth = await resolveAuth(request, env)
 
       if (request.method === 'GET' && url.pathname === '/api/auth/session') {
         if (!auth.authenticated || !auth.user) {
@@ -1396,6 +1443,32 @@ export default {
         return jsonResponse({ ok: true })
       }
 
+      if (request.method === 'POST' && url.pathname === '/api/auth/change-password') {
+        if (!auth.authenticated || !auth.user || auth.legacyToken) {
+          return errorResponse('请使用账号登录后修改密码', 401, 'AUTH_REQUIRED')
+        }
+        const payload = await guardAuthentication(request, env.DB, auth.user.mobile)
+        if (payload instanceof Response) return payload
+        const invalidPassword = validateNewPassword(payload.newPassword)
+        if (invalidPassword || !payload.newPassword) return errorResponse(invalidPassword || '请输入新密码', 400, 'INVALID_PASSWORD')
+        if (!payload.password) return errorResponse('请输入当前密码', 400, 'PASSWORD_REQUIRED')
+        if (payload.password === payload.newPassword) return errorResponse('新密码不能与当前密码相同', 400, 'PASSWORD_UNCHANGED')
+        const current = await findLoginUserById(env.DB, auth.user.id)
+        if (!current || current.enabled !== 1 || current.credential_version !== auth.credentialVersion) {
+          return errorResponse('登录会话已失效，请重新登录', 401, 'AUTH_REQUIRED')
+        }
+        if (!await verifyAccountPassword(current, payload.password, env)) {
+          return errorResponse('当前密码错误', 401, 'INVALID_PASSWORD')
+        }
+        const changed = await replacePassword(env.DB, current, await hashPassword(payload.newPassword), false)
+        if (!changed) return errorResponse('账号已变更，请重新登录后重试', 409, 'AUTH_CHANGED')
+        return jsonResponse({ ok: true })
+      }
+
+      if (auth.user?.passwordChangeRequired) {
+        return errorResponse('请先修改初始密码，再访问族谱或管理账号', 403, 'PASSWORD_CHANGE_REQUIRED')
+      }
+
       if (request.method === 'GET' && url.pathname === '/api/login-users') {
         const denied = requireSysadmin(auth)
         if (denied) {
@@ -1404,8 +1477,7 @@ export default {
 
         const rows = await env.DB
           .prepare(
-            `SELECT id, mobile, name, role, enabled, password_hash, auth_version, created_at, updated_at
-             FROM login_users
+            `${LOGIN_USER_SELECT}
              ORDER BY CASE role
                WHEN 'sysadmin' THEN 0
                WHEN 'maintainer' THEN 1
@@ -1423,9 +1495,11 @@ export default {
           return denied
         }
 
-        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole; password?: string }>(await request.json())
-        if (!payload) {
-          return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
+        const payload = await readAuthJson(request)
+        if (payload instanceof Response) return payload
+        const invalidPassword = validateNewPassword(payload.password)
+        if (invalidPassword || typeof payload.password !== 'string') {
+          return errorResponse(invalidPassword || '请输入临时密码', 400, 'INVALID_PASSWORD')
         }
 
         const mobile = normalizeMobile(payload.mobile)
@@ -1433,23 +1507,13 @@ export default {
           return errorResponse('用户名称必须为不超过 100 字的文本', 400, 'INVALID_NAME')
         }
         const name = payload.name?.trim() ?? ''
-        if (payload.role !== undefined && !['user', 'maintainer', 'sysadmin'].includes(payload.role)) {
+        if (payload.role !== undefined && (typeof payload.role !== 'string' || !['user', 'maintainer', 'sysadmin'].includes(payload.role))) {
           return errorResponse('账号角色无效', 400, 'INVALID_ROLE')
         }
         const role: LoginUserRole =
           payload.role === 'sysadmin' || payload.role === 'maintainer' ? payload.role : 'user'
         if (!isValidMobile(mobile)) {
           return errorResponse('手机号格式无效', 400, 'INVALID_MOBILE')
-        }
-        if (role !== 'maintainer' && payload.password !== undefined) {
-          return errorResponse('只有维护人员使用独立密码；系统管理员沿用服务端验证密码', 400, 'PASSWORD_NOT_APPLICABLE')
-        }
-        let passwordHash: string | null = null
-        if (role === 'maintainer') {
-          if (payload.password === undefined) return errorResponse('请为维护人员设置初始密码', 400, 'PASSWORD_REQUIRED')
-          const invalidPassword = validateMaintainerPassword(payload.password)
-          if (invalidPassword) return invalidPassword
-          passwordHash = await hashMaintainerPassword(payload.password)
         }
 
         const existing = await findLoginUserByMobile(env.DB, mobile)
@@ -1458,10 +1522,13 @@ export default {
         }
 
         const createdAt = nowIso()
-        await env.DB
-          .prepare('INSERT INTO login_users (mobile, name, role, enabled, password_hash, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)')
-          .bind(mobile, name, role, passwordHash, createdAt, createdAt)
-          .all()
+        const passwordHash = await hashPassword(payload.password)
+        await env.DB.batch([
+          env.DB.prepare('INSERT INTO login_users (mobile, name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)')
+            .bind(mobile, name, role, createdAt, createdAt),
+          env.DB.prepare(`INSERT INTO login_credentials (user_id, password_hash, must_change_password, version)
+            SELECT id, ?, 1, 1 FROM login_users WHERE mobile = ?`).bind(passwordHash, mobile),
+        ])
 
         const created = await findLoginUserByMobile(env.DB, mobile)
         if (!created) {
@@ -1469,6 +1536,24 @@ export default {
         }
 
         return jsonResponse({ ok: true, user: toLoginUserView(created) }, 201)
+      }
+
+      const resetPasswordMatch = /^\/api\/login-users\/(\d+)\/reset-password$/.exec(url.pathname)
+      if (resetPasswordMatch && request.method === 'POST') {
+        const denied = requireSysadmin(auth)
+        if (denied) return denied
+        const targetId = Number(resetPasswordMatch[1])
+        if (!Number.isSafeInteger(targetId) || targetId <= 0) return errorResponse('用户 ID 无效', 400, 'INVALID_ID')
+        if (targetId === auth.user?.id) return errorResponse('请通过“修改密码”验证当前密码后修改自己的密码', 400, 'USE_CHANGE_PASSWORD')
+        const payload = await readAuthJson(request)
+        if (payload instanceof Response) return payload
+        const invalidPassword = validateNewPassword(payload.password)
+        if (invalidPassword || typeof payload.password !== 'string') return errorResponse(invalidPassword || '请输入临时密码', 400, 'INVALID_PASSWORD')
+        const target = await findLoginUserById(env.DB, targetId)
+        if (!target) return errorResponse('登录用户不存在', 404, 'NOT_FOUND')
+        const changed = await replacePassword(env.DB, target, await hashPassword(payload.password), true)
+        if (!changed) return errorResponse('账号已变更，请刷新后重试', 409, 'AUTH_CHANGED')
+        return jsonResponse({ ok: true })
       }
 
       const loginUserId = parseLoginUserId(url.pathname)
@@ -1487,17 +1572,16 @@ export default {
           return errorResponse('登录用户不存在', 404, 'NOT_FOUND')
         }
 
-        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole; enabled?: boolean; password?: string }>(await request.json())
-        if (!payload) {
-          return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
-        }
+        const payload = await readAuthJson(request)
+        if (payload instanceof Response) return payload
+        if (payload.password !== undefined) return errorResponse('请使用专用改密或重置密码接口', 400, 'USE_PASSWORD_ENDPOINT')
 
         const nextMobile = payload.mobile !== undefined ? normalizeMobile(payload.mobile) : target.mobile
         if (payload.name !== undefined && (typeof payload.name !== 'string' || payload.name.trim().length > 100)) {
           return errorResponse('用户名称必须为不超过 100 字的文本', 400, 'INVALID_NAME')
         }
         const nextName = payload.name === undefined ? target.name : payload.name.trim()
-        if (payload.role !== undefined && !['user', 'maintainer', 'sysadmin'].includes(payload.role)) {
+        if (payload.role !== undefined && (typeof payload.role !== 'string' || !['user', 'maintainer', 'sysadmin'].includes(payload.role))) {
           return errorResponse('账号角色无效', 400, 'INVALID_ROLE')
         }
         if (payload.enabled !== undefined && typeof payload.enabled !== 'boolean') {
@@ -1511,18 +1595,6 @@ export default {
 
         if (!isValidMobile(nextMobile)) {
           return errorResponse('手机号格式无效', 400, 'INVALID_MOBILE')
-        }
-        if (nextRole !== 'maintainer' && payload.password !== undefined) {
-          return errorResponse('只有维护人员使用独立密码；系统管理员沿用服务端验证密码', 400, 'PASSWORD_NOT_APPLICABLE')
-        }
-        if (nextRole === 'maintainer') {
-          if ((!target.password_hash || target.role !== 'maintainer') && payload.password === undefined) {
-            return errorResponse('请为维护人员设置初始密码', 400, 'PASSWORD_REQUIRED')
-          }
-          if (payload.password !== undefined) {
-            const invalidPassword = validateMaintainerPassword(payload.password)
-            if (invalidPassword) return invalidPassword
-          }
         }
 
         if (nextMobile !== target.mobile) {
@@ -1541,26 +1613,24 @@ export default {
         }
 
         const updatedAt = nowIso()
-        const passwordHash = nextRole !== 'maintainer' ? null
-          : payload.password !== undefined ? await hashMaintainerPassword(payload.password) : target.password_hash
-        const credentialsChanged = nextMobile !== target.mobile || nextRole !== target.role
-          || nextEnabled !== (target.enabled === 1) || payload.password !== undefined
-        const statements = [
-          env.DB.prepare(`UPDATE login_users
-            SET mobile = ?, name = ?, role = ?, enabled = ?, password_hash = ?, updated_at = ?, auth_version = auth_version + ?
-            WHERE id = ? AND auth_version = ? RETURNING id`)
-            .bind(nextMobile, nextName, nextRole, nextEnabled ? 1 : 0, passwordHash, updatedAt,
-              credentialsChanged ? 1 : 0, loginUserId, target.auth_version),
-        ]
-        if (credentialsChanged) {
-          statements.push(env.DB.prepare(`UPDATE auth_sessions SET revoked_at = ?, updated_at = ?
-            WHERE user_id = ? AND auth_version = ? AND revoked_at IS NULL`)
-            .bind(updatedAt, updatedAt, loginUserId, target.auth_version))
-        }
-        const result = await env.DB.batch(statements)
-        if (!result[0]?.results?.length) {
-          return errorResponse('账号信息已被其他操作更新，请刷新后重试', 409, 'ACCOUNT_CONFLICT')
-        }
+        const credentialsChanged = nextMobile !== target.mobile || nextRole !== target.role || nextEnabled !== (target.enabled === 1)
+        // auth_version fences all account mutations, including accounts not yet provisioned.
+        // Credential versions separately invalidate sessions, so name-only edits keep them.
+        const results = await env.DB.batch([
+          env.DB.prepare(`UPDATE auth_sessions SET revoked_at = ?, updated_at = ?
+            WHERE user_id = ? AND revoked_at IS NULL AND ? = 1 AND EXISTS (
+              SELECT 1 FROM login_users WHERE id = ? AND auth_version = ?
+            )`).bind(updatedAt, updatedAt, loginUserId, credentialsChanged ? 1 : 0, loginUserId, target.auth_version),
+          env.DB.prepare(`UPDATE login_credentials SET version = version + 1
+            WHERE user_id = ? AND ? = 1 AND EXISTS (
+              SELECT 1 FROM login_users WHERE id = ? AND auth_version = ?
+            )`).bind(loginUserId, credentialsChanged ? 1 : 0, loginUserId, target.auth_version),
+          env.DB
+            .prepare(`UPDATE login_users SET mobile = ?, name = ?, role = ?, enabled = ?, updated_at = ?, auth_version = auth_version + 1
+              WHERE id = ? AND auth_version = ? RETURNING id`)
+            .bind(nextMobile, nextName, nextRole, nextEnabled ? 1 : 0, updatedAt, loginUserId, target.auth_version),
+        ])
+        if (!results[2]?.results?.length) return errorResponse('账号信息已被其他操作更新，请刷新后重试', 409, 'ACCOUNT_CONFLICT')
 
         const updated = await findLoginUserById(env.DB, loginUserId)
         if (!updated) {

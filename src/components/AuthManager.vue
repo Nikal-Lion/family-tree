@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   initializeFirstSysadmin,
   initAuthSession,
@@ -15,12 +16,14 @@ const emit = defineEmits<{
 
 void initAuthSession()
 
-const { role, user } = useAuth()
+const { role, user, needsPasswordChange } = useAuth()
+const router = useRouter()
 
 type AuthView = 'idle' | 'user-login' | 'sysadmin-login' | 'bootstrap-sysadmin'
 
 const view = ref<AuthView>('idle')
 const userMobileInput = ref('')
+const userPasswordInput = ref('')
 const sysadminMobileInput = ref('')
 const sysadminPasswordInput = ref('')
 const bootstrapMobileInput = ref('')
@@ -38,6 +41,7 @@ const roleLabel = computed(() => {
 
 function resetForms(): void {
   userMobileInput.value = ''
+  userPasswordInput.value = ''
   sysadminMobileInput.value = ''
   sysadminPasswordInput.value = ''
   bootstrapMobileInput.value = ''
@@ -72,13 +76,15 @@ async function handleUserLogin(): Promise<void> {
   errorMessage.value = ''
 
   try {
-    const result = await loginAsUserByMobile(userMobileInput.value)
+    const result = await loginAsUserByMobile(userMobileInput.value, userPasswordInput.value)
     if (!result.ok) {
       errorMessage.value = result.message
       return
     }
     emit('notify', result.message, 'success')
     closeDialog()
+    userPasswordInput.value = ''
+    if (needsPasswordChange.value) await router.replace('/change-password')
   } finally {
     pending.value = false
   }
@@ -97,6 +103,8 @@ async function handleSysadminLogin(): Promise<void> {
     }
     emit('notify', result.message, 'success')
     closeDialog()
+    sysadminPasswordInput.value = ''
+    if (needsPasswordChange.value) await router.replace('/change-password')
   } finally {
     pending.value = false
   }
@@ -120,6 +128,9 @@ async function handleBootstrapSysadmin(): Promise<void> {
     }
     emit('notify', result.message, 'success')
     closeDialog()
+    bootstrapPasswordInput.value = ''
+    bootstrapConfirmPasswordInput.value = ''
+    if (needsPasswordChange.value) await router.replace('/change-password')
   } finally {
     pending.value = false
   }
@@ -163,7 +174,7 @@ async function handleLogout(): Promise<void> {
         <div class="auth-dialog">
           <template v-if="view === 'user-login'">
             <h3>用户/维护人员登录</h3>
-            <p class="auth-hint">输入手机号即可登录。账号需存在于 login_users 表。</p>
+            <p class="auth-hint">使用手机号和独立密码登录。没有密码或忘记密码请联系管理员。</p>
             <label class="field">
               <span>手机号</span>
               <input
@@ -173,6 +184,7 @@ async function handleLogout(): Promise<void> {
                 @keydown.enter="handleUserLogin"
               />
             </label>
+            <label class="field"><span>密码</span><input v-model="userPasswordInput" type="password" autocomplete="current-password" maxlength="1024" @keydown.enter="handleUserLogin" /></label>
             <p v-if="errorMessage" class="auth-error">{{ errorMessage }}</p>
             <div class="btn-row">
               <button class="btn-primary" type="button" :disabled="pending" @click="handleUserLogin">
@@ -184,7 +196,7 @@ async function handleLogout(): Promise<void> {
 
           <template v-if="view === 'sysadmin-login'">
             <h3>sysadmin 登录</h3>
-            <p class="auth-hint">sysadmin 需要手机号和密码，密码由服务端 Secret 校验。</p>
+            <p class="auth-hint">使用独立密码；旧管理员首次升级可用原服务端验证密码过渡，随后必须改密。</p>
             <label class="field">
               <span>手机号</span>
               <input

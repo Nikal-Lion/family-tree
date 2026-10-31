@@ -191,6 +191,7 @@ function dismissIntro() {
             <template #overlay>
               <Menu>
                 <Menu.Item key="identity" disabled>{{ accountName }} · {{ user?.mobile }}</Menu.Item>
+                <Menu.Item key="password" @click="router.push('/change-password')">修改密码</Menu.Item>
                 <Menu.Item key="help" @click="helpOpen = true">
                   <template #icon><QuestionCircleOutlined /></template>
                   使用帮助
@@ -233,7 +234,7 @@ function dismissIntro() {
       <h2>需要更大的文字时</h2>
       <p>点击顶栏的字号按钮切换“大字模式”，登录页也有同样的开关。正文、表单、弹窗和图谱文字会一起放大；设置只保存在本浏览器，退出账号后仍会保留。</p>
       <h2>登录遇到问题时</h2>
-      <p>账号由系统管理员登记，不需要自行注册。请使用已登记且启用的手机号；系统提示需要密码时，再输入此账号的密码。忘记密码或维护账号尚未设置密码，请联系系统管理员。</p>
+      <p>账号由系统管理员登记，不需要自行注册。请使用已登记且启用的手机号和独立密码；临时密码首次登录须修改。忘记密码或账号尚未设置密码，请联系系统管理员。</p>
       <p>普通用户可以查看已收录的族谱资料，包括原始记载、葬地和寻根轨迹，但不能修改资料或管理账号。维护人员与系统管理员验证密码后，才可进入相应管理页面。</p>
       <p>资料仅供已登记账号查阅，请谨慎转发含个人或位置信息的内容。</p>
     </div>

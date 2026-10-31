@@ -6,7 +6,8 @@ import {
 } from 'ant-design-vue'
 import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { initAuthSession, updateCurrentLoginUser, useAuth } from '../services/authService'
-import { createLoginUser, deleteLoginUser, listLoginUsers, updateLoginUser } from '../services/d1ApiService'
+import { createLoginUser, deleteLoginUser, listLoginUsers, resetLoginUserPassword, updateLoginUser } from '../services/d1ApiService'
+import { validateNewPassword, PASSWORD_MAX_LENGTH } from '../services/passwordPolicy'
 import { filterLoginUsers, isLastEnabledSysadmin, normalizeLoginMobile } from './loginUserManagerHelpers'
 import type { LoginUser, LoginUserRole } from '../types/auth'
 
@@ -25,20 +26,15 @@ const pageSize = ref(10)
 const editorOpen = ref(false)
 const editingId = ref<number | null>(null)
 const confirmation = ref<{ user: LoginUser; action: 'delete' | 'toggle' } | null>(null)
-const form = reactive<{ mobile: string; name: string; role: LoginUserRole; password: string; confirmPassword: string }>({
-  mobile: '', name: '', role: 'user', password: '', confirmPassword: '',
-})
+const form = reactive<{ mobile: string; name: string; role: LoginUserRole; password: string; confirmation: string }>({ mobile: '', name: '', role: 'user', password: '', confirmation: '' })
+const resetTarget = ref<LoginUser | null>(null)
+const resetForm = reactive({ password: '', confirmation: '' })
 let epoch = 0
 let loadSequence = 0
 let alive = true
 const authorized = computed(() => auth.ready.value && auth.isSysadmin.value)
 const busy = computed(() => submitting.value || loading.value)
 const filtered = computed(() => filterLoginUsers(users.value, keyword.value))
-const needsInitialPassword = computed(() => {
-  const current = users.value.find((item) => item.id === editingId.value)
-  return form.role === 'maintainer'
-    && (!current || current.role !== 'maintainer' || current.passwordConfigured === false)
-})
 const roleLabels: Record<LoginUserRole, string> = {
   user: '普通用户', maintainer: '数据维护人员', sysadmin: '系统管理员',
 }
@@ -49,8 +45,9 @@ const columns: TableProps<LoginUser>['columns'] = [
   { title: '登录手机号', dataIndex: 'mobile', width: 180 },
   { title: '角色', key: 'role', width: 150 },
   { title: '状态', key: 'enabled', width: 90 },
+  { title: '密码', key: 'password', width: 130 },
   { title: '更新时间', key: 'updatedAt', width: 180 },
-  { title: '操作', key: 'actions', width: 230 },
+  { title: '操作', key: 'actions', width: 310 },
 ]
 const isCurrent = (started: number) => alive && authorized.value && started === epoch
 const errorText = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
@@ -58,6 +55,13 @@ const errorText = (error: unknown, fallback: string) => error instanceof Error ?
 function notify(text: string) {
   message.success(text)
   emit('notify', text, 'success')
+}
+
+function syncSavedAccount(saved: LoginUser) {
+  if (updateCurrentLoginUser(saved)) {
+    message.info('当前账号的登录信息已变更，请重新登录')
+    window.location.replace('/login')
+  }
 }
 
 async function refreshUsers(showToast = false): Promise<void> {
@@ -91,7 +95,7 @@ function openEditor(id?: number) {
   const item = users.value.find((entry) => entry.id === id)
   if (id !== undefined && !item) return
   editingId.value = item?.id ?? null
-  Object.assign(form, { mobile: item?.mobile ?? '', name: item?.name ?? '', role: item?.role ?? 'user', password: '', confirmPassword: '' })
+  Object.assign(form, { mobile: item?.mobile ?? '', name: item?.name ?? '', role: item?.role ?? 'user', password: '', confirmation: '' })
   actionError.value = ''
   editorOpen.value = true
 }
@@ -120,28 +124,24 @@ function save() {
   if (!mobile) { actionError.value = '手机号不能为空'; return }
   if (!/^\+?\d{6,20}$/.test(mobile)) { actionError.value = '手机号须为 6–20 位数字，可带 + 国际区号'; return }
   const id = editingId.value
+  if (id === null) {
+    const invalid = validateNewPassword(form.password)
+    if (invalid) { actionError.value = invalid; return }
+    if (form.password !== form.confirmation) { actionError.value = '两次输入的临时密码不一致'; return }
+  }
   const current = users.value.find((item) => item.id === id)
   if (id !== null && !current) { actionError.value = '账号已不存在，请刷新列表'; return }
   if (current && isLastEnabledSysadmin(users.value, current) && form.role !== 'sysadmin') {
     actionError.value = '至少保留一个启用中的 sysadmin'
     return
   }
-  if (form.role === 'maintainer') {
-    if (needsInitialPassword.value && !form.password) { actionError.value = '请为维护人员设置初始密码'; return }
-    if (form.password && (form.password.length < 8 || form.password.length > 128 || !form.password.trim())) {
-      actionError.value = '密码须为 8–128 个字符，且不能全为空格'
-      return
-    }
-    if (form.password !== form.confirmPassword) { actionError.value = '两次输入的密码不一致'; return }
-  }
   const input = {
     mobile, name: form.name.trim(), role: form.role,
-    ...(form.role === 'maintainer' && form.password ? { password: form.password } : {}),
   }
   void mutate(
     async () => {
-      const saved = await (id === null ? createLoginUser(input) : updateLoginUser(id, input))
-      updateCurrentLoginUser(saved)
+      const saved = await (id === null ? createLoginUser({ ...input, password: form.password }) : updateLoginUser(id, input))
+      syncSavedAccount(saved)
     },
     id === null ? '登录用户创建成功' : '登录用户已更新',
     () => { editorOpen.value = false },
@@ -169,10 +169,9 @@ function confirmAction() {
     async () => {
       if (pending.action === 'delete') {
         await deleteLoginUser(current.id)
-        updateCurrentLoginUser({ ...current, enabled: false })
+        syncSavedAccount({ ...current, enabled: false })
       } else {
-        const saved = await updateLoginUser(current.id, { enabled: !current.enabled })
-        updateCurrentLoginUser(saved)
+        syncSavedAccount(await updateLoginUser(current.id, { enabled: !current.enabled }))
       }
     },
     pending.action === 'delete' ? '登录用户已删除' : current.enabled ? '用户已禁用' : '用户已启用',
@@ -180,11 +179,37 @@ function confirmAction() {
   )
 }
 
-watch(keyword, () => { page.value = 1 })
-watch(() => form.role, () => { form.password = ''; form.confirmPassword = ''; actionError.value = '' })
+function openReset(id: number) {
+  if (busy.value || !authorized.value || id === auth.user.value?.id) return
+  const target = users.value.find((item) => item.id === id)
+  if (!target) return
+  Object.assign(resetForm, { password: '', confirmation: '' })
+  actionError.value = ''
+  resetTarget.value = target
+}
+
+function resetPassword() {
+  const target = resetTarget.value
+  if (!target) return
+  const invalid = validateNewPassword(resetForm.password)
+  if (invalid) { actionError.value = invalid; return }
+  if (resetForm.password !== resetForm.confirmation) { actionError.value = '两次输入的临时密码不一致'; return }
+  const password = resetForm.password
+  void mutate(
+    () => resetLoginUserPassword(target.id, password),
+    '密码已重置，旧会话已撤销。请通过私密渠道交付临时密码，用户登录后必须改密。',
+    () => { resetTarget.value = null },
+  )
+}
+
 watch(editorOpen, (open) => {
-  if (!open) { form.password = ''; form.confirmPassword = '' }
-}, { flush: 'sync' })
+  if (!open) { form.password = ''; form.confirmation = '' }
+})
+watch(resetTarget, (target) => {
+  if (!target) { resetForm.password = ''; resetForm.confirmation = '' }
+})
+watch(keyword, () => { page.value = 1 })
+watch(() => form.role, () => { form.password = ''; form.confirmation = ''; actionError.value = '' })
 watch(() => [auth.ready.value, auth.user.value?.id, auth.isSysadmin.value] as const, () => {
   ++epoch
   ++loadSequence
@@ -195,6 +220,7 @@ watch(() => [auth.ready.value, auth.user.value?.id, auth.isSysadmin.value] as co
   submitting.value = false
   editorOpen.value = false
   confirmation.value = null
+  resetTarget.value = null
   page.value = 1
   if (authorized.value) void refreshUsers()
 }, { immediate: true, flush: 'sync' })
@@ -222,16 +248,18 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
       </div>
       <Table
         :columns="columns" :data-source="filtered" row-key="id" :loading="loading"
-        :scroll="{ x: 1000 }"
+        :scroll="{ x: 1250 }"
         :pagination="{ current: page, pageSize, showSizeChanger: true, showTotal: (total: number) => `共 ${total} 个账号`, onChange: (next: number, size: number) => { page = next; pageSize = size } }"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'role'"><Tag :color="record.role === 'sysadmin' ? 'purple' : record.role === 'maintainer' ? 'blue' : 'default'">{{ roleLabels[record.role as LoginUserRole] }} · {{ record.role }}</Tag></template>
           <template v-else-if="column.key === 'enabled'"><Tag :color="record.enabled ? 'success' : 'default'">{{ record.enabled ? '启用' : '禁用' }}</Tag></template>
+          <template v-else-if="column.key === 'password'"><Tag :color="!record.passwordConfigured || record.passwordChangeRequired ? 'warning' : 'success'">{{ !record.passwordConfigured ? '尚未设置' : record.passwordChangeRequired ? '待首次改密' : '已设置' }}</Tag></template>
           <template v-else-if="column.key === 'updatedAt'">{{ record.updatedAt ? new Date(record.updatedAt).toLocaleString('zh-CN') : '未记录' }}</template>
           <template v-else-if="column.key === 'actions'">
             <Space :size="4">
               <Button type="link" size="small" :disabled="busy || !!loadError" @click="openEditor(record.id)">编辑</Button>
+              <Button type="link" size="small" :disabled="busy || !!loadError || record.id === auth.user.value?.id" @click="openReset(record.id)">重置密码</Button>
               <Button type="link" size="small" :danger="record.enabled" :disabled="busy || !!loadError || isProtected(record.id)" @click="requestAction(record.id, 'toggle')">{{ record.enabled ? '禁用' : '启用' }}</Button>
               <Button type="link" size="small" danger :disabled="busy || !!loadError || isProtected(record.id)" @click="requestAction(record.id, 'delete')">删除</Button>
             </Space>
@@ -239,7 +267,7 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
         </template>
         <template #emptyText>{{ loadError ? '无法读取账号，请重试' : keyword.trim() ? '没有匹配的账号' : '暂无登录账号，请新增' }}</template>
       </Table>
-      <p class="account-note">普通用户使用手机号登录，维护人员使用各自的账号密码，系统管理员沿用服务端固定密码。至少保留一个启用中的系统管理员。修改手机号、角色、启用状态或维护人员密码会退出该账号的所有登录设备；仅改名称不会退出。</p>
+      <p class="account-note">所有账号使用独立密码。新增或重置后，请私下交付临时密码，用户首次登录须改密；旧成员账号需先设置密码。修改手机号、角色、密码或禁用账号会撤销旧会话。自己的密码请从账号菜单修改。至少保留一个启用中的 sysadmin。</p>
     </Card>
 
     <Modal :open="authorized && editorOpen" :title="editingId === null ? '新增登录账号' : '编辑登录账号'" :footer="null" width="min(520px, calc(100vw - 32px))" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" destroy-on-close @cancel="editorOpen = false">
@@ -254,20 +282,32 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
         <Form.Item name="role" label="角色" :rules="[{ required: true, message: '请选择角色' }]">
           <Select v-model:value="form.role" :options="roleOptions" />
         </Form.Item>
-        <template v-if="form.role === 'maintainer'">
-          <Alert type="info" show-icon :message="needsInitialPassword ? '请设置维护人员的初始密码，之后由该人员使用手机号和密码登录。' : '不修改密码请留空。重设密码后，该账号所有已登录设备都会退出。'" class="account-alert" />
-          <Form.Item name="password" :label="needsInitialPassword ? '初始密码' : '重设密码（选填）'">
-            <Input.Password v-model:value="form.password" :aria-label="needsInitialPassword ? '初始密码' : '重设密码（选填）'" autocomplete="new-password" placeholder="8–128 个字符，不能全为空格" :maxlength="128" />
+        <template v-if="editingId === null">
+          <Form.Item name="password" label="临时密码" :rules="[{required:true,message:'请设置临时密码'}]">
+            <Input.Password v-model:value="form.password" autocomplete="new-password" :maxlength="PASSWORD_MAX_LENGTH" placeholder="12–128 个字符，首次登录必须修改" />
           </Form.Item>
-          <Form.Item name="confirmPassword" label="确认密码">
-            <Input.Password v-model:value="form.confirmPassword" aria-label="确认密码" autocomplete="new-password" placeholder="请再次输入新密码" :maxlength="128" />
+          <Form.Item name="confirmation" label="确认临时密码" :rules="[{required:true,message:'请再次输入临时密码'}]">
+            <Input.Password v-model:value="form.confirmation" autocomplete="new-password" :maxlength="PASSWORD_MAX_LENGTH" />
           </Form.Item>
         </template>
-        <Alert v-else-if="form.role === 'sysadmin'" type="info" show-icon message="系统管理员使用服务端配置的固定密码，此处无需设置密码。" class="account-alert" />
         <div class="account-form-actions">
           <Button :disabled="submitting" @click="editorOpen = false">取消</Button>
           <Button type="primary" html-type="submit" :loading="submitting">保存到云端</Button>
         </div>
+      </Form>
+    </Modal>
+    <Modal :open="authorized && resetTarget !== null" title="重置账号密码" :footer="null" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" width="min(520px, calc(100vw - 32px))" @cancel="resetTarget = null">
+      <p>账号：{{ resetTarget?.mobile }}</p>
+      <Alert type="warning" show-icon message="请先线下确认对方身份。重置会立即撤销其所有会话，新临时密码须通过私密渠道交付。" class="account-alert" />
+      <Alert v-if="actionError" type="error" show-icon :message="actionError" class="account-alert" />
+      <Form :model="resetForm" layout="vertical" :disabled="submitting" @finish="resetPassword">
+        <Form.Item name="password" label="新临时密码" :rules="[{required:true,message:'请输入临时密码'}]">
+          <Input.Password v-model:value="resetForm.password" autocomplete="new-password" :maxlength="PASSWORD_MAX_LENGTH" placeholder="12–128 个字符" />
+        </Form.Item>
+        <Form.Item name="confirmation" label="确认临时密码" :rules="[{required:true,message:'请再次输入临时密码'}]">
+          <Input.Password v-model:value="resetForm.confirmation" autocomplete="new-password" :maxlength="PASSWORD_MAX_LENGTH" />
+        </Form.Item>
+        <div class="account-form-actions"><Button :disabled="submitting" @click="resetTarget=null">取消</Button><Button type="primary" danger html-type="submit" :loading="submitting">重置并撤销旧会话</Button></div>
       </Form>
     </Modal>
     <Modal :open="authorized && confirmation !== null" :title="confirmation?.action === 'delete' ? '确认删除登录账号？' : confirmation?.user.enabled ? '确认禁用登录账号？' : '确认启用登录账号？'" :confirm-loading="submitting" :ok-button-props="{ danger: confirmation?.action === 'delete' || confirmation?.user.enabled, disabled: busy }" :cancel-button-props="{ disabled: submitting }" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" ok-text="确认" cancel-text="取消" width="min(480px, calc(100vw - 32px))" @ok="confirmAction" @cancel="confirmation = null">

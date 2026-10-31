@@ -11,31 +11,26 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 describe('login API contract', () => {
-  it('queries initialization and password requirements without authentication or credential storage', async () => {
+  it('queries initialization without authentication or credential storage', async () => {
     const api = await import('../../src/services/d1ApiService')
     api.setSessionToken('old-session')
     fetchMock.mockResolvedValueOnce(Response.json({ initialized: true }))
     expect(await api.fetchAuthStatus()).toEqual({ initialized: true })
-    fetchMock.mockResolvedValueOnce(Response.json({ passwordRequired: true }))
-    expect(await api.fetchLoginOptions('+85212345678')).toEqual({ passwordRequired: true })
     expect(new URL(fetchMock.mock.calls[0]![0]).pathname).toBe('/api/auth/status')
-    expect(new URL(fetchMock.mock.calls[1]![0]).pathname).toBe('/api/auth/login-options')
-    expect(fetchMock.mock.calls[1]![1].method).toBe('POST')
-    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ mobile: '+85212345678' })
     for (const [, options] of fetchMock.mock.calls) expect((options.headers as Headers).has('Authorization')).toBe(false)
   })
 
   it('exposes error codes and status while retaining normal Error messages', async () => {
     const api = await import('../../src/services/d1ApiService')
     fetchMock.mockResolvedValueOnce(Response.json({ error: '请输入密码', code: 'PASSWORD_REQUIRED' }, { status: 401 }))
-    const error = await api.loginWithMobile('+85212345678').catch((value) => value)
+    const error = await api.loginWithMobile('+85212345678', '').catch((value) => value)
     expect(error).toBeInstanceOf(Error)
     expect(error).toBeInstanceOf(api.ApiError)
     expect(error).toMatchObject({ message: '请输入密码', status: 401, code: 'PASSWORD_REQUIRED' })
-    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ mobile: '+85212345678' })
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ mobile: '+85212345678', password: '' })
   })
 
-  it('sends an optional password verbatim and never sends a login role or session token', async () => {
+  it('sends the password verbatim and never sends a login role or session token', async () => {
     const api = await import('../../src/services/d1ApiService')
     api.setSessionToken('old-session')
     fetchMock.mockImplementation(async () => Response.json({ user: { role: 'maintainer' }, token: 'new-session', expiresAt: '' }))
@@ -50,10 +45,11 @@ describe('login API contract', () => {
     const api = await import('../../src/services/d1ApiService')
     fetchMock.mockImplementation(async () => Response.json({ ok: true, user: { id: 2, passwordConfigured: true } }))
     expect(await api.createLoginUser({ mobile: '123456', role: 'maintainer', password: ' initial password ' })).toMatchObject({ passwordConfigured: true })
-    await api.updateLoginUser(2, { password: 'replacement' })
+    await api.resetLoginUserPassword(2, 'replacement')
     await api.updateLoginUser(2, { name: '姓名' })
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body).password).toBe(' initial password ')
     expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ password: 'replacement' })
+    expect(new URL(fetchMock.mock.calls[1]![0]).pathname).toBe('/api/login-users/2/reset-password')
     expect(JSON.parse(fetchMock.mock.calls[2]![1].body)).toEqual({ name: '姓名' })
   })
 
@@ -63,7 +59,7 @@ describe('login API contract', () => {
   ])('keeps plain-text and empty error responses readable', async (response) => {
     const api = await import('../../src/services/d1ApiService')
     fetchMock.mockResolvedValueOnce(response)
-    await expect(api.loginWithMobile('123456')).rejects.toMatchObject({ status: response.status, message: response.status === 503 ? '服务暂不可用' : '请求失败（502）' })
+    await expect(api.loginWithMobile('123456', 'test-password')).rejects.toMatchObject({ status: response.status, message: response.status === 503 ? '服务暂不可用' : '请求失败（502）' })
   })
 })
 describe('revision-aware D1 client', () => {
