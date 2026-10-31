@@ -69,6 +69,11 @@ button, input, textarea, select { font: inherit; }
 .workspace-account-button { display: flex; align-items: center; gap: 8px; height: 42px; min-width: 0; }
 .workspace-account-button .workspace-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; line-height: 1; border-radius: 50%; color: #4f46e5; background: #eeedff; font-size: 12px; font-weight: 600; }
 .workspace-account-name { min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-browse-intro { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; min-width: 0; margin: 16px 24px 0; padding: 16px; border: 1px solid #d9d6fe; border-radius: 12px; color: #344054; background: #f5f4ff; }
+.workspace-browse-intro > div:first-child { flex: 1 1 280px; min-width: 0; }
+.workspace-browse-intro p { margin: 6px 0 0; line-height: 1.8; }
+.workspace-intro-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.workspace-intro-actions .ant-btn { min-height: 44px; }
 .workspace-browse-help { color: #475467; line-height: 1.8; overflow-wrap: anywhere; }
 .workspace-browse-help h2 { margin-top: 0; color: #182230; font-size: 18px; }
 .workspace-browse-help ol { padding-left: 24px; }
@@ -106,6 +111,7 @@ button, input, textarea, select { font: inherit; }
   .workspace-shell-browse .workspace-header-context { display: none; }
   .workspace-account-name { max-width: 96px; }
   .workspace-account-button { height: 44px; padding-inline: 4px; gap: 4px; }
+  .workspace-browse-intro { margin: 14px 14px 0; padding: 14px; }
   .member-manager .ant-card-body { padding: 14px; }
   .member-table-toolbar > .ant-space { max-width: 100%; }
   .workspace-shell .legacy-workspace .page { padding: 14px; }

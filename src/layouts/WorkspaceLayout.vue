@@ -29,6 +29,13 @@ const avatarText = computed(() => user.value?.name?.trim()
 const collapsed = ref(false)
 const loggingOut = ref(false)
 const helpOpen = ref(false)
+const introDismissed = ref(false)
+const introPreferenceKey = 'family_browse_intro_dismissed_v1'
+try {
+  introDismissed.value = localStorage.getItem(introPreferenceKey) === '1'
+} catch (error) {
+  console.warn('[WorkspaceLayout] 无法读取浏览入门提示设置', error)
+}
 const media = window.matchMedia('(max-width: 767px)')
 const mobile = ref(media.matches)
 
@@ -43,8 +50,9 @@ onBeforeUnmount(() => media.removeEventListener('change', updateViewport))
 watch(
   [ready, isAuthenticated],
   ([authReady, authenticated]) => {
-    if (authReady && !authenticated) {
-      void router.replace({ path: '/login', query: { redirect: route.fullPath } })
+    if (authReady && !authenticated && !loggingOut.value) {
+      // Discard the old account's maintenance state before allowing another login.
+      window.location.replace(router.resolve({ path: '/login', query: { redirect: route.fullPath } }).href)
     }
   },
   { immediate: true },
@@ -66,6 +74,15 @@ async function handleLogout() {
     message.error(error instanceof Error ? error.message : '退出登录失败')
   } finally {
     loggingOut.value = false
+  }
+}
+
+function dismissIntro() {
+  introDismissed.value = true
+  try {
+    localStorage.setItem(introPreferenceKey, '1')
+  } catch (error) {
+    console.warn('[WorkspaceLayout] 无法保存浏览入门提示设置', error)
   }
 }
 </script>
@@ -174,6 +191,16 @@ async function handleLogout() {
     </template>
 
     <template #content>
+      <section v-if="browsing && !introDismissed" class="workspace-browse-intro" aria-label="浏览入门提示">
+        <div>
+          <strong>第一次查看？从找到一位家人开始</strong>
+          <p>输入姓名或别名，点击姓名看资料，再沿着亲属关系或族谱继续浏览。浏览不会修改资料，需要补充时请联系维护人员。</p>
+        </div>
+        <div class="workspace-intro-actions">
+          <Button @click="helpOpen = true">查看使用指南</Button>
+          <Button type="text" @click="dismissIntro">不再提示</Button>
+        </div>
+      </section>
       <RouterView />
     </template>
   </VbenAdminLayout>
@@ -187,6 +214,10 @@ async function handleLogout() {
       </ol>
       <p>图中连线表示已记录的父子关系，配偶和承继等关系请查看人物资料。暂未记录不等于不存在，待确认的记载也不代表已确认的关系。</p>
       <p>浏览不会修改族谱。发现资料有误或需要补充时，请联系家族维护人员。</p>
+      <h2>登录遇到问题时</h2>
+      <p>账号由系统管理员登记，不需要自行注册。请使用已登记且启用的手机号；系统提示需要密码时，再输入此账号的密码。忘记密码或维护账号尚未设置密码，请联系系统管理员。</p>
+      <p>普通用户可以查看已收录的族谱资料，包括原始记载、葬地和寻根轨迹，但不能修改资料或管理账号。维护人员与系统管理员验证密码后，才可进入相应管理页面。</p>
+      <p>资料仅供已登记账号查阅，请谨慎转发含个人或位置信息的内容。</p>
     </div>
   </Drawer>
 </template>

@@ -1,27 +1,25 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Button, Card, Descriptions, Empty, Image, Space, Tag } from 'ant-design-vue'
-import { useFamilyStore } from '../stores/familyStore'
 import { computeGenerations } from '../services/generationService'
 import { childClaimAdoptionLabel } from '../services/childClaimService'
-import type { KinshipRelation, Member, NameAliasType } from '../types/member'
+import type { FamilyBrowseData, KinshipRelation, Member, NameAliasType } from '../types/member'
 
-const props = defineProps<{ member: Member | null }>()
+const props = defineProps<{ member: Member | null; data: FamilyBrowseData }>()
 defineEmits<{ select: [id: number]; 'view-tree': [id: number] }>()
-const store = useFamilyStore()
 const id = computed(() => props.member?.id)
-const generations = computed(() => computeGenerations(store.members.value))
-const children = computed(() => store.members.value.filter((item) => item.parentId === id.value))
-const spouses = computed(() => store.spouses.value.filter((item) => item.husbandId === id.value).toSorted((a, b) => a.order - b.order))
-const claims = computed(() => store.childClaims.value.filter((item) => item.parentId === id.value).toSorted((a, b) => a.ordinalIndex - b.ordinalIndex))
-const aliases = computed(() => store.aliases.value.filter((item) => item.memberId === id.value))
-const relations = computed(() => store.relations.value.filter((item) => item.fromMemberId === id.value || item.toMemberId === id.value))
-const temporals = computed(() => store.temporals.value.filter((item) => item.memberId === id.value))
-const burials = computed(() => store.burials.value.filter((item) => item.memberId === id.value))
-const membersById = computed(() => new Map(store.members.value.map((item) => [item.id, item])))
+const generations = computed(() => computeGenerations(props.data.members))
+const children = computed(() => props.data.members.filter((item) => item.parentId === id.value))
+const spouses = computed(() => props.data.spouses.filter((item) => item.husbandId === id.value).toSorted((a, b) => a.order - b.order))
+const claims = computed(() => props.data.childClaims.filter((item) => item.parentId === id.value).toSorted((a, b) => a.ordinalIndex - b.ordinalIndex))
+const aliases = computed(() => props.data.aliases.filter((item) => item.memberId === id.value))
+const relations = computed(() => props.data.relations.filter((item) => item.fromMemberId === id.value || item.toMemberId === id.value))
+const temporals = computed(() => props.data.temporals.filter((item) => item.memberId === id.value))
+const burials = computed(() => props.data.burials.filter((item) => item.memberId === id.value))
+const membersById = computed(() => new Map(props.data.members.map((item) => [item.id, item])))
 const nameCounts = computed(() => {
   const counts = new Map<string, number>()
-  for (const item of store.members.value) counts.set(item.name, (counts.get(item.name) ?? 0) + 1)
+  for (const item of props.data.members) counts.set(item.name, (counts.get(item.name) ?? 0) + 1)
   return counts
 })
 const relationLabels: Record<string, string> = {
@@ -53,7 +51,7 @@ function relationDescription(relation: KinshipRelation) {
   return `与以下族人有${relationLabels[relation.type]}关系记载：`
 }
 function fatherRecordStatus(child: Member) {
-  const records = store.relations.value.filter((relation) => relation.type === 'father'
+  const records = props.data.relations.filter((relation) => relation.type === 'father'
     && relation.fromMemberId === child.id && relation.toMemberId === child.parentId)
   if (records.some((relation) => relation.status === 'uncertain')) return '生父关系尚待核验'
   if (records.some((relation) => relation.status === 'ended')) return '含已结束的生父关系记录，需核对'
@@ -114,7 +112,7 @@ function fatherRecordStatus(child: Member) {
         <Tag :color="claim.status === 'matched' ? 'blue' : 'orange'">{{ claim.status === 'matched' ? '已关联档案' : claim.status === 'ambiguous' ? '有同名记录，尚待确认' : '尚未关联档案' }}</Tag>
         {{ claim.ordinalIndex }}. {{ claim.claimedName }}
         <Tag v-if="claim.gender !== 'unknown'">{{ claim.gender }}</Tag>
-        <Tag v-if="claim.isAdoptive">{{ childClaimAdoptionLabel({ relations: store.relations.value }, claim) }}</Tag>
+        <Tag v-if="claim.isAdoptive">{{ childClaimAdoptionLabel({ relations: data.relations }, claim) }}</Tag>
         <Tag v-for="flag in claim.statusFlags" :key="flag">{{ claimLabels[flag] }}</Tag>
         <Button v-if="claim.resolvedMemberId !== null && membersById.has(claim.resolvedMemberId)" type="link" @click="$emit('select', claim.resolvedMemberId)">{{ claim.status === 'matched' ? '查看档案：' : '查看待确认档案：' }}{{ nameOf(claim.resolvedMemberId) }}</Button>
         <span v-else-if="claim.resolvedMemberId !== null">{{ nameOf(claim.resolvedMemberId) }}</span>

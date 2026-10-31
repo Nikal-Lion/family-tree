@@ -143,6 +143,10 @@ export interface FamilyData {
   nextChildClaimId: number
 }
 
+export type FamilyBrowseData = Pick<FamilyData,
+  'schemaVersion' | 'members' | 'tracks' | 'events' | 'aliases' | 'relations'
+  | 'temporals' | 'burials' | 'spouses' | 'childClaims'>
+
 export interface MemberInput {
   name: string
   parentId: number | null

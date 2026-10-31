@@ -1,11 +1,13 @@
 import type { LoginUser, LoginUserRole } from '../types/auth'
-import type { FamilyData } from '../types/member'
+import type { FamilyBrowseData, FamilyData } from '../types/member'
 import { normalizeFamilyData } from './importExport'
+import { FAMILY_BROWSE_CONTRACT_VERSION, normalizeFamilyBrowseData } from './familyBrowseData'
 
 const API_BASE_URL = import.meta.env.VITE_D1_API_BASE_URL?.trim()
 
 let sessionToken: string | null = null
 let familyRevision: number | null = null
+let sessionGeneration = 0
 
 export interface D1SelfCheckResult {
   ok: boolean
@@ -22,6 +24,14 @@ export interface D1SelfCheckResult {
 
 interface ApiErrorPayload {
   error?: string
+  code?: string
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number, public readonly code?: string) {
+    super(message)
+    this.name = 'ApiError'
+  }
 }
 
 function resolveApiUrl(pathname: string): string {
@@ -44,28 +54,32 @@ function buildHeaders(options?: { includeAuth?: boolean; extra?: HeadersInit }):
   return headers
 }
 
-async function parseError(response: Response): Promise<string> {
+async function parseApiError(response: Response): Promise<ApiError> {
   const fallback = `请求失败（${response.status}）`
   const text = await response.text()
   if (!text) {
-    return fallback
+    return new ApiError(fallback, response.status)
   }
 
   try {
     const payload = JSON.parse(text) as ApiErrorPayload
     if (payload.error && payload.error.trim()) {
-      return payload.error
+      return new ApiError(payload.error, response.status, payload.code)
     }
   } catch {
     // Keep plain text fallback.
   }
 
-  return text || fallback
+  return new ApiError(text || fallback, response.status)
+}
+
+async function parseError(response: Response): Promise<string> {
+  return (await parseApiError(response)).message
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(await parseError(response))
+    throw await parseApiError(response)
   }
   return (await response.json()) as T
 }
@@ -78,7 +92,10 @@ function buildFamilyDataUrl(): string {
 
 export function setSessionToken(token: string | null): void {
   const nextToken = token?.trim() || null
-  if (sessionToken !== nextToken) familyRevision = null
+  if (sessionToken !== nextToken) {
+    familyRevision = null
+    sessionGeneration += 1
+  }
   sessionToken = nextToken
 }
 
@@ -160,6 +177,25 @@ export async function loadFamilyDataFromD1(): Promise<FamilyData | null> {
   return data
 }
 
+export async function loadFamilyBrowseDataFromD1(): Promise<FamilyBrowseData | null> {
+  const generationAtStart = sessionGeneration
+  const url = new URL(resolveApiUrl('/api/browse-data'))
+  url.searchParams.set('_ts', Date.now().toString())
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: buildHeaders(),
+    cache: 'no-store',
+  })
+  const payload = await parseJsonResponse<{ contractVersion: number; data: unknown; revision: number }>(response)
+  if (payload.contractVersion !== FAMILY_BROWSE_CONTRACT_VERSION
+    || !Number.isSafeInteger(payload.revision) || payload.revision < 0) {
+    throw new Error('服务端浏览数据版本不兼容，请更新服务端')
+  }
+  const data = payload.data === null ? null : normalizeFamilyBrowseData(payload.data)
+  if (sessionGeneration !== generationAtStart) throw new Error('登录会话已变更，请重新加载数据')
+  return data
+}
+
 export async function saveFamilyDataToD1(data: FamilyData): Promise<void> {
   if (familyRevision === null) throw new Error('请先加载云端数据，再进行保存')
   const tokenAtStart = sessionToken
@@ -191,11 +227,11 @@ interface LoginUserPayload {
   user: LoginUser
 }
 
-export async function loginWithMobile(mobile: string): Promise<{ user: LoginUser; token: string; expiresAt: string }> {
+export async function loginWithMobile(mobile: string, password?: string): Promise<{ user: LoginUser; token: string; expiresAt: string }> {
   const response = await fetch(resolveApiUrl('/api/auth/login'), {
     method: 'POST',
     headers: buildHeaders({ includeAuth: false }),
-    body: JSON.stringify({ mobile }),
+    body: JSON.stringify({ mobile, ...(password !== undefined ? { password } : {}) }),
   })
 
   const payload = await parseJsonResponse<LoginResponsePayload>(response)
@@ -206,14 +242,7 @@ export async function loginAsSysadmin(
   mobile: string,
   password: string,
 ): Promise<{ user: LoginUser; token: string; expiresAt: string }> {
-  const response = await fetch(resolveApiUrl('/api/auth/login'), {
-    method: 'POST',
-    headers: buildHeaders({ includeAuth: false }),
-    body: JSON.stringify({ mobile, password }),
-  })
-
-  const payload = await parseJsonResponse<LoginResponsePayload>(response)
-  return { user: payload.user, token: payload.token, expiresAt: payload.expiresAt }
+  return loginWithMobile(mobile, password)
 }
 
 export async function bootstrapSysadmin(
@@ -261,6 +290,7 @@ export async function createLoginUser(input: {
   mobile: string
   name?: string
   role: LoginUserRole
+  password?: string
 }): Promise<LoginUser> {
   const response = await fetch(resolveApiUrl('/api/login-users'), {
     method: 'POST',
@@ -274,7 +304,7 @@ export async function createLoginUser(input: {
 
 export async function updateLoginUser(
   id: number,
-  input: Partial<{ mobile: string; name: string; role: LoginUserRole; enabled: boolean }>,
+  input: Partial<{ mobile: string; name: string; role: LoginUserRole; enabled: boolean; password: string }>,
 ): Promise<LoginUser> {
   const response = await fetch(resolveApiUrl(`/api/login-users/${id}`), {
     method: 'PUT',
@@ -293,6 +323,6 @@ export async function deleteLoginUser(id: number): Promise<void> {
   })
 
   if (!response.ok) {
-    throw new Error(await parseError(response))
+    throw await parseApiError(response)
   }
 }

@@ -2,6 +2,7 @@ import type { BurialRecord, FamilyData, GpxPoint, KinshipRelation, NameAlias, Te
 import type { Spouse } from '../src/types/spouse'
 import type { ChildClaim } from '../src/types/childClaim'
 import { FamilyDataValidationError, normalizeFamilyData } from '../src/services/importExport'
+import { FAMILY_BROWSE_CONTRACT_VERSION, isCompleteFamilySnapshot, toFamilyBrowseData } from '../src/services/familyBrowseData'
 
 interface Env {
   DB: D1Database
@@ -14,7 +15,7 @@ interface Env {
 
 interface D1Database {
   prepare(query: string): D1PreparedStatement
-  batch(statements: D1PreparedStatement[]): Promise<unknown>
+  batch(statements: D1PreparedStatement[]): Promise<D1QueryResult<unknown>[]>
   exec(query: string): Promise<unknown>
 }
 
@@ -51,6 +52,8 @@ interface LoginUserRecord {
   name: string
   role: LoginUserRole
   enabled: number
+  password_hash: string | null
+  auth_version: number
   created_at: string
   updated_at: string
 }
@@ -61,6 +64,7 @@ interface LoginUserView {
   name: string
   role: LoginUserRole
   enabled: boolean
+  passwordConfigured: boolean
   createdAt: string
   updatedAt: string
 }
@@ -169,7 +173,7 @@ function timingSafeEqualHex(leftHex: string, rightHex: string): boolean {
   return diff === 0
 }
 
-interface SysadminPbkdf2Hash {
+interface Pbkdf2Hash {
   iterations: number
   saltHex: string
   hashHex: string
@@ -179,7 +183,7 @@ interface SysadminPbkdf2Hash {
 const PBKDF2_MIN_ITERATIONS = 100_000
 const PBKDF2_MAX_ITERATIONS = 100_000
 
-function parseSysadminPbkdf2Hash(raw: string): SysadminPbkdf2Hash | null {
+function parsePbkdf2Hash(raw: string): Pbkdf2Hash | null {
   const trimmed = raw.trim().toLowerCase()
   if (!trimmed) {
     return null
@@ -242,6 +246,27 @@ async function derivePbkdf2Sha256Hex(
     .join('')
 }
 
+function validateMaintainerPassword(password: unknown): Response | null {
+  if (typeof password !== 'string' || password.length < 8 || password.length > 128 || !password.trim()) {
+    return errorResponse('维护人员密码须为 8 至 128 位，且不能全部为空白', 400, 'INVALID_PASSWORD')
+  }
+  return null
+}
+
+async function hashMaintainerPassword(password: string): Promise<string> {
+  const saltHex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  const hashHex = await derivePbkdf2Sha256Hex(password, saltHex, PBKDF2_MIN_ITERATIONS, 32)
+  return `pbkdf2_sha256$${PBKDF2_MIN_ITERATIONS}$${saltHex}$${hashHex}`
+}
+
+async function verifyMaintainerPassword(password: string, encoded: string): Promise<boolean> {
+  const hash = parsePbkdf2Hash(encoded)
+  if (!hash) throw new Error('维护人员密码记录格式无效，请联系系统管理员重置')
+  const derived = await derivePbkdf2Sha256Hex(password, hash.saltHex, hash.iterations, hash.hashLengthBytes)
+  return timingSafeEqualHex(derived, hash.hashHex)
+}
+
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = (value || '').trim().toLowerCase()
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
@@ -262,6 +287,7 @@ function toLoginUserView(row: LoginUserRecord): LoginUserView {
     name: row.name,
     role: row.role,
     enabled: row.enabled === 1,
+    passwordConfigured: Boolean(row.password_hash),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -270,7 +296,7 @@ function toLoginUserView(row: LoginUserRecord): LoginUserView {
 async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<LoginUserRecord | null> {
   const rows = await db
     .prepare(
-      'SELECT id, mobile, name, role, enabled, created_at, updated_at FROM login_users WHERE mobile = ? LIMIT 1',
+      'SELECT id, mobile, name, role, enabled, password_hash, auth_version, created_at, updated_at FROM login_users WHERE mobile = ? LIMIT 1',
     )
     .bind(mobile)
     .all<LoginUserRecord>()
@@ -280,7 +306,7 @@ async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<Lo
 
 async function findLoginUserById(db: D1Database, id: number): Promise<LoginUserRecord | null> {
   const rows = await db
-    .prepare('SELECT id, mobile, name, role, enabled, created_at, updated_at FROM login_users WHERE id = ? LIMIT 1')
+    .prepare('SELECT id, mobile, name, role, enabled, password_hash, auth_version, created_at, updated_at FROM login_users WHERE id = ? LIMIT 1')
     .bind(id)
     .all<LoginUserRecord>()
 
@@ -296,27 +322,30 @@ async function countSysadmins(db: D1Database): Promise<number> {
 
 async function createSessionForUser(
   db: D1Database,
-  userId: number,
+  user: LoginUserRecord,
   env: Env,
-): Promise<{ token: string; expiresAt: string }> {
+): Promise<{ token: string; expiresAt: string } | null> {
   const token = generateSessionToken()
   const tokenHash = await sha256Hex(token)
   const createdAt = nowIso()
   const updatedAt = createdAt
   const expiresAt = toIsoAfterHours(getSessionTtlHours(env))
 
-  await db.batch([
+  const result = await db.batch([
     db
       .prepare(
-        'INSERT INTO auth_sessions (token_hash, user_id, expires_at, revoked_at, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)',
+        `INSERT INTO auth_sessions (token_hash, user_id, expires_at, revoked_at, created_at, updated_at, auth_version)
+         SELECT ?, id, ?, NULL, ?, ?, auth_version FROM login_users
+         WHERE id = ? AND enabled = 1 AND auth_version = ? AND role = ? AND password_hash IS ?
+         RETURNING id`,
       )
-      .bind(tokenHash, userId, expiresAt, createdAt, updatedAt),
+      .bind(tokenHash, expiresAt, createdAt, updatedAt, user.id, user.auth_version, user.role, user.password_hash),
     db
       .prepare('DELETE FROM auth_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?')
       .bind(createdAt),
   ])
 
-  return { token, expiresAt }
+  return result[0]?.results?.length ? { token, expiresAt } : null
 }
 
 async function verifySysadminPassword(password: string, env: Env): Promise<boolean> {
@@ -325,13 +354,13 @@ async function verifySysadminPassword(password: string, env: Env): Promise<boole
     { key: 'SYSADMIN_PASSWORD_PBKDF2_NEXT', value: (env.SYSADMIN_PASSWORD_PBKDF2_NEXT || '').trim() },
   ]
 
-  const pbkdf2Hashes: SysadminPbkdf2Hash[] = []
+  const pbkdf2Hashes: Pbkdf2Hash[] = []
   for (const entry of pbkdf2RawValues) {
     if (!entry.value) {
       continue
     }
 
-    const parsed = parseSysadminPbkdf2Hash(entry.value)
+    const parsed = parsePbkdf2Hash(entry.value)
     if (!parsed) {
       const error = new Error(
         `${entry.key} format invalid; expected pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex> and iterations must be ${PBKDF2_MIN_ITERATIONS}`,
@@ -392,6 +421,7 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
         name: '系统管理员',
         role: 'sysadmin',
         enabled: true,
+        passwordConfigured: false,
         createdAt: '',
         updatedAt: '',
       },
@@ -404,13 +434,15 @@ async function resolveAuth(request: Request, env: Env): Promise<AuthContext> {
   const currentTime = nowIso()
   const rows = await env.DB
     .prepare(
-      `SELECT s.id AS session_id, u.id, u.mobile, u.name, u.role, u.enabled, u.created_at, u.updated_at
+      `SELECT s.id AS session_id, u.id, u.mobile, u.name, u.role, u.enabled, u.password_hash, u.auth_version, u.created_at, u.updated_at
        FROM auth_sessions s
        JOIN login_users u ON u.id = s.user_id
        WHERE s.token_hash = ?
          AND s.revoked_at IS NULL
          AND s.expires_at > ?
          AND u.enabled = 1
+         AND s.auth_version = u.auth_version
+         AND (u.role != 'maintainer' OR u.password_hash IS NOT NULL)
        LIMIT 1`,
     )
     .bind(tokenHash, currentTime)
@@ -604,6 +636,8 @@ async function ensureSchema(db: D1Database): Promise<void> {
       name TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL CHECK(role IN ('user', 'maintainer', 'sysadmin')) DEFAULT 'user',
       enabled INTEGER NOT NULL DEFAULT 1,
+      password_hash TEXT,
+      auth_version INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`),
@@ -613,6 +647,7 @@ async function ensureSchema(db: D1Database): Promise<void> {
       user_id INTEGER NOT NULL,
       expires_at TEXT NOT NULL,
       revoked_at TEXT,
+      auth_version INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES login_users(id) ON DELETE CASCADE
@@ -641,6 +676,27 @@ async function ensureSchema(db: D1Database): Promise<void> {
     await db.prepare('ALTER TABLE tracks ADD COLUMN member_ids_json TEXT').all()
   }
   await ensureLoginUsersRoleConstraint(db)
+  await ensureAuthColumns(db)
+}
+
+async function ensureAuthColumns(db: D1Database): Promise<void> {
+  const additions = [
+    ['login_users', 'password_hash', 'TEXT'],
+    ['login_users', 'auth_version', 'INTEGER NOT NULL DEFAULT 0'],
+    ['auth_sessions', 'auth_version', 'INTEGER NOT NULL DEFAULT 0'],
+  ] as const
+  for (const [table, column, definition] of additions) {
+    const columns = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>()
+    if (columns.results?.some((entry) => entry.name === column)) continue
+    try {
+      await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).all()
+    } catch (error) {
+      // Another Worker isolate can add the same column after the schema check.
+      if (!(error instanceof Error) || !error.message.includes(`duplicate column name: ${column}`)) throw error
+      const current = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>()
+      if (!current.results?.some((entry) => entry.name === column)) throw error
+    }
+  }
 }
 
 async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
@@ -1247,7 +1303,8 @@ export default {
           return errorResponse('sysadmin 初始化失败', 500, 'BOOTSTRAP_FAILED')
         }
 
-        const session = await createSessionForUser(env.DB, created.id, env)
+        const session = await createSessionForUser(env.DB, created, env)
+        if (!session) return errorResponse('账号信息已变更，请重新登录', 401, 'CREDENTIALS_CHANGED')
         return jsonResponse({
           ok: true,
           token: session.token,
@@ -1279,10 +1336,18 @@ export default {
           return errorResponse('登录失败：手机号不存在或已禁用', 401, 'LOGIN_FAILED')
         }
 
-        if (user.role === 'sysadmin') {
-          const password = typeof payload.password === 'string' ? payload.password : ''
+        const password = typeof payload.password === 'string' ? payload.password : ''
+        if (user.role === 'maintainer') {
+          if (!user.password_hash) {
+            return errorResponse('此维护账号尚未设置密码，请联系系统管理员设置后登录', 403, 'PASSWORD_NOT_SET')
+          }
+          if (!password) return errorResponse('此账号需要密码，请输入后继续登录', 401, 'PASSWORD_REQUIRED')
+          if (password.length > 128 || !await verifyMaintainerPassword(password, user.password_hash)) {
+            return errorResponse('密码错误，请重新输入；忘记密码请联系系统管理员', 401, 'INVALID_PASSWORD')
+          }
+        } else if (user.role === 'sysadmin') {
           if (!password) {
-            return errorResponse('sysadmin 登录需要密码', 401, 'PASSWORD_REQUIRED')
+            return errorResponse('此账号需要密码，请输入后继续登录', 401, 'PASSWORD_REQUIRED')
           }
 
           const validPassword = await verifySysadminPassword(password, env)
@@ -1291,7 +1356,8 @@ export default {
           }
         }
 
-        const session = await createSessionForUser(env.DB, user.id, env)
+        const session = await createSessionForUser(env.DB, user, env)
+        if (!session) return errorResponse('账号信息已变更，请重新登录', 401, 'CREDENTIALS_CHANGED')
 
         return jsonResponse({
           ok: true,
@@ -1327,7 +1393,7 @@ export default {
 
         const rows = await env.DB
           .prepare(
-            `SELECT id, mobile, name, role, enabled, created_at, updated_at
+            `SELECT id, mobile, name, role, enabled, password_hash, auth_version, created_at, updated_at
              FROM login_users
              ORDER BY CASE role
                WHEN 'sysadmin' THEN 0
@@ -1346,7 +1412,7 @@ export default {
           return denied
         }
 
-        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole }>(await request.json())
+        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole; password?: string }>(await request.json())
         if (!payload) {
           return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
         }
@@ -1356,10 +1422,23 @@ export default {
           return errorResponse('用户名称必须为不超过 100 字的文本', 400, 'INVALID_NAME')
         }
         const name = payload.name?.trim() ?? ''
+        if (payload.role !== undefined && !['user', 'maintainer', 'sysadmin'].includes(payload.role)) {
+          return errorResponse('账号角色无效', 400, 'INVALID_ROLE')
+        }
         const role: LoginUserRole =
           payload.role === 'sysadmin' || payload.role === 'maintainer' ? payload.role : 'user'
         if (!isValidMobile(mobile)) {
           return errorResponse('手机号格式无效', 400, 'INVALID_MOBILE')
+        }
+        if (role !== 'maintainer' && payload.password !== undefined) {
+          return errorResponse('只有维护人员使用独立密码；系统管理员沿用服务端验证密码', 400, 'PASSWORD_NOT_APPLICABLE')
+        }
+        let passwordHash: string | null = null
+        if (role === 'maintainer') {
+          if (payload.password === undefined) return errorResponse('请为维护人员设置初始密码', 400, 'PASSWORD_REQUIRED')
+          const invalidPassword = validateMaintainerPassword(payload.password)
+          if (invalidPassword) return invalidPassword
+          passwordHash = await hashMaintainerPassword(payload.password)
         }
 
         const existing = await findLoginUserByMobile(env.DB, mobile)
@@ -1369,8 +1448,8 @@ export default {
 
         const createdAt = nowIso()
         await env.DB
-          .prepare('INSERT INTO login_users (mobile, name, role, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)')
-          .bind(mobile, name, role, createdAt, createdAt)
+          .prepare('INSERT INTO login_users (mobile, name, role, enabled, password_hash, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)')
+          .bind(mobile, name, role, passwordHash, createdAt, createdAt)
           .all()
 
         const created = await findLoginUserByMobile(env.DB, mobile)
@@ -1397,7 +1476,7 @@ export default {
           return errorResponse('登录用户不存在', 404, 'NOT_FOUND')
         }
 
-        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole; enabled?: boolean }>(await request.json())
+        const payload = parseJsonBody<{ mobile?: string; name?: string; role?: LoginUserRole; enabled?: boolean; password?: string }>(await request.json())
         if (!payload) {
           return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
         }
@@ -1407,6 +1486,12 @@ export default {
           return errorResponse('用户名称必须为不超过 100 字的文本', 400, 'INVALID_NAME')
         }
         const nextName = payload.name === undefined ? target.name : payload.name.trim()
+        if (payload.role !== undefined && !['user', 'maintainer', 'sysadmin'].includes(payload.role)) {
+          return errorResponse('账号角色无效', 400, 'INVALID_ROLE')
+        }
+        if (payload.enabled !== undefined && typeof payload.enabled !== 'boolean') {
+          return errorResponse('账号启用状态必须为布尔值', 400, 'INVALID_ENABLED')
+        }
         const nextRole: LoginUserRole =
           payload.role === 'sysadmin' || payload.role === 'maintainer' || payload.role === 'user'
             ? payload.role
@@ -1415,6 +1500,18 @@ export default {
 
         if (!isValidMobile(nextMobile)) {
           return errorResponse('手机号格式无效', 400, 'INVALID_MOBILE')
+        }
+        if (nextRole !== 'maintainer' && payload.password !== undefined) {
+          return errorResponse('只有维护人员使用独立密码；系统管理员沿用服务端验证密码', 400, 'PASSWORD_NOT_APPLICABLE')
+        }
+        if (nextRole === 'maintainer') {
+          if ((!target.password_hash || target.role !== 'maintainer') && payload.password === undefined) {
+            return errorResponse('请为维护人员设置初始密码', 400, 'PASSWORD_REQUIRED')
+          }
+          if (payload.password !== undefined) {
+            const invalidPassword = validateMaintainerPassword(payload.password)
+            if (invalidPassword) return invalidPassword
+          }
         }
 
         if (nextMobile !== target.mobile) {
@@ -1433,16 +1530,25 @@ export default {
         }
 
         const updatedAt = nowIso()
-        await env.DB
-          .prepare('UPDATE login_users SET mobile = ?, name = ?, role = ?, enabled = ?, updated_at = ? WHERE id = ?')
-          .bind(nextMobile, nextName, nextRole, nextEnabled ? 1 : 0, updatedAt, loginUserId)
-          .all()
-
-        if (!nextEnabled) {
-          await env.DB
-            .prepare('UPDATE auth_sessions SET revoked_at = ?, updated_at = ? WHERE user_id = ? AND revoked_at IS NULL')
-            .bind(updatedAt, updatedAt, loginUserId)
-            .all()
+        const passwordHash = nextRole !== 'maintainer' ? null
+          : payload.password !== undefined ? await hashMaintainerPassword(payload.password) : target.password_hash
+        const credentialsChanged = nextMobile !== target.mobile || nextRole !== target.role
+          || nextEnabled !== (target.enabled === 1) || payload.password !== undefined
+        const statements = [
+          env.DB.prepare(`UPDATE login_users
+            SET mobile = ?, name = ?, role = ?, enabled = ?, password_hash = ?, updated_at = ?, auth_version = auth_version + ?
+            WHERE id = ? AND auth_version = ? RETURNING id`)
+            .bind(nextMobile, nextName, nextRole, nextEnabled ? 1 : 0, passwordHash, updatedAt,
+              credentialsChanged ? 1 : 0, loginUserId, target.auth_version),
+        ]
+        if (credentialsChanged) {
+          statements.push(env.DB.prepare(`UPDATE auth_sessions SET revoked_at = ?, updated_at = ?
+            WHERE user_id = ? AND auth_version = ? AND revoked_at IS NULL`)
+            .bind(updatedAt, updatedAt, loginUserId, target.auth_version))
+        }
+        const result = await env.DB.batch(statements)
+        if (!result[0]?.results?.length) {
+          return errorResponse('账号信息已被其他操作更新，请刷新后重试', 409, 'ACCOUNT_CONFLICT')
         }
 
         const updated = await findLoginUserById(env.DB, loginUserId)
@@ -1483,14 +1589,23 @@ export default {
         return jsonResponse({ ok: true })
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/family-data') {
+      if (request.method === 'GET' && (url.pathname === '/api/family-data' || url.pathname === '/api/browse-data')) {
         if (!auth.authenticated) {
           return errorResponse('未登录，无法读取数据', 401, 'AUTH_REQUIRED')
+        }
+        const browsing = url.pathname === '/api/browse-data'
+        if (!browsing) {
+          const denied = requireMaintainerOrSysadmin(auth)
+          if (denied) return denied
         }
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const revision = await readRevision(env.DB)
           const data = await readFamilyData(env.DB)
-          if (revision === await readRevision(env.DB)) return jsonResponse({ data, revision })
+          if (revision === await readRevision(env.DB)) {
+            return jsonResponse(browsing
+              ? { contractVersion: FAMILY_BROWSE_CONTRACT_VERSION, data: data === null ? null : toFamilyBrowseData(data), revision }
+              : { data, revision })
+          }
         }
         return errorResponse('数据正在更新，请稍后重试', 503, 'DATA_BUSY')
       }
@@ -1510,6 +1625,9 @@ export default {
           return errorResponse('缺少数据版本，请刷新页面后再保存', 428, 'REVISION_REQUIRED')
         }
         const expectedRevision = Number(match[1])
+        if (!isCompleteFamilySnapshot(payload.data)) {
+          return errorResponse('保存需要完整的维护数据及编号计数器；浏览资料不能用于覆盖维护数据', 400, 'WRITE_SNAPSHOT_REQUIRED')
+        }
         const data = normalizeFamilyData(payload.data)
         try {
           await writeFamilyData(env.DB, data, expectedRevision)
