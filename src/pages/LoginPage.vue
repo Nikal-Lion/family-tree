@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Alert, Button, Form, Input, Tag } from 'ant-design-vue'
 import { ApartmentOutlined, BookOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
@@ -10,24 +10,19 @@ import {
   useAuth,
 } from '../services/authService'
 import { resolveLoginRedirect } from '../services/accessControl'
-import { fetchAuthStatus, fetchLoginOptions } from '../services/d1ApiService'
+import { fetchAuthStatus } from '../services/d1ApiService'
 import TextSizeToggle from '../components/TextSizeToggle.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { role } = useAuth()
+const { role, needsPasswordChange } = useAuth()
 const bootstrap = ref(false)
-const passwordRequired = ref(false)
 const pending = ref(false)
 const errorMessage = ref('')
 const initialized = ref<boolean | null>(null)
 const statusError = ref('')
-const detecting = ref(false)
 const form = reactive({ mobile: '', password: '', confirmPassword: '' })
-const needsPassword = computed(() => bootstrap.value || passwordRequired.value)
 let requestSequence = 0
-let detection: Promise<void> | null = null
-let checkedMobile = ''
 let disposed = false
 
 async function loadStatus() {
@@ -45,10 +40,6 @@ function resetLogin() {
   ++requestSequence
   cancelPendingLogin()
   pending.value = false
-  detecting.value = false
-  detection = null
-  checkedMobile = ''
-  passwordRequired.value = false
   errorMessage.value = ''
   form.password = ''
   form.confirmPassword = ''
@@ -57,44 +48,9 @@ function resetLogin() {
 watch([() => form.mobile, bootstrap], resetLogin, { flush: 'sync' })
 onUnmounted(() => { disposed = true; resetLogin() })
 
-function detectMobile() {
-  if (bootstrap.value || pending.value || passwordRequired.value) return Promise.resolve()
-  const mobile = form.mobile.trim().replace(/\s+/g, '')
-  if (!/^\+?\d{6,20}$/.test(mobile) || checkedMobile === mobile) return Promise.resolve()
-  if (detection) return detection
-  const started = ++requestSequence
-  detecting.value = true
-  errorMessage.value = ''
-  detection = (async () => {
-    try {
-      const options = await fetchLoginOptions(mobile)
-      if (started !== requestSequence) return
-      checkedMobile = mobile
-      passwordRequired.value = options.passwordRequired
-    } catch (error) {
-      if (started === requestSequence) errorMessage.value = error instanceof Error ? error.message : '无法识别账号，请重试'
-    } finally {
-      if (started === requestSequence) {
-        detecting.value = false
-        detection = null
-      }
-    }
-  })()
-  return detection
-}
-
-async function changePhone() {
-  resetLogin()
-  await nextTick()
-  document.getElementById('login-mobile')?.focus()
-}
-
 async function submit() {
-  if (pending.value) return
-  const beforeDetection = requestSequence
-  if (detection) await detection
-  if (pending.value || disposed || beforeDetection !== requestSequence) return
-  if (passwordRequired.value && !form.password) {
+  if (pending.value || disposed) return
+  if (!form.password) {
     await nextTick()
     document.getElementById('login-password')?.focus()
     return
@@ -114,23 +70,19 @@ async function submit() {
   try {
     const result = bootstrap.value
       ? await initializeFirstSysadmin(mobile, form.password)
-      : await loginAsUserByMobile(mobile, passwordRequired.value ? form.password : undefined)
+      : await loginAsUserByMobile(mobile, form.password)
     if (started !== requestSequence) return
     if (!result.ok) {
       if (result.code === 'SYSADMIN_EXISTS') {
         initialized.value = true
         bootstrap.value = false
       }
-      if (result.code === 'PASSWORD_REQUIRED' && !bootstrap.value) {
-        passwordRequired.value = true
-        await nextTick()
-        if (started !== requestSequence) return
-        document.getElementById('login-password')?.focus()
-      }
       errorMessage.value = result.message
       return
     }
-    await router.replace(resolveLoginRedirect(route.query.redirect, role.value))
+    form.password = ''
+    form.confirmPassword = ''
+    await router.replace(needsPasswordChange.value ? '/change-password' : resolveLoginRedirect(route.query.redirect, role.value))
   } finally {
     if (started === requestSequence) pending.value = false
   }
@@ -162,23 +114,22 @@ async function submit() {
         <div class="login-mobile-brand"><BookOutlined /> 家族云谱</div>
         <h2>欢迎回来</h2>
         <p class="login-subtitle">登录后，找到家人，查看族谱与家族故事。</p>
-        <p class="login-mode-description">{{ bootstrap ? '仅首次启用时使用。请填写与服务端配置一致的系统管理员固定密码。' : '输入已登记的手机号即可继续；管理人员还需验证密码，系统会自动识别账号权限。' }}</p>
+        <Alert v-if="route.query.passwordChanged === '1'" type="success" show-icon message="密码已修改，所有旧会话已失效，请使用新密码登录。" class="login-error" />
+        <p class="login-mode-description">{{ bootstrap ? '仅首次启用时使用。验证服务端初始化密码后，必须设置独立密码。' : '所有账号使用手机号和独立密码，系统自动识别权限。临时密码首次登录须修改；没有密码或忘记密码请联系管理员。旧管理员可用原服务端验证密码过渡，再设置独立密码。' }}</p>
         <Form :model="form" layout="vertical" size="large" @finish="submit">
           <Form.Item
             label="手机号"
             name="mobile"
             :rules="[{ required: true, message: '请输入手机号' }]"
           >
-            <Input id="login-mobile" v-model:value="form.mobile" aria-label="手机号" type="tel" inputmode="tel" autocomplete="username" placeholder="请输入已登记的手机号（可含国际区号）" :readonly="passwordRequired" @blur="detectMobile" />
+            <Input id="login-mobile" v-model:value="form.mobile" aria-label="手机号" type="tel" inputmode="tel" autocomplete="username" placeholder="请输入已登记的手机号（可含国际区号）" />
           </Form.Item>
-          <Button v-if="passwordRequired" type="link" class="change-phone" @click="changePhone">更换手机号</Button>
           <Form.Item
-            v-if="needsPassword"
-            :label="bootstrap ? '系统管理员固定密码' : '账号密码'"
+            :label="bootstrap ? '服务端初始化验证密码' : '账号密码'"
             name="password"
             :rules="[{ required: true, message: '请输入密码' }]"
           >
-            <Input.Password id="login-password" v-model:value="form.password" :aria-label="bootstrap ? '系统管理员固定密码' : '账号密码'" autocomplete="current-password" placeholder="请输入此账号的密码" />
+            <Input.Password id="login-password" v-model:value="form.password" :aria-label="bootstrap ? '服务端初始化验证密码' : '账号密码'" autocomplete="current-password" placeholder="请输入此账号的密码" :maxlength="1024" />
           </Form.Item>
           <Form.Item
             v-if="bootstrap"
@@ -186,12 +137,11 @@ async function submit() {
             name="confirmPassword"
             :rules="[{ required: true, message: '请再次输入密码' }]"
           >
-            <Input.Password v-model:value="form.confirmPassword" aria-label="确认密码" autocomplete="current-password" placeholder="请再次输入系统管理员固定密码" />
+            <Input.Password v-model:value="form.confirmPassword" aria-label="确认密码" autocomplete="current-password" placeholder="请再次输入服务端初始化验证密码" :maxlength="1024" />
           </Form.Item>
           <Alert v-if="errorMessage" :message="errorMessage" type="error" show-icon class="login-error" role="alert" />
-          <p v-if="detecting" role="status">正在识别账号…</p>
           <Button type="primary" html-type="submit" block :loading="pending" class="login-submit">
-            {{ bootstrap ? '初始化并登录' : passwordRequired ? '验证并登录' : '登录' }}
+            {{ bootstrap ? '初始化并登录' : '登录' }}
           </Button>
         </Form>
         <Alert v-if="statusError" type="error" message="无法检测系统初始化状态" :description="statusError" show-icon>

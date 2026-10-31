@@ -2,6 +2,7 @@ import { computed, readonly, ref } from 'vue'
 import {
   bootstrapSysadmin,
   ApiError,
+  changePassword,
   fetchCurrentSession,
   loginAsSysadmin,
   loginWithMobile,
@@ -10,6 +11,7 @@ import {
 } from './d1ApiService'
 import type { LoginUser, UserRole } from '../types/auth'
 import { getDefaultAppPath } from './accessControl'
+import { validateNewPassword } from './passwordPolicy'
 
 const STORAGE_KEY_SESSION_TOKEN = 'family_auth_session_token'
 
@@ -63,14 +65,14 @@ function applyAuthenticatedUser(nextUser: LoginUser): void {
   role.value = nextUser.role
 }
 
-export function updateCurrentLoginUser(nextUser: LoginUser): void {
-  const current = user.value
-  if (current?.id !== nextUser.id) return
-  if (current.role !== nextUser.role || current.mobile !== nextUser.mobile || current.enabled !== nextUser.enabled) {
+export function updateCurrentLoginUser(nextUser: LoginUser): boolean {
+  if (user.value?.id !== nextUser.id) return false
+  if (user.value.mobile !== nextUser.mobile || user.value.role !== nextUser.role || !nextUser.enabled) {
     clearAuthState()
-    return
+    return true
   }
   applyAuthenticatedUser(nextUser)
+  return false
 }
 
 function clearAuthState(): void {
@@ -114,11 +116,11 @@ export async function initAuthSession(): Promise<void> {
   return restorePromise
 }
 
-export async function loginAsUserByMobile(mobile: string, password?: string): Promise<LoginResult> {
+export async function loginAsUserByMobile(mobile: string, password: string): Promise<LoginResult> {
   return authenticate(mobile, password, 'login')
 }
 
-async function authenticate(mobile: string, password: string | undefined, mode: 'login' | 'sysadmin' | 'bootstrap'): Promise<LoginResult> {
+async function authenticate(mobile: string, password: string, mode: 'login' | 'sysadmin' | 'bootstrap'): Promise<LoginResult> {
   const started = ++authEpoch
   const normalized = mobile.trim().replace(/\s+/g, '')
   if (!normalized) {
@@ -127,13 +129,13 @@ async function authenticate(mobile: string, password: string | undefined, mode: 
   if (!/^\+?\d{6,20}$/.test(normalized)) {
     return { ok: false, message: '请输入有效的手机号（可含国际区号，6–20 位数字）' }
   }
-  if (mode !== 'login' && !password) return { ok: false, message: '密码不能为空' }
+  if (!password) return { ok: false, message: '密码不能为空' }
 
   try {
     const session = mode === 'bootstrap'
-      ? await bootstrapSysadmin(normalized, password!)
+      ? await bootstrapSysadmin(normalized, password)
       : mode === 'sysadmin'
-        ? await loginAsSysadmin(normalized, password!)
+        ? await loginAsSysadmin(normalized, password)
         : await loginWithMobile(normalized, password)
     if (started !== authEpoch) return { ok: false, message: '登录信息已更改，请重新登录', code: 'AUTH_REQUEST_CANCELLED' }
     if (mode === 'sysadmin' && session.user.role !== 'sysadmin') {
@@ -171,18 +173,34 @@ export async function logout(): Promise<void> {
   } catch {
     // ignore
   }
+
   clearAuthState()
   ready.value = true
 }
 
+export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean; message: string }> {
+  if (!currentPassword) return { ok: false, message: '请输入当前密码' }
+  const invalid = validateNewPassword(newPassword)
+  if (invalid) return { ok: false, message: invalid }
+  if (currentPassword === newPassword) return { ok: false, message: '新密码不能与当前密码相同' }
+  try {
+    await changePassword(currentPassword, newPassword)
+    clearAuthState()
+    return { ok: true, message: '密码已修改，请使用新密码重新登录' }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : '密码修改失败' }
+  }
+}
+
 export function useAuth() {
   const isAuthenticated = computed(() => role.value !== 'anonymous')
+  const needsPasswordChange = computed(() => user.value?.passwordChangeRequired === true)
   const isMaintainer = computed(() => role.value === 'maintainer')
-  const isSysadmin = computed(() => role.value === 'sysadmin')
-  const canMaintain = computed(() => role.value === 'maintainer' || role.value === 'sysadmin')
+  const isSysadmin = computed(() => role.value === 'sysadmin' && !needsPasswordChange.value)
+  const canMaintain = computed(() => !needsPasswordChange.value && (role.value === 'maintainer' || role.value === 'sysadmin'))
 
   function resolveDefaultAppPath(): string {
-    return getDefaultAppPath(role.value)
+    return needsPasswordChange.value ? '/change-password' : getDefaultAppPath(role.value)
   }
 
   return {
@@ -190,6 +208,7 @@ export function useAuth() {
     user: readonly(user),
     ready: readonly(ready),
     isAuthenticated: readonly(isAuthenticated),
+    needsPasswordChange: readonly(needsPasswordChange),
     isMaintainer: readonly(isMaintainer),
     isSysadmin: readonly(isSysadmin),
     canMaintain: readonly(canMaintain),

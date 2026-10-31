@@ -61,7 +61,7 @@ test('large text spans login, management, browsing, overlays and logout, and can
   await expect.poll(() => phone.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(18)
   await expectContained(page)
   await page.getByLabel('账号密码', { exact: true }).fill('test-only-password')
-  await page.getByRole('button', { name: '验证并登录', exact: true }).click()
+  await page.getByRole('button', { name: /^登\s*录$/ }).click()
   await expect(page).toHaveURL(/\/app\/manage$/)
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   await expectContained(page)

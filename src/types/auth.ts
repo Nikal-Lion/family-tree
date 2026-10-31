@@ -8,7 +8,8 @@ export interface LoginUser {
   name?: string
   role: LoginUserRole
   enabled: boolean
-  passwordConfigured?: boolean
+  passwordConfigured: boolean
+  passwordChangeRequired: boolean
   createdAt: string
   updatedAt: string
 }

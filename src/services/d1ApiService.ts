@@ -234,20 +234,11 @@ export async function fetchAuthStatus(): Promise<{ initialized: boolean }> {
   return parseJsonResponse<{ initialized: boolean }>(response)
 }
 
-export async function fetchLoginOptions(mobile: string): Promise<{ passwordRequired: boolean }> {
-  const response = await fetch(resolveApiUrl('/api/auth/login-options'), {
-    method: 'POST',
-    headers: buildHeaders({ includeAuth: false }),
-    body: JSON.stringify({ mobile }),
-  })
-  return parseJsonResponse<{ passwordRequired: boolean }>(response)
-}
-
-export async function loginWithMobile(mobile: string, password?: string): Promise<{ user: LoginUser; token: string; expiresAt: string }> {
+export async function loginWithMobile(mobile: string, password: string): Promise<{ user: LoginUser; token: string; expiresAt: string }> {
   const response = await fetch(resolveApiUrl('/api/auth/login'), {
     method: 'POST',
     headers: buildHeaders({ includeAuth: false }),
-    body: JSON.stringify({ mobile, ...(password !== undefined ? { password } : {}) }),
+    body: JSON.stringify({ mobile, password }),
   })
 
   const payload = await parseJsonResponse<LoginResponsePayload>(response)
@@ -306,7 +297,7 @@ export async function createLoginUser(input: {
   mobile: string
   name?: string
   role: LoginUserRole
-  password?: string
+  password: string
 }): Promise<LoginUser> {
   const response = await fetch(resolveApiUrl('/api/login-users'), {
     method: 'POST',
@@ -320,7 +311,7 @@ export async function createLoginUser(input: {
 
 export async function updateLoginUser(
   id: number,
-  input: Partial<{ mobile: string; name: string; role: LoginUserRole; enabled: boolean; password: string }>,
+  input: Partial<{ mobile: string; name: string; role: LoginUserRole; enabled: boolean }>,
 ): Promise<LoginUser> {
   const response = await fetch(resolveApiUrl(`/api/login-users/${id}`), {
     method: 'PUT',
@@ -341,4 +332,22 @@ export async function deleteLoginUser(id: number): Promise<void> {
   if (!response.ok) {
     throw await parseApiError(response)
   }
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const response = await fetch(resolveApiUrl('/api/auth/change-password'), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
+  await parseJsonResponse<{ ok: boolean }>(response)
+}
+
+export async function resetLoginUserPassword(id: number, password: string): Promise<void> {
+  const response = await fetch(resolveApiUrl(`/api/login-users/${id}/reset-password`), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ password }),
+  })
+  await parseJsonResponse<{ ok: boolean }>(response)
 }
