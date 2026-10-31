@@ -166,6 +166,24 @@ describe('actual Worker family persistence with SQLite transactions', () => {
     const headers = { ...adminHeaders, Authorization: `Bearer ${session.token}`, 'If-Match': '"0"' }
     expect((await request('/api/family-data', { headers })).status).toBe(200)
     expect((await request('/api/family-data', { method: 'PUT', headers, body: JSON.stringify({ data: familyFixture() }) })).status).toBe(403)
+    expect((await request('/api/login-users', { headers })).status).toBe(403)
+    expect((await request('/api/login-users', {
+      method: 'POST', headers, body: JSON.stringify({ mobile: '13900000003', role: 'sysadmin' }),
+    })).status).toBe(403)
+    expect((await request('/api/login-users/1', {
+      method: 'PUT', headers, body: JSON.stringify({ role: 'sysadmin' }),
+    })).status).toBe(403)
+    expect((await request('/api/login-users/1', { method: 'DELETE', headers })).status).toBe(403)
+    expect(await read()).toEqual({ data: null, revision: 0 })
+  })
+  it('refuses anonymous access to family data and account management', async () => {
+    const headers = { 'Content-Type': 'application/json' }
+    for (const path of ['/api/family-data', '/api/login-users']) {
+      expect((await request(path, { headers })).status).toBe(401)
+    }
+    expect((await request('/api/family-data', {
+      method: 'PUT', headers, body: JSON.stringify({ data: familyFixture() }),
+    })).status).toBe(401)
     expect(await read()).toEqual({ data: null, revision: 0 })
   })
 })
