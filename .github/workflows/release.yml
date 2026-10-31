@@ -27,43 +27,22 @@ jobs:
 
         env:
           REF_NAME: ${{ github.ref_name }}
-      - name: Verify plugin.json version matches tag
+      - name: Verify package versions match tag
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          TAG_VERSION="${TAG_NAME#v}"
-          PLUGIN_VERSION=$(grep -oE '"version": *"[^"]*"' .claude-plugin/plugin.json | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          if [ "$TAG_VERSION" != "$PLUGIN_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match plugin.json version ($PLUGIN_VERSION)"
-            echo "Run: ./scripts/release.sh $TAG_VERSION"
-            exit 1
-          fi
-
-      - name: Generate release highlights
-        id: highlights
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          TAG_VERSION="${TAG_NAME#v}"
-          cat > release_body.md <<EOF
-          ## ECC ${TAG_VERSION}
-
-          ### What This Release Focuses On
-          - Harness reliability and hook stability across Claude Code, Cursor, OpenCode, and Codex
-          - Stronger eval-driven workflows and quality gates
-          - Better operator UX for autonomous loop execution
-
-          ### Notable Changes
-          - Session persistence and hook lifecycle fixes
-          - Expanded skills and command coverage for harness performance work
-          - Improved release-note generation and changelog hygiene
-
-          ### Notes
-          - For migration tips and compatibility notes, see README and CHANGELOG.
-          EOF
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
+          const version = process.env.TAG_NAME.slice(1)
+          if ([pkg.version, lock.version, lock.packages[''].version].some(value => value !== version)) {
+            console.error('::error::Release tag, package.json and package-lock.json versions must match')
+            process.exit(1)
+          }
+          NODE
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
-          body_path: release_body.md
           generate_release_notes: true
