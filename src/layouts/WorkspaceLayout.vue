@@ -11,7 +11,8 @@ import {
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons-vue'
-import { Breadcrumb, Button, Drawer, Dropdown, Menu, Tag, message } from 'ant-design-vue'
+import { Breadcrumb, Button, Dropdown, Menu, Tag, message } from 'ant-design-vue'
+import WorkspaceDrawer from '../components/WorkspaceDrawer.vue'
 import { getWorkspaceEntries } from '../services/accessControl'
 import { logout, useAuth } from '../services/authService'
 
@@ -31,11 +32,24 @@ const loggingOut = ref(false)
 const helpOpen = ref(false)
 const introDismissed = ref(false)
 const introPreferenceKey = 'family_browse_intro_dismissed_v1'
+const guidePreferenceKey = 'family_browse_guide_seen_v1'
+let guideSeen = false
 try {
   introDismissed.value = localStorage.getItem(introPreferenceKey) === '1'
+  guideSeen = localStorage.getItem(guidePreferenceKey) === '1'
 } catch (error) {
   console.warn('[WorkspaceLayout] 无法读取浏览入门提示设置', error)
 }
+watch([browsing, role], ([isBrowsing, currentRole]) => {
+  if (!isBrowsing || currentRole !== 'user' || guideSeen || introDismissed.value) return
+  guideSeen = true
+  helpOpen.value = true
+  try {
+    localStorage.setItem(guidePreferenceKey, '1')
+  } catch (error) {
+    console.warn('[WorkspaceLayout] 无法保存使用指南显示设置', error)
+  }
+}, { immediate: true })
 const media = window.matchMedia('(max-width: 767px)')
 const mobile = ref(media.matches)
 
@@ -204,7 +218,7 @@ function dismissIntro() {
       <RouterView />
     </template>
   </VbenAdminLayout>
-  <Drawer v-model:open="helpOpen" title="使用帮助" width="min(420px, 100vw)">
+  <WorkspaceDrawer v-model:open="helpOpen" title="使用帮助" width="min(420px, 100vw)">
     <div class="workspace-browse-help">
       <h2>从找到一位家人开始</h2>
       <ol>
@@ -219,5 +233,5 @@ function dismissIntro() {
       <p>普通用户可以查看已收录的族谱资料，包括原始记载、葬地和寻根轨迹，但不能修改资料或管理账号。维护人员与系统管理员验证密码后，才可进入相应管理页面。</p>
       <p>资料仅供已登记账号查阅，请谨慎转发含个人或位置信息的内容。</p>
     </div>
-  </Drawer>
+  </WorkspaceDrawer>
 </template>

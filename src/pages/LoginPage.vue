@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Alert, Button, Form, Input, Tag } from 'ant-design-vue'
 import { ApartmentOutlined, BookOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
@@ -10,6 +10,7 @@ import {
   useAuth,
 } from '../services/authService'
 import { resolveLoginRedirect } from '../services/accessControl'
+import { fetchAuthStatus, fetchLoginOptions } from '../services/d1ApiService'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,14 +19,34 @@ const bootstrap = ref(false)
 const passwordRequired = ref(false)
 const pending = ref(false)
 const errorMessage = ref('')
+const initialized = ref<boolean | null>(null)
+const statusError = ref('')
+const detecting = ref(false)
 const form = reactive({ mobile: '', password: '', confirmPassword: '' })
 const needsPassword = computed(() => bootstrap.value || passwordRequired.value)
 let requestSequence = 0
+let detection: Promise<void> | null = null
+let checkedMobile = ''
+let disposed = false
+
+async function loadStatus() {
+  statusError.value = ''
+  try {
+    const status = await fetchAuthStatus()
+    if (!disposed) initialized.value = status.initialized
+  } catch (error) {
+    if (!disposed) statusError.value = error instanceof Error ? error.message : '无法检测系统初始化状态'
+  }
+}
+onMounted(loadStatus)
 
 function resetLogin() {
   ++requestSequence
   cancelPendingLogin()
   pending.value = false
+  detecting.value = false
+  detection = null
+  checkedMobile = ''
   passwordRequired.value = false
   errorMessage.value = ''
   form.password = ''
@@ -33,7 +54,33 @@ function resetLogin() {
 }
 
 watch([() => form.mobile, bootstrap], resetLogin, { flush: 'sync' })
-onUnmounted(resetLogin)
+onUnmounted(() => { disposed = true; resetLogin() })
+
+function detectMobile() {
+  if (bootstrap.value || pending.value || passwordRequired.value) return Promise.resolve()
+  const mobile = form.mobile.trim().replace(/\s+/g, '')
+  if (!/^\+?\d{6,20}$/.test(mobile) || checkedMobile === mobile) return Promise.resolve()
+  if (detection) return detection
+  const started = ++requestSequence
+  detecting.value = true
+  errorMessage.value = ''
+  detection = (async () => {
+    try {
+      const options = await fetchLoginOptions(mobile)
+      if (started !== requestSequence) return
+      checkedMobile = mobile
+      passwordRequired.value = options.passwordRequired
+    } catch (error) {
+      if (started === requestSequence) errorMessage.value = error instanceof Error ? error.message : '无法识别账号，请重试'
+    } finally {
+      if (started === requestSequence) {
+        detecting.value = false
+        detection = null
+      }
+    }
+  })()
+  return detection
+}
 
 async function changePhone() {
   resetLogin()
@@ -43,6 +90,14 @@ async function changePhone() {
 
 async function submit() {
   if (pending.value) return
+  const beforeDetection = requestSequence
+  if (detection) await detection
+  if (pending.value || disposed || beforeDetection !== requestSequence) return
+  if (passwordRequired.value && !form.password) {
+    await nextTick()
+    document.getElementById('login-password')?.focus()
+    return
+  }
   errorMessage.value = ''
   const mobile = form.mobile.trim().replace(/\s+/g, '')
   if (!/^\+?\d{6,20}$/.test(mobile)) {
@@ -61,6 +116,10 @@ async function submit() {
       : await loginAsUserByMobile(mobile, passwordRequired.value ? form.password : undefined)
     if (started !== requestSequence) return
     if (!result.ok) {
+      if (result.code === 'SYSADMIN_EXISTS') {
+        initialized.value = true
+        bootstrap.value = false
+      }
       if (result.code === 'PASSWORD_REQUIRED' && !bootstrap.value) {
         passwordRequired.value = true
         await nextTick()
@@ -108,7 +167,7 @@ async function submit() {
             name="mobile"
             :rules="[{ required: true, message: '请输入手机号' }]"
           >
-            <Input id="login-mobile" v-model:value="form.mobile" aria-label="手机号" type="tel" inputmode="tel" autocomplete="username" placeholder="请输入已登记的手机号（可含国际区号）" :readonly="passwordRequired" />
+            <Input id="login-mobile" v-model:value="form.mobile" aria-label="手机号" type="tel" inputmode="tel" autocomplete="username" placeholder="请输入已登记的手机号（可含国际区号）" :readonly="passwordRequired" @blur="detectMobile" />
           </Form.Item>
           <Button v-if="passwordRequired" type="link" class="change-phone" @click="changePhone">更换手机号</Button>
           <Form.Item
@@ -128,11 +187,15 @@ async function submit() {
             <Input.Password v-model:value="form.confirmPassword" aria-label="确认密码" autocomplete="current-password" placeholder="请再次输入系统管理员固定密码" />
           </Form.Item>
           <Alert v-if="errorMessage" :message="errorMessage" type="error" show-icon class="login-error" role="alert" />
+          <p v-if="detecting" role="status">正在识别账号…</p>
           <Button type="primary" html-type="submit" block :loading="pending" class="login-submit">
             {{ bootstrap ? '初始化并登录' : passwordRequired ? '验证并登录' : '登录' }}
           </Button>
         </Form>
-        <Button type="link" class="bootstrap-toggle" :aria-expanded="bootstrap" @click="bootstrap = !bootstrap">
+        <Alert v-if="statusError" type="error" message="无法检测系统初始化状态" :description="statusError" show-icon>
+          <template #action><Button @click="loadStatus">重试检测</Button></template>
+        </Alert>
+        <Button v-if="initialized === false" type="link" class="bootstrap-toggle" :aria-expanded="bootstrap" @click="bootstrap = !bootstrap">
           {{ bootstrap ? '返回账号登录' : '首次启用？初始化系统管理员' }}
         </Button>
         <div class="login-access-note"><SafetyCertificateOutlined /><span>账号由管理员维护，按角色开放数据与管理权限。</span></div>

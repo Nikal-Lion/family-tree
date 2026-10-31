@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  Alert, Button, Card, Drawer, Empty, Input, Select, Space, Statistic,
+  Alert, BackTop, Button, Card, Empty, Input, Select, Space, Statistic,
   Table, Tabs, Tag, message, type TableProps,
 } from 'ant-design-vue'
-import { DownloadOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
+import { ArrowUpOutlined, DownloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import FamilyTreeChart from '../components/FamilyTreeChart.vue'
 import MemberArchive from '../components/MemberArchive.vue'
 import MemberCardList from '../components/MemberCardList.vue'
+import WorkspaceDrawer from '../components/WorkspaceDrawer.vue'
 import { useMobile } from '../composables/useMobile'
 import { trackMemberIds } from '../services/trackService'
 import { ACTIVITY_EVENT_TYPES, filterActivityEvents, filterActivityTracks } from '../services/activityManager'
@@ -32,13 +33,11 @@ const refreshing = ref(false)
 const loadError = ref('')
 const syncError = ref('')
 const detailOpen = ref(false)
-const archiveContent = ref<HTMLElement | null>(null)
 const activeTab = ref('directory')
 const archiveHistory = ref<number[]>([])
 const graphIncludesAllBranches = ref(false)
 const keyword = ref('')
 const branch = ref<string>()
-const gender = ref<Member['gender']>()
 const page = ref(1)
 const rootId = ref<number | null>(null)
 const chart = ref<InstanceType<typeof FamilyTreeChart> | null>(null)
@@ -46,13 +45,13 @@ const members = computed(() => store.members.value)
 const selected = computed(() => store.selectedMember.value)
 const generations = computed(() => computeGenerations(members.value))
 const filtered = computed(() => filterOverviewMembers(members.value, store.aliases.value, {
-  keyword: keyword.value, branch: branch.value, gender: gender.value,
+  keyword: keyword.value, branch: branch.value,
 }))
 const branchOptions = computed(() => [...new Set(members.value.map((member) => member.lineageBranch ?? ''))]
   .sort((a, b) => a.localeCompare(b, 'zh-CN')).map((value) => ({ label: value || '未记录分支', value })))
 const branchTreeMembers = computed(() => getBranchTreeMembers(members.value, branch.value))
 const treeMembers = computed(() => graphIncludesAllBranches.value ? members.value : branchTreeMembers.value)
-const highlighted = computed(() => keyword.value.trim() || gender.value
+const highlighted = computed(() => keyword.value.trim()
   ? filtered.value.map((member) => member.id) : [])
 const stats = computed(() => [
   { title: '族人', value: members.value.length, suffix: '人' },
@@ -134,16 +133,10 @@ function viewTree(id: number) {
   prepareTree(id)
   activeTab.value = 'genealogy'
 }
-watch([keyword, branch, gender], () => { page.value = 1 })
+watch([keyword, branch], () => { page.value = 1 })
 watch(detailOpen, (open) => { if (!open) archiveHistory.value = [] }, { flush: 'sync' })
-watch([archiveContent, selected], () => {
-  // Drawer does not forward accessibility attributes to its content element.
-  const dialog = archiveContent.value?.closest('.ant-drawer-content')
-  if (!dialog) return
-  dialog.setAttribute('role', 'dialog')
-  dialog.setAttribute('aria-modal', 'true')
-  dialog.setAttribute('aria-label', selected.value ? `${selected.value.name} · 人物档案` : '人物档案')
-  dialog.querySelector('.ant-drawer-body')?.scrollTo({ top: 0 })
+watch(selected, () => {
+  document.querySelector('.workspace-drawer .ant-drawer-body')?.scrollTo({ top: 0 })
 }, { flush: 'post' })
 watch(activeTab, (tab) => {
   if (tab === 'genealogy' && selected.value) prepareTree(selected.value.id)
@@ -224,7 +217,6 @@ function navigate(id: number) {
   <div class="family-overview">
     <header class="overview-heading">
       <div><h1>找家人，读族谱</h1><p>先搜索姓名，查看人物档案，再了解已记录的家族关系。浏览不会修改资料。</p></div>
-      <Button :loading="refreshing" :disabled="initializing || !!loadError" @click="refresh"><template #icon><ReloadOutlined /></template>刷新资料</Button>
     </header>
     <Alert v-if="loadError" type="error" show-icon message="族谱加载失败" :description="loadError">
       <template #action><Button @click="load">重试</Button></template>
@@ -240,7 +232,6 @@ function navigate(id: number) {
           <Input id="family-name-search" v-model:value="keyword" allow-clear size="large" placeholder="输入姓名、别名或分支" aria-label="搜索族人" class="overview-name-search"><template #prefix><SearchOutlined /></template></Input>
           <div class="overview-filters">
               <Select v-model:value="branch" allow-clear placeholder="全部分支" aria-label="筛选分支" :options="branchOptions" class="overview-select" />
-              <Select v-model:value="gender" allow-clear placeholder="全部性别" aria-label="筛选性别" :options="[{label:'男',value:'男'},{label:'女',value:'女'}]" class="overview-select" />
               <Tag color="blue">名录 {{ filtered.length }} / {{ members.length }} 人</Tag>
           </div>
         </div>
@@ -323,10 +314,13 @@ function navigate(id: number) {
       </Card>
       <footer class="overview-note">资料以已收录记录为准。暂未记录父亲不代表始祖，暂未记录子女不代表没有子女；尚待确认的记载不代表已确认的关系。同名或读音相似不会自动合并为同一人。</footer>
     </template>
-    <Drawer v-model:open="detailOpen" :title="selected ? `${selected.name} · 人物档案` : '人物档案'" width="min(680px, 100vw)">
+    <BackTop v-if="activeTab === 'directory' && !detailOpen" :visibility-height="240" type="primary" aria-label="返回顶部" class="overview-back-top">
+      <template #icon><ArrowUpOutlined /></template>
+    </BackTop>
+    <WorkspaceDrawer v-model:open="detailOpen" :title="selected ? `${selected.name} · 人物档案` : '人物档案'">
       <template #extra><Button v-if="archiveHistory.length" class="overview-archive-back" @click="previousArchive">返回上一位</Button></template>
-      <div ref="archiveContent"><MemberArchive :member="selected" :data="store.data.value" @select="select" @view-tree="viewTree" /></div>
-    </Drawer>
+      <MemberArchive :member="selected" :data="store.data.value" @select="select" @view-tree="viewTree" />
+    </WorkspaceDrawer>
   </div>
 </template>
 
@@ -358,12 +352,13 @@ function navigate(id: number) {
 .overview-selection { margin: 8px 0; color: #64748b; font-size: 13px; }
 .overview-selection :deep(.ant-btn-link) { max-width: 100%; height: auto; white-space: normal; text-align: start; overflow-wrap: anywhere; }
 .overview-content :deep(.ant-table-cell) { overflow-wrap: anywhere; white-space: pre-wrap; }
+.overview-back-top { right: max(20px, env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); width: 48px; height: 48px; box-shadow: 0 4px 14px #10182826; }
 @media (max-width: 767px) {
   .family-overview { padding: 16px 12px; gap: 16px; }
   .overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .overview-heading h1 { font-size: 20px; }
   .overview-content :deep(.ant-card-body) { padding: 14px; }
-  .overview-select { width: calc(50% - 6px); }
+  .overview-select { width: min(100%, 240px); }
   .overview-tabs :deep(> .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab) { margin-left: 20px; }
   .overview-generation-grid { grid-template-columns: minmax(0, 1fr); }
 }

@@ -13,6 +13,7 @@ async function mockBrowsing(page: Page, role: UserRole = 'user', data = familyFi
   const firstMember = data.members[0]
   if (firstMember) firstMember.photoUrl = ''
   await page.addInitScript(() => {
+    localStorage.setItem('family_browse_guide_seen_v1', '1')
     if (!sessionStorage.getItem('product-browsing-initialized')) {
       localStorage.setItem('family_auth_session_token', 'product-browsing-test')
       sessionStorage.setItem('product-browsing-initialized', 'true')
@@ -25,6 +26,7 @@ async function mockBrowsing(page: Page, role: UserRole = 'user', data = familyFi
       return route.fulfill({ status: 403, json: { error: '只读浏览不可修改资料' } })
     }
     const path = new URL(request.url()).pathname
+    if (path === '/api/auth/status') return route.fulfill({ json: { initialized: true } })
     if (path === '/api/auth/session') return route.fulfill({ json: { user } })
     if (path === '/api/browse-data') return route.fulfill({ json: { contractVersion: 1, data: toFamilyBrowseData(data), revision: 1 } })
     throw new Error(`Unexpected browsing request: ${path}`)

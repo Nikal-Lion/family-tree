@@ -74,6 +74,54 @@ function gate() {
 }
 
 describe('role-resolved login and independent maintainer passwords', () => {
+  it('reports bootstrap status anonymously, counting disabled administrators as initialized', async () => {
+    const status = () => request('/api/auth/status', { headers: {} })
+    const empty = await status()
+    expect(empty.status).toBe(200)
+    expect(empty.headers.get('Cache-Control')).toContain('no-store')
+    expect(await empty.json()).toEqual({ initialized: false })
+    const admin = await create('sysadmin')
+    expect(await (await status()).json()).toEqual({ initialized: true })
+    db.database.run('UPDATE login_users SET enabled = 0 WHERE id = ?', [admin.id])
+    expect(await (await status()).json()).toEqual({ initialized: true })
+  })
+
+  it('detects password requirements without exposing identity or creating a session', async () => {
+    await create('user', '+85212345678')
+    await create('maintainer', '13900000002')
+    await create('sysadmin', '13900000003')
+    for (const [mobile, passwordRequired] of [
+      [' +852 1234 5678 ', false], ['13900000002', true], ['13900000003', true],
+    ] as const) {
+      const response = await request('/api/auth/login-options', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile, role: 'user' }),
+      })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Cache-Control')).toContain('no-store')
+      expect(await response.json()).toEqual({ passwordRequired })
+    }
+    expect(db.database.exec('SELECT COUNT(*) FROM auth_sessions')[0]!.values[0]![0]).toBe(0)
+  })
+
+  it('does not make unknown, disabled or passwordless maintenance accounts login-ready', async () => {
+    const legacy = await create('user')
+    db.database.run("UPDATE login_users SET role = 'maintainer' WHERE id = ?", [legacy.id])
+    const options = (mobile: string) => request('/api/auth/login-options', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile }),
+    })
+    expect(await (await options('13900000001')).json()).toMatchObject({ code: 'PASSWORD_NOT_SET' })
+    db.database.run('UPDATE login_users SET enabled = 0 WHERE id = ?', [legacy.id])
+    const disabled = await options('13900000001')
+    const unknown = await options('13900000002')
+    expect(disabled.status).toBe(401)
+    expect(unknown.status).toBe(401)
+    expect(await disabled.json()).toEqual(await unknown.json())
+    expect((await options('invalid')).status).toBe(400)
+    expect(db.database.exec('SELECT COUNT(*) FROM auth_sessions')[0]!.values[0]![0]).toBe(0)
+  })
+
   it('keeps ordinary registered users phone-only and ignores client-supplied roles', async () => {
     await create('user', '+85212345678')
     const response = await login(' +852 1234 5678 ', undefined, { role: 'sysadmin' })
