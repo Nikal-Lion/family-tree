@@ -154,8 +154,9 @@ async function handleLogout() {
               <span class="workspace-account-name" :title="accountName">{{ accountName }}</span>
             </Button>
             <template #overlay>
-              <Menu @click="handleLogout">
+              <Menu @click="({ key }) => key === 'password' ? router.push('/change-password') : handleLogout()">
                 <Menu.Item key="identity" disabled>{{ accountName }} · {{ user?.mobile }}</Menu.Item>
+                <Menu.Item key="password">修改密码</Menu.Item>
                 <Menu.Item key="logout" :disabled="loggingOut">
                   <template #icon><LogoutOutlined /></template>
                   退出登录

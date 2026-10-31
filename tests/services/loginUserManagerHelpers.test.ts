@@ -3,7 +3,7 @@ import { filterLoginUsers, isLastEnabledSysadmin, normalizeLoginMobile } from '.
 import type { LoginUser } from '../../src/types/auth'
 
 function account(id: number, role: LoginUser['role'], enabled = true): LoginUser {
-  return { id, mobile: `+85212345${id}`, role, enabled, createdAt: '', updatedAt: '' }
+  return { id, mobile: `+85212345${id}`, role, enabled, passwordConfigured: true, passwordChangeRequired: false, createdAt: '', updatedAt: '' }
 }
 
 describe('login account management presentation', () => {

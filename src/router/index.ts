@@ -8,6 +8,7 @@ const router = createRouter({
   routes: [
     { path: '/', redirect: '/app' },
     { path: '/login', component: () => import('../pages/LoginPage.vue'), meta: { title: '登录' } },
+    { path: '/change-password', component: () => import('../pages/ChangePasswordPage.vue'), meta: { title: '修改密码', requiresAuth: true } },
     {
       path: '/app',
       component: () => import('../layouts/WorkspaceLayout.vue'),
@@ -31,9 +32,12 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   await initAuthSession()
-  const { isAuthenticated, role } = useAuth()
+  const { isAuthenticated, role, needsPasswordChange } = useAuth()
   if (to.meta.requiresAuth && !isAuthenticated.value) {
     return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  if (isAuthenticated.value && needsPasswordChange.value && to.path !== '/change-password') {
+    return '/change-password'
   }
   if (to.name === 'AppEntry') return getDefaultAppPath(role.value)
   const allowedRoles = to.meta.allowedRoles as UserRole[] | undefined

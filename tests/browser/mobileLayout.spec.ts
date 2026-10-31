@@ -10,6 +10,7 @@ const members = Array.from({ length: 600 }, (_, index) => ({
 const user = {
   id: 1, mobile: '13800000000', name: '测试账号'.repeat(20),
   role: 'sysadmin', enabled: true, createdAt: '2026-01-01', updatedAt: '2026-01-01',
+  passwordConfigured: true, passwordChangeRequired: false,
 }
 const data = {
   schemaVersion: 4, members,

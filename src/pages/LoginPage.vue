@@ -14,21 +14,21 @@ import { resolveLoginRedirect } from '../services/accessControl'
 type LoginMode = 'user' | 'sysadmin' | 'bootstrap'
 const route = useRoute()
 const router = useRouter()
-const { role } = useAuth()
+const { role, needsPasswordChange } = useAuth()
 const mode = ref<LoginMode>('user')
 const pending = ref(false)
 const errorMessage = ref('')
 const form = reactive({ mobile: '', password: '', confirmPassword: '' })
-const needsPassword = computed(() => mode.value !== 'user')
+const passwordLabel = computed(() => mode.value === 'bootstrap' ? '服务端初始化验证密码' : '账号密码')
 const modeOptions = [
   { label: '成员 / 维护人员', value: 'user' },
   { label: '系统管理员', value: 'sysadmin' },
   { label: '首次初始化', value: 'bootstrap' },
 ]
 const descriptions = {
-  user: '使用已登记的手机号登录，系统将自动识别你的角色。',
-  sysadmin: '使用管理员手机号及验证密码登录，管理家族资料与系统设置。',
-  bootstrap: '仅首次使用时操作。验证密码须与服务端管理员密钥配置一致。',
+  user: '使用已登记的手机号和独立密码登录。首次登录须修改临时密码；没有密码或忘记密码请联系管理员。',
+  sysadmin: '使用管理员手机号和独立密码登录。旧管理员首次升级可用原服务端验证密码过渡，随后必须设置独立密码。',
+  bootstrap: '仅首次使用时操作。验证服务端初始化密码后，必须设置自己的独立密码。',
 }
 
 watch(mode, () => {
@@ -47,7 +47,7 @@ async function submit() {
   pending.value = true
   try {
     const result = mode.value === 'user'
-      ? await loginAsUserByMobile(form.mobile)
+      ? await loginAsUserByMobile(form.mobile, form.password)
       : mode.value === 'sysadmin'
         ? await loginWithSysadminPassword(form.mobile, form.password)
         : await initializeFirstSysadmin(form.mobile, form.password)
@@ -55,7 +55,9 @@ async function submit() {
       errorMessage.value = result.message
       return
     }
-    await router.replace(resolveLoginRedirect(route.query.redirect, role.value))
+    form.password = ''
+    form.confirmPassword = ''
+    await router.replace(needsPasswordChange.value ? '/change-password' : resolveLoginRedirect(route.query.redirect, role.value))
   } finally {
     pending.value = false
   }
@@ -86,23 +88,23 @@ async function submit() {
         <div class="login-mobile-brand"><BookOutlined /> 家族云谱</div>
         <h2>欢迎回来</h2>
         <p class="login-subtitle">登录后，继续整理与探索你的家族故事。</p>
+        <Alert v-if="route.query.passwordChanged === '1'" type="success" show-icon message="密码已修改，所有旧会话已失效，请使用新密码登录。" class="login-error" />
         <Segmented v-model:value="mode" :options="modeOptions" block :disabled="pending" />
         <p class="login-mode-description">{{ descriptions[mode] }}</p>
         <Form :model="form" layout="vertical" size="large" :disabled="pending" @finish="submit">
           <Form.Item
             label="手机号"
             name="mobile"
-            :rules="[{ required: true, message: '请输入手机号' }, { pattern: /^1\d{10}$/, message: '请输入有效的 11 位手机号' }]"
+            :rules="[{ required: true, message: '请输入手机号' }, { pattern: /^\+?[0-9]{6,20}$/, message: '请输入有效的手机号，可包含国际区号' }]"
           >
-            <Input v-model:value="form.mobile" type="tel" autocomplete="username" placeholder="请输入已登记的手机号" :maxlength="11" />
+            <Input v-model:value="form.mobile" type="tel" autocomplete="username" placeholder="请输入已登记的手机号" :maxlength="21" />
           </Form.Item>
           <Form.Item
-            v-if="needsPassword"
-            label="管理员验证密码"
+            :label="passwordLabel"
             name="password"
-            :rules="[{ required: true, message: '请输入管理员验证密码' }]"
+            :rules="[{ required: true, message: '请输入密码' }]"
           >
-            <Input.Password v-model:value="form.password" autocomplete="current-password" placeholder="请输入管理员验证密码" />
+            <Input.Password v-model:value="form.password" autocomplete="current-password" placeholder="请输入密码" :maxlength="1024" />
           </Form.Item>
           <Form.Item
             v-if="mode === 'bootstrap'"

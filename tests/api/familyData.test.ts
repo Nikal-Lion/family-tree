@@ -10,6 +10,7 @@ import { TestD1Database } from '../helpers/d1Database'
 const require = createRequire(import.meta.url)
 let SQL: SqlJsStatic
 let db: TestD1Database
+const accountPassword = 'temporary-test-password'
 const adminHeaders = { Authorization: 'Bearer unit-test-only', 'Content-Type': 'application/json' }
 beforeAll(async () => { SQL = await initSqlJs({ locateFile: () => require.resolve('sql.js/dist/sql-wasm.wasm') }) })
 beforeEach(() => { db = new TestD1Database(new SQL.Database()) })
@@ -75,19 +76,18 @@ describe('actual Worker family persistence with SQLite transactions', () => {
     expect(users.status).toBe(200)
     expect(await users.json()).toMatchObject({ users: [{ id: 1, name: hasName ? '已有名称' : '', mobile: '13900000001' }] })
     const session = await request('/api/auth/session', { headers: { Authorization: `Bearer ${token}` } })
-    expect(session.status).toBe(200)
-    expect(await session.json()).toMatchObject({ user: { id: 1, name: hasName ? '已有名称' : '' } })
+    expect(session.status).toBe(401)
     db.database.run("INSERT INTO members (id,name,gender) VALUES (1,'甲','男')")
     db.database.run(`INSERT INTO tracks (id,name,member_id,points_json,start_point_json,end_point_json,stats_json,created_at,updated_at)
       VALUES (1,'旧轨迹',1,'[{"lat":1,"lng":2},{"lat":2,"lng":3}]','{"lat":1,"lng":2}','{"lat":2,"lng":3}','{"distanceMeters":100}', '', '')`)
     expect((await read()).data?.tracks[0]?.memberIds).toEqual([1])
   })
   it('persists account names in account lists, login and restored sessions', async () => {
-    const response = await request('/api/login-users', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', name: '  测试族人  ', role: 'user' }) })
+    const response = await request('/api/login-users', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', name: '  测试族人  ', role: 'user', password: accountPassword }) })
     expect(response.status).toBe(201)
     const { user } = await response.json() as { user: { id: number; name: string } }
     expect(user.name).toBe('测试族人')
-    const login = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ mobile: '13900000002' }) })
+    const login = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', password: accountPassword }) })
     const session = await login.json() as { user: { name: string }; token: string }
     expect(session.user.name).toBe('测试族人')
     expect((await request(`/api/login-users/${user.id}`, { method: 'PUT', body: JSON.stringify({ name: '新名称' }) })).status).toBe(200)
@@ -99,7 +99,7 @@ describe('actual Worker family persistence with SQLite transactions', () => {
     expect(await (await request('/api/login-users')).json()).toMatchObject({ users: [{ name: '新名称' }] })
   })
   it.each([123, null, '名'.repeat(101)])('rejects invalid account names %s without creating an account', async (name) => {
-    const response = await request('/api/login-users', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', name }) })
+    const response = await request('/api/login-users', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', name, password: accountPassword }) })
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ code: 'INVALID_NAME' })
   })
@@ -158,9 +158,10 @@ describe('actual Worker family persistence with SQLite transactions', () => {
   })
   it('allows read-only sessions to read but refuses their writes', async () => {
     await read()
-    const create = await request('/api/login-users', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', role: 'user' }) })
+    const create = await request('/api/login-users', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', role: 'user', password: accountPassword }) })
     expect(create.status).toBe(201)
-    const login = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ mobile: '13900000002' }) })
+    db.database.run('UPDATE login_credentials SET must_change_password = 0')
+    const login = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', password: accountPassword }) })
     expect(login.status).toBe(200)
     const session = await login.json() as { token: string }
     const headers = { ...adminHeaders, Authorization: `Bearer ${session.token}`, 'If-Match': '"0"' }

@@ -1,136 +1,139 @@
-# Login and Sysadmin Bootstrap Summary
+# 登录、独立密码与账号恢复
 
-## Commit Context
+## 当前登录方式
 
-- Commit: 19bc6f812909cc43aa0ff34d7a4e70e0eeec2722
-- Message: feat: add login functionality with user, sysadmin, and bootstrap modes
-- Scope: Introduces authentication routing, session lifecycle, bootstrap initialization, and role-based UI gating.
+所有角色（`user`、`maintainer`、`sysadmin`）都使用 **手机号 + 独立密码**。
+手机号仅是账号标识，不发送短信；不依赖微信、邮件或其他外部认证服务。
+没有公开注册、手机号免密登录或公开的忘记密码重置接口。
 
-## Sysadmin Initialization (Bootstrap)
+- 管理员创建账号时设置临时密码，通过当面等私密渠道交付，勿写入日志、工单或仓库。
+- 新账号和管理员重置过的账号，首次登录必须修改临时密码。
+- 改密完成前，服务端仅允许查看自己的会话、修改密码和退出；
+  族谱读取、写入以及账号管理均返回 `403 PASSWORD_CHANGE_REQUIRED`，
+  不仅是在前端隐藏按钮。
+- 普通登录使用账号的独立密码。账号菜单中的“修改密码”要求验证当前密码。
+- 新密码为 12–128 个字符，拒绝纯空白、单一重复字符和沿用当前密码。
+  建议使用密码管理器生成，或使用足够长且不易猜测的短语。
+- 忘记密码时，管理员必须先通过线下渠道确认身份，再在账号管理中“重置密码”。
+  管理员不能查看原密码，也不能通过重置接口跳过自己当前密码的验证。
+- 修改或重置密码会原子地更新凭证版本并撤销该账号所有会话；
+  用户改密后需要重新登录。重置不会自动启用被禁用的账号。
 
-1. Bootstrap mode is used for first-time sysadmin setup.
-2. It requires mobile number and sysadmin password.
-3. Server checks whether an enabled sysadmin already exists.
-4. If no enabled sysadmin exists and password hash validation passes:
-   - Create sysadmin login user record.
-   - Create auth session token and return authenticated session context.
-5. If sysadmin already exists, bootstrap is rejected.
+密码仅以随机 16 字节盐的 PBKDF2-SHA256 哈希保存，派生长度为 32 字节。
+迭代次数为 100000，受当前 Cloudflare Workers Web Crypto 运行时上限约束。
+相同密码的不同账号具有不同盐，不存储明文或可解密的密码。
+账号列表和登录响应仅返回密码是否设置、是否需要改密，不返回哈希。
 
-## Login Flow
+## 旧版本升级
 
-1. Three login modes are supported:
-   - user
-   - sysadmin
-   - bootstrap
-2. User login authenticates by mobile number.
-3. Sysadmin login requires mobile number and password.
-4. Successful login creates a server-side session and returns token plus role.
-5. Frontend stores token, initializes auth state on app start, and validates current session.
-6. Router guard redirects unauthenticated users away from protected workspace routes.
-7. Logout revokes the server session and clears client auth state.
+Worker 自动创建两个新增表，亦提供幂等迁移
+[`migrations/0003_account_passwords.sql`](../migrations/0003_account_passwords.sql)：
 
-## Role and Access Behavior
+| 表 | 用途 |
+| --- | --- |
+| `login_credentials` | 独立密码哈希、强制改密状态、凭证版本 |
+| `auth_session_credentials` | 将新会话绑定到已验证的凭证版本 |
 
-- Roles include anonymous, user, and sysadmin.
-- Sysadmin-only capabilities are gated in workspace management UI.
-- Anonymous users are redirected to login for protected pages.
+升级前的会话没有版本凭据，**全部失效**，不能继续用旧免密会话访问族谱。
+不改变族谱业务表，不自动生成默认密码，不把手机号用作密码。
+JSON/SQLite 业务备份仍不包含登录账号、密码哈希或会话。
 
-## Notable Caveats
+升级顺序：
 
-1. Non-sysadmin login is mobile-only in this implementation (no password or OTP).
-2. Bootstrap entry remains visible in UI even after initialization, leading to expected conflict responses.
-3. Legacy API token bypass is now disabled by default and should only be enabled temporarily for emergency rollback.
-4. Session token persistence in localStorage increases impact if XSS occurs.
-5. Family data read path appears less strictly protected than write path and should be reviewed.
+1. 确认至少有一个启用的旧管理员，并保留其现有
+   `SYSADMIN_PASSWORD_PBKDF2`（或轮换期的 `_NEXT`）服务端 Secret。
+2. 同时发布前端和 Worker。不要只换前端或在多入口中继续运行旧免密 Worker。
+3. 旧管理员使用原手机号和原服务端验证密码登录。
+   仅未配置独立密码的旧管理员允许这样过渡，得到的是 15 分钟受限会话。
+4. 按提示设置自己的新密码，再用新密码登录。
+   完成后，这个账号**不再接受服务端共享密码**，缺少/更换共享 Secret 也不影响其正常登录。
+5. 在账号管理中给旧成员、旧维护人员设置临时密码，并私下交付。
+   未配置独立密码的旧普通账号不能登录，也没有共享密码兜底。
+6. 如果还有其他旧管理员，也应及时完成独立密码设置。
 
-## Key References
+不要回滚到旧免密服务作为常规恢复手段，那会重新开放被封堵的入口。
+不要删除整个账号表或族谱数据。
 
-- [api/index.ts](../api/index.ts)
-- [src/pages/LoginPage.vue](../src/pages/LoginPage.vue)
-- [src/services/authService.ts](../src/services/authService.ts)
-- [src/services/d1ApiService.ts](../src/services/d1ApiService.ts)
-- [src/router/index.ts](../src/router/index.ts)
-- [src/pages/FamilyWorkspace.vue](../src/pages/FamilyWorkspace.vue)
-- [src/components/AuthManager.vue](../src/components/AuthManager.vue)
-- [src/components/LoginUserManager.vue](../src/components/LoginUserManager.vue)
-- [src/types/auth.ts](../src/types/auth.ts)
+## 首次初始化与管理员恢复
 
-## Zero-Downtime Sysadmin Password Rotation Plan
-
-Status: implemented in API password verification.
-
-### What changed
-
-- API now supports PBKDF2-SHA256 hash rotation (preferred):
-   - `SYSADMIN_PASSWORD_PBKDF2` (active)
-   - `SYSADMIN_PASSWORD_PBKDF2_NEXT` (grace window)
-- API token auth bypass is default-off and only enabled when `ALLOW_LEGACY_API_TOKEN_AUTH=true`.
-
-PBKDF2 secret format:
+新数据库的“首次初始化”仍需要服务端配置的初始化验证密码。
+初始化只允许创建首位管理员（包含并发保护），并立即要求设置独立密码。
+密码哈希格式：
 
 ```text
-pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>
+pbkdf2_sha256$100000$<随机盐的十六进制>$<派生哈希的十六进制>
 ```
 
-说明：当前 Worker 运行时支持的迭代次数上限为 `100000`，请使用 `100000`。
-
-PBKDF2 配置示例（可直接放到 Cloudflare Secrets）：
-
-```text
-SYSADMIN_PASSWORD_PBKDF2=pbkdf2_sha256$100000$8f9a2b7c1e4d6f0a9b3c5d7e1a2c4f6b$de3f3bbf7ff778ecb7eeb2456fb32476643c8b4f9d9e8e83c4f6d66ce5f0f668
-SYSADMIN_PASSWORD_PBKDF2_NEXT=pbkdf2_sha256$100000$4e2a8c1d5b7f9a3c6d1e0f2a4b8c7d5e$0e0ab2e1aef54f1bf521f70d9fcdfc860e3de01559ac998f94f9dcefa88f26db
-```
-
-生成 PBKDF2 字符串示例（Node.js）：
+使用受控的本地密码管理流程生成随机初始化密码和对应哈希，将哈希写入
+Cloudflare Secrets，而不是前端 `VITE_*` 环境变量：
 
 ```bash
-node -e "const crypto=require('node:crypto');const password='ChangeMe!';const iterations=100000;const salt=crypto.randomBytes(16);const hash=crypto.pbkdf2Sync(password,salt,iterations,32,'sha256');console.log(`pbkdf2_sha256$${iterations}$${salt.toString('hex')}$${hash.toString('hex')}`)"
+npx wrangler secret put SYSADMIN_PASSWORD_PBKDF2
 ```
 
-### Rotation procedure
+当前部署使用默认环境，不要随意添加 `--env production`。
+`SYSADMIN_PASSWORD_PBKDF2_NEXT` 仅用于初始化/旧管理员过渡密码的轮换窗口，
+不是已设独立密码账号的备用密码。过渡完成后可删除这两个 Secret；
+再次初始化或受控恢复时才需要配置。
 
-1. Prepare new password hash.
-2. Phase A (dual-accept rollout):
-   - Keep current PBKDF2 hash in `SYSADMIN_PASSWORD_PBKDF2`.
-   - Set new PBKDF2 hash to `SYSADMIN_PASSWORD_PBKDF2_NEXT`.
-   - Deploy Worker.
-3. Phase B (adoption window):
-   - Communicate password change.
-   - Allow both old and new passwords temporarily.
-4. Phase C (promote new hash):
-   - Move new hash into `SYSADMIN_PASSWORD_PBKDF2`.
-   - Keep old hash in `SYSADMIN_PASSWORD_PBKDF2_NEXT` for short rollback window.
-   - Deploy Worker.
-5. Phase D (finalize):
-   - Remove `SYSADMIN_PASSWORD_PBKDF2_NEXT`.
-   - Deploy Worker.
+若唯一管理员忘记独立密码，应用不会通过手机号或初始化入口自动解锁。
+须由有权限的部署维护者在确认身份并备份后，通过受控 D1 维护，
+撤销该管理员全部会话并清除**该管理员**的 `login_credentials` 记录，
+再配置新的初始化 Secret，使用上述旧管理员过渡流程设置独立密码。
+这是数据库管理员级的人工恢复操作，不是公网 API；请勿开启旧 API Token
+旁路来代替身份确认。
 
-### Rollback procedure
+## 会话与角色
 
-- If login issues occur, restore previous known-good values:
-   - Put old hash back to `SYSADMIN_PASSWORD_PBKDF2`.
-   - Put temporary fallback hash to `SYSADMIN_PASSWORD_PBKDF2_NEXT`.
-   - Deploy Worker.
+- 会话 token 是 32 字节安全随机数，数据库保存 SHA-256 摘要。
+- 正常会话默认有效 24 小时；`SESSION_TTL_HOURS` 可配置，范围 1–720 小时。
+  首次改密/过渡会话固定 15 分钟，过期后可重新用临时密码登录。
+- 角色、手机号变化或禁用账号会撤销全部会话；身份变化还会增加凭证版本。
+  仅改名称保留会话。已完成独立密码设置的账号升为管理员后，
+  仍使用自己的密码重新登录，不切回共享管理员密码。
+- 创建会话时再次校验身份和凭证版本，防止密码重置与在途登录竞争，
+  让旧密码产生一个新有效会话。
+- 修改自己的身份信息或密码后，前端清除 token 并重载登录页，丢弃旧工作区。
+  其他设备的旧 token 在下一次请求时被服务端拒绝。
+- 客户端 token 仍保存在 localStorage；这不是 HttpOnly Cookie。
+  XSS 或设备被控制仍可能窃取会话，应保持依赖更新和浏览器侧安全防护。
+- `ALLOW_LEGACY_API_TOKEN_AUTH` 默认关闭，生产须保持未设置或 `false`；
+  启用它会保留绕过密码的管理员 API Token 旁路。
 
-### Verification checklist
+## 登录、初始化及改密限流
 
-- New password can login as sysadmin.
-- Old password behavior matches current phase policy.
-- Existing logged-in sessions remain usable.
-- No 500 error for missing hash after secret setup.
+`POST /api/auth/login`、`POST /api/auth/bootstrap-sysadmin` 和
+`POST /api/auth/change-password` 共用同一 `DB` 的原子 D1 计数：
 
-### Cloudflare secret commands
+| 维度 | 允许尝试次数 | 窗口 |
+| --- | --- | --- |
+| 来源 IP | 30 次，跨账号和三个接口合计 | 15 分钟 |
+| 规范化手机号 | 10 次，跨来源和三个接口合计 | 15 分钟 |
 
-```bash
-wrangler secret put SYSADMIN_PASSWORD_PBKDF2 --env production
-wrangler secret put SYSADMIN_PASSWORD_PBKDF2_NEXT --env production
-# keep ALLOW_LEGACY_API_TOKEN_AUTH unset (or set to false) to disable legacy token bypass
-# optional when finalizing
-wrangler secret delete SYSADMIN_PASSWORD_PBKDF2_NEXT --env production
-```
+- 窗口从首次尝试起算；成功尝试也计数，不重置窗口。超限不会延长窗口。
+- 超限返回 `429 AUTH_RATE_LIMITED` 和 `Retry-After` 秒数。
+  限流存储不可用时返回 `503 AUTH_RATE_LIMIT_UNAVAILABLE`，不放行认证。
+- 登录/初始化的来源限制在应用表初始化和密码运算之前；
+  改密先验证已有会话，再按该会话账号限流，不能通过请求体指定其他账号。
+- 请求体按字节读取，上限 4096 字节，不依赖客户端 `Content-Length`。
+  原手机号最多 64 字符，规范化后支持 6–20 位数字和可选的 `+`。
+  当前密码最多 1024 字符以兼容旧管理员 Secret，新密码最长 128 字符。
+- 只使用带 Cloudflare `request.cf` 的 `CF-Connecting-IP`，忽略
+  `X-Forwarded-For`。缺少/无效来源信息时使用统一保守桶，不接受自定义头绕过。
+- `auth_rate_limits` 持久化来源/账号的分域 SHA-256 摘要键。
+  这些是化名化标识，不是不可逆匿名数据；低熵输入可能被枚举。
+- 每次认证最多清理 100 条已过期计数，数据库/Worker 实例重启不会清空有效计数。
+  无后续请求时过期记录可以暂留，但不再阻断登录。
 
-### Security notes
+这些限制不能代替 DDoS 防护。共享 NAT 可能触发来源限制，
+攻击者也可能暂时耗尽已知账号的额度；大规模分布式攻击仍需 Cloudflare
+边缘防护和监控。所有入口必须使用同一 D1，并在生产确认有效来源 IP，
+尤其是前面还有 Worker/代理的情况。
 
-- Keep hash values only in Cloudflare Secrets.
-- Do not commit hash values to repository files.
-- If compromise is suspected, rotate password and consider revoking active sessions.
+## 相关入口
+
+- 登录：`/login`
+- 本人改密：`/change-password` 或账号菜单
+- 管理员开通/重置账号：`/app/system`
+- 实际服务端入口：[`api/index.ts`](../api/index.ts)
+- 部署与验收：[`docs/deploy-cloudflare-pages.MD`](deploy-cloudflare-pages.MD)
