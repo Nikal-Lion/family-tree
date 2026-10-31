@@ -1,29 +1,32 @@
-# Login and Sysadmin Bootstrap Summary
+# Login, Maintainer Passwords and Sysadmin Bootstrap
 
-## Commit Context
+## Implementation Status
 
-- Commit: 19bc6f812909cc43aa0ff34d7a4e70e0eeec2722
-- Message: feat: add login functionality with user, sysadmin, and bootstrap modes
-- Scope: Introduces authentication routing, session lifecycle, bootstrap initialization, and role-based UI gating.
+This document describes the v0.1.4 productization increment. In v0.1.3 and earlier,
+maintainers used phone-only login; v0.1.4 requires independent passwords. The separate
+browsing contract retains all approved genealogy fields, including raw evidence,
+burials and exact track points; it is not a sensitive-field filtering policy.
 
 ## Sysadmin Initialization (Bootstrap)
 
-1. Bootstrap mode is used for first-time sysadmin setup.
+1. A secondary first-time setup entry opens sysadmin bootstrap; it is not a role selector.
 2. It requires mobile number and sysadmin password.
-3. Server checks whether an enabled sysadmin already exists.
-4. If no enabled sysadmin exists and password hash validation passes:
+3. Server checks whether any sysadmin already exists, including disabled accounts.
+4. If no sysadmin exists and password hash validation passes:
    - Create sysadmin login user record.
    - Create auth session token and return authenticated session context.
 5. If sysadmin already exists, bootstrap is rejected.
 
 ## Login Flow
 
-1. Three login modes are supported:
-   - user
-   - sysadmin
-   - bootstrap
-2. User login authenticates by mobile number.
-3. Sysadmin login requires mobile number and password.
+1. The default login form starts with one registered mobile number. It accepts an
+   optional international `+` prefix and 6–20 digits, removing whitespace.
+2. `POST /api/auth/login` resolves the enabled account's role on the server:
+   ordinary users log in directly, maintainers require their own account password,
+   and sysadmins require the existing fixed server-configured password.
+3. `PASSWORD_REQUIRED` reveals a password field without asking the user to select
+   a role. `PASSWORD_NOT_SET` asks legacy maintainers to contact a system
+   administrator; it never falls back to phone-only maintenance access.
 4. Successful login creates a server-side session and returns token plus role.
 5. Frontend stores token, initializes auth state on app start, and validates current session.
 6. Router guard redirects unauthenticated users away from protected workspace routes.
@@ -31,17 +34,63 @@
 
 ## Role and Access Behavior
 
-- Roles include anonymous, user, and sysadmin.
-- Sysadmin-only capabilities are gated in workspace management UI.
+- Roles include anonymous, user, maintainer, and sysadmin.
+- Ordinary users can browse but cannot write business data or manage accounts.
+- Maintainers can maintain business data but cannot list or change login accounts.
+- Only sysadmins can set/reset maintainer passwords and assign roles. Server
+  authorization is required even if a client manually sends a privileged request.
 - Anonymous users are redirected to login for protected pages.
+
+## Maintainer Password Setup, Reset and Migration
+
+- When creating or promoting a maintainer, a sysadmin must set an initial password.
+  Existing maintainers can keep a configured password when editing other fields,
+  or set a replacement to reset it. Forgotten passwords are reset by a sysadmin;
+  there is no public phone-only password-reset endpoint.
+- Passwords are 8–128 characters, cannot be entirely whitespace, and otherwise
+  retain the exact entered text, including leading/trailing spaces. No shared or
+  default maintainer password is created. Store them in a password manager and
+  communicate initial/reset passwords through a trusted channel.
+- Each password is stored as a PBKDF2-SHA256 digest with a random 16-byte salt,
+  100,000 iterations (the existing Worker runtime limit), and a 32-byte derived key.
+  API responses expose only `passwordConfigured`, never hashes or authentication
+  versions. Business JSON/SQLite backups do not contain accounts or credentials.
+- `login_users.password_hash` and `login_users.auth_version`, plus
+  `auth_sessions.auth_version`, are added automatically by `ensureSchema`.
+  `migrations/0003_maintainer_passwords.sql` is an alternative for an existing
+  database that has not already received those fields. Inspect the schema first;
+  do not apply the SQL after automatic migration or run it twice.
+- Old ordinary-user and sysadmin sessions retain version 0 and remain valid.
+  Old phone-only maintainer sessions are rejected immediately because the account
+  has no configured password. A sysadmin sets their passwords after deployment;
+  no maintainer can regain write access merely by knowing a phone number.
+- Changing a role, mobile number, enabled state, or maintainer password increments
+  the authentication version and revokes existing sessions in the same D1 batch.
+  Name-only edits do not log users out. Promotion requires a fresh login, so an
+  old phone-only user token cannot acquire maintenance or sysadmin privileges.
+  Conditional session creation also rejects credentials changed during login.
+- Changing away from maintainer removes its unused account password. Sysadmin
+  accounts never use per-account passwords and continue to verify the existing
+  server secret; this increment does not rotate or replace that secret.
+- Before deployment, arrange password setup for existing maintainers and notify
+  them that old sessions will no longer work. Do not roll back to the old Worker
+  while leaving maintainers enabled: old code ignores these password/version
+  fields and restores phone-only maintenance access. A rollback must first
+  disable affected accounts and revoke their sessions, then verify access.
 
 ## Notable Caveats
 
-1. Non-sysadmin login is mobile-only in this implementation (no password or OTP).
-2. Bootstrap entry remains visible in UI even after initialization, leading to expected conflict responses.
+1. Ordinary-user login deliberately has no password or OTP. Knowing a registered
+   mobile number is not proof of possessing that phone or of a family identity.
+2. Bootstrap remains a secondary entry after initialization; the server rejects
+   further initialization even if an existing sysadmin is disabled.
 3. Legacy API token bypass is now disabled by default and should only be enabled temporarily for emergency rollback.
 4. Session token persistence in localStorage increases impact if XSS occurs.
-5. Family data read path appears less strictly protected than write path and should be reviewed.
+5. `GET /api/browse-data` requires authentication and exposes all approved family
+   records without maintenance allocation counters. Ordinary users cannot read or
+   write the complete `/api/family-data` maintenance snapshot. This separates
+   capabilities, not sensitive genealogy fields; phone-only browsing does not
+   provide strong identity verification.
 
 ## Key References
 

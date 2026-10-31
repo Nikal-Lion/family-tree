@@ -24,8 +24,10 @@ Stage3 目标：
 | 角色 | 登录方式 | 页面访问 | 能力边界 |
 |---|---|---|---|
 | user | 手机号登录 | 总览页 | 仅查看数据，不可写入 |
-| maintainer | 手机号登录 | 总览页、维护页 | 可维护业务数据（成员、事件、轨迹、导入导出；OCR 暂缓） |
-| sysadmin | 手机号 + 密码登录 | 总览页、维护页、系统管理页 | 全局权限，包含登录用户管理与系统诊断 |
+| maintainer | 手机号 + 独立账号密码 | 总览页、维护页 | 可维护业务数据（成员、事件、轨迹、导入导出；OCR 暂缓） |
+| sysadmin | 手机号 + 服务端固定验证密码 | 总览页、维护页、系统管理页 | 全局权限，包含登录用户管理与系统诊断 |
+
+`v0.1.4` 增加维护人员独立密码，`v0.1.3` 及更早版本的维护人员原本按手机号免密登录。登录页由服务端判断是否需要密码，不再让用户选择角色；旧账号迁移、密码设置与重登规则见 [登录说明](Login.md)。
 
 ---
 
@@ -71,6 +73,7 @@ Stage3 目标：
 - 角色类型扩展到 user/maintainer/sysadmin。
 - 新增 canMaintain 能力判断，统一用于页面与按钮显隐。
 - 保持 sysadmin 手机号+密码登录，不改变既有安全策略。
+- 后续产品化批次为维护人员增加独立密码，并在角色、手机号、启停或密码变更时撤销旧会话；普通用户仍使用已登记手机号直接登录，不授予维护权限。
 
 ### 4.2 页面拆分策略
 
@@ -111,6 +114,7 @@ Stage3 目标：
 - 保持 requireSysadmin 用于系统管理接口。
 - 新增 requireMaintainerOrSysadmin 用于业务写入接口。
 - /api/family-data PUT 放开为 maintainer + sysadmin。
+- 后续产品化批次中，GET `/api/family-data` 也仅限 maintainer/sysadmin；普通用户通过独立 GET `/api/browse-data` 查看经确认保留的全部族谱资料，不取得维护编号计数器或任何写入能力。
 - /api/login-users* 维持 sysadmin-only。
 
 ### 5.3 兼容迁移
@@ -124,6 +128,7 @@ Stage3 目标：
 - 保留 `members`、`tracks`、`events`、`aliases`、`relations`、`temporals`、`burials`、`spouses`、`childClaims` 九个集合、全部 `next*` 计数器及成员 `generationNumber`。
 - 真实 Workers 入口为 `api/index.ts`。`migrations/0001_family_schema_v4.sql` 增量新增 `family_data_revision`、`member_generations`、`spouses`、`child_claims`，不清空旧业务与认证表。
 - GET `/api/family-data` 返回 `{ data, revision }`；PUT 通过 `If-Match` 修订号 CAS 与全字段数据保存组成同一个 D1 batch 事务，拒绝并发覆盖。
+- 后续浏览契约返回 `{ contractVersion: 1, data, revision }`，`data` 仅含 schemaVersion 与九个业务集合，保留原始记载、葬地和精确轨迹。浏览状态与维护 store、保存修订号分离；维护 PUT 拒绝缺少完整集合和 `next*` 计数器的浏览对象。
 - 旧客户端需刷新，修订号冲突后需重新读取数据并处理，不能自动以旧快照覆盖新数据。
 
 ---
@@ -185,6 +190,15 @@ Stage3 目标：
 - 实际验证临时账号新增/禁用/删除、最后启用管理员的前端保护、D1 503 诊断明确失败且统计显示未知而非 0，以及恢复真实请求后重试。
 - 普通用户直链系统页重定向总览，写请求返回 403；维护人员直链系统页重定向维护页，可见维护操作但无系统菜单。四个管理界面均检查 390px 宽布局。
 - 验收后恢复原族谱快照并核对原登录账号元数据，临时账号已删除。照片 OCR 的真实识别效果、现有解析规则正确性、新图谱及全系统性能不在本次验收结论内。
+
+### 产品化本地验证（2026-10-31，v0.1.4 发布前）
+
+- `npm test`：24 个文件、382 条测试全部通过。
+- `npm run build`：通过，包含前端类型检查及 Worker、客户端生产构建；`npx --no-install tsc -p tsconfig.worker.json --noEmit`：通过。
+- `npm run test:browser`：桌面 WebKit 与 iPhone 14 模拟配置共 75 条通过、5 条按平台跳过。跳过项为手机配置中的桌面分页，以及桌面配置中的手机旋转、手机品牌入口和两类手机输入回归，不是失败后跳过。
+- 使用构建产物 `dist/family_tree/wrangler.json` 启动 `wrangler dev --local`，以独立临时 D1 目录和合成账号执行 11 组场景、46 次真实 HTTP 断言，全部通过。覆盖固定密码初始化、三角色登录与权限、九集合全字段往返、浏览对象不能覆盖维护快照、修订号冲突、密码重置及启停后的会话撤销、账号响应不返回密码摘要，以及 Worker 重启后的持久化和重复初始化。验证时保持旧 API token 登录关闭；结束后停止 Worker 并删除临时库。
+- 浏览器开发日志仍出现 `ResizeObserver loop completed with undelivered notifications` 告警，未导致上述用例失败，本轮没有宣称修复该告警。
+- 验证过程全部使用本地隔离数据，未访问或修改线上族谱，也没有在验证过程中提交或部署改动。真实 iOS / Android 设备、手机文件选择器与家族用户体验仍待验收；Mac iPhone 镜像点击问题按决定继续暂缓。本记录不自动勾选整体验收清单。
 
 ---
 

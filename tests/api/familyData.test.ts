@@ -164,7 +164,8 @@ describe('actual Worker family persistence with SQLite transactions', () => {
     expect(login.status).toBe(200)
     const session = await login.json() as { token: string }
     const headers = { ...adminHeaders, Authorization: `Bearer ${session.token}`, 'If-Match': '"0"' }
-    expect((await request('/api/family-data', { headers })).status).toBe(200)
+    expect((await request('/api/browse-data', { headers })).status).toBe(200)
+    expect((await request('/api/family-data', { headers })).status).toBe(403)
     expect((await request('/api/family-data', { method: 'PUT', headers, body: JSON.stringify({ data: familyFixture() }) })).status).toBe(403)
     expect((await request('/api/login-users', { headers })).status).toBe(403)
     expect((await request('/api/login-users', {
@@ -178,12 +179,59 @@ describe('actual Worker family persistence with SQLite transactions', () => {
   })
   it('refuses anonymous access to family data and account management', async () => {
     const headers = { 'Content-Type': 'application/json' }
-    for (const path of ['/api/family-data', '/api/login-users']) {
+    for (const path of ['/api/family-data', '/api/browse-data', '/api/login-users']) {
       expect((await request(path, { headers })).status).toBe(401)
     }
     expect((await request('/api/family-data', {
       method: 'PUT', headers, body: JSON.stringify({ data: familyFixture() }),
     })).status).toBe(401)
+    expect(await read()).toEqual({ data: null, revision: 0 })
+  })
+  it('preserves all family records in a separate load-only browsing contract', async () => {
+    const data = familyFixture()
+    await read()
+    expect((await write(data, 0)).status).toBe(200)
+    const response = await request('/api/browse-data')
+    expect(response.status).toBe(200)
+    const browse = await response.json() as { contractVersion: number; data: Record<string, unknown>; revision: number }
+    expect(browse.contractVersion).toBe(1)
+    expect(browse.revision).toBe(1)
+    for (const key of ['members', 'tracks', 'events', 'aliases', 'relations', 'temporals', 'burials', 'spouses', 'childClaims'] as const) {
+      expect(browse.data[key]).toEqual(data[key])
+    }
+    expect(Object.keys(browse.data).sort()).toEqual(['schemaVersion', 'members', 'tracks', 'events', 'aliases', 'relations', 'temporals', 'burials', 'spouses', 'childClaims'].sort())
+    expect((await write(browse.data, 1)).status).toBe(400)
+    expect(await (await write(browse.data, 1)).json()).toMatchObject({ code: 'WRITE_SNAPSHOT_REQUIRED' })
+    expect(await read()).toEqual({ data, revision: 1 })
+    for (const method of ['POST', 'PUT', 'DELETE']) {
+      expect((await request('/api/browse-data', { method, body: JSON.stringify({ data }) })).status).toBe(404)
+    }
+    expect(await read()).toEqual({ data, revision: 1 })
+  })
+
+  it('allows ordinary users to read raw evidence, burial details and exact track points without maintenance access', async () => {
+    await read()
+    const data = familyFixture()
+    data.members[0]!.rawNotes = '保留原始谱文'
+    data.burials[0]!.placeRaw = '测试葬地原文'
+    expect((await write(data, 0)).status).toBe(200)
+    await request('/api/login-users', { method: 'POST', body: JSON.stringify({ mobile: '13900000002', role: 'user' }) })
+    const login = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ mobile: '13900000002' }) })
+    const { token } = await login.json() as { token: string }
+    const headers = { Authorization: `Bearer ${token}` }
+    const response = await request('/api/browse-data', { headers })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      data: { members: data.members, burials: data.burials, tracks: data.tracks },
+    })
+    expect((await request('/api/family-data', { headers })).status).toBe(403)
+    expect((await request('/api/browse-data', { method: 'PUT', headers, body: JSON.stringify({ data }) })).status).toBe(404)
+    expect(await read()).toEqual({ data, revision: 1 })
+  })
+
+  it('represents an empty browsing database explicitly without seeding or synthetic counters', async () => {
+    const response = await request('/api/browse-data')
+    expect(await response.json()).toEqual({ contractVersion: 1, data: null, revision: 0 })
     expect(await read()).toEqual({ data: null, revision: 0 })
   })
 })

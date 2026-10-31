@@ -25,13 +25,20 @@ const pageSize = ref(10)
 const editorOpen = ref(false)
 const editingId = ref<number | null>(null)
 const confirmation = ref<{ user: LoginUser; action: 'delete' | 'toggle' } | null>(null)
-const form = reactive<{ mobile: string; name: string; role: LoginUserRole }>({ mobile: '', name: '', role: 'user' })
+const form = reactive<{ mobile: string; name: string; role: LoginUserRole; password: string; confirmPassword: string }>({
+  mobile: '', name: '', role: 'user', password: '', confirmPassword: '',
+})
 let epoch = 0
 let loadSequence = 0
 let alive = true
 const authorized = computed(() => auth.ready.value && auth.isSysadmin.value)
 const busy = computed(() => submitting.value || loading.value)
 const filtered = computed(() => filterLoginUsers(users.value, keyword.value))
+const needsInitialPassword = computed(() => {
+  const current = users.value.find((item) => item.id === editingId.value)
+  return form.role === 'maintainer'
+    && (!current || current.role !== 'maintainer' || current.passwordConfigured === false)
+})
 const roleLabels: Record<LoginUserRole, string> = {
   user: '普通用户', maintainer: '数据维护人员', sysadmin: '系统管理员',
 }
@@ -84,7 +91,7 @@ function openEditor(id?: number) {
   const item = users.value.find((entry) => entry.id === id)
   if (id !== undefined && !item) return
   editingId.value = item?.id ?? null
-  Object.assign(form, { mobile: item?.mobile ?? '', name: item?.name ?? '', role: item?.role ?? 'user' })
+  Object.assign(form, { mobile: item?.mobile ?? '', name: item?.name ?? '', role: item?.role ?? 'user', password: '', confirmPassword: '' })
   actionError.value = ''
   editorOpen.value = true
 }
@@ -111,6 +118,7 @@ async function mutate(operation: () => Promise<unknown>, success: string, close:
 function save() {
   const mobile = normalizeLoginMobile(form.mobile)
   if (!mobile) { actionError.value = '手机号不能为空'; return }
+  if (!/^\+?\d{6,20}$/.test(mobile)) { actionError.value = '手机号须为 6–20 位数字，可带 + 国际区号'; return }
   const id = editingId.value
   const current = users.value.find((item) => item.id === id)
   if (id !== null && !current) { actionError.value = '账号已不存在，请刷新列表'; return }
@@ -118,7 +126,18 @@ function save() {
     actionError.value = '至少保留一个启用中的 sysadmin'
     return
   }
-  const input = { mobile, name: form.name.trim(), role: form.role }
+  if (form.role === 'maintainer') {
+    if (needsInitialPassword.value && !form.password) { actionError.value = '请为维护人员设置初始密码'; return }
+    if (form.password && (form.password.length < 8 || form.password.length > 128 || !form.password.trim())) {
+      actionError.value = '密码须为 8–128 个字符，且不能全为空格'
+      return
+    }
+    if (form.password !== form.confirmPassword) { actionError.value = '两次输入的密码不一致'; return }
+  }
+  const input = {
+    mobile, name: form.name.trim(), role: form.role,
+    ...(form.role === 'maintainer' && form.password ? { password: form.password } : {}),
+  }
   void mutate(
     async () => {
       const saved = await (id === null ? createLoginUser(input) : updateLoginUser(id, input))
@@ -147,14 +166,25 @@ function confirmAction() {
     return
   }
   void mutate(
-    () => pending.action === 'delete'
-      ? deleteLoginUser(current.id) : updateLoginUser(current.id, { enabled: !current.enabled }),
+    async () => {
+      if (pending.action === 'delete') {
+        await deleteLoginUser(current.id)
+        updateCurrentLoginUser({ ...current, enabled: false })
+      } else {
+        const saved = await updateLoginUser(current.id, { enabled: !current.enabled })
+        updateCurrentLoginUser(saved)
+      }
+    },
     pending.action === 'delete' ? '登录用户已删除' : current.enabled ? '用户已禁用' : '用户已启用',
     () => { confirmation.value = null },
   )
 }
 
 watch(keyword, () => { page.value = 1 })
+watch(() => form.role, () => { form.password = ''; form.confirmPassword = ''; actionError.value = '' })
+watch(editorOpen, (open) => {
+  if (!open) { form.password = ''; form.confirmPassword = '' }
+}, { flush: 'sync' })
 watch(() => [auth.ready.value, auth.user.value?.id, auth.isSysadmin.value] as const, () => {
   ++epoch
   ++loadSequence
@@ -209,7 +239,7 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
         </template>
         <template #emptyText>{{ loadError ? '无法读取账号，请重试' : keyword.trim() ? '没有匹配的账号' : '暂无登录账号，请新增' }}</template>
       </Table>
-      <p class="account-note">支持普通用户、数据维护人员及 sysadmin 三种角色；旧账号继续由服务端兼容。至少保留一个启用中的 sysadmin。修改仅在云端确认后生效，禁用会撤销该账号会话。</p>
+      <p class="account-note">普通用户使用手机号登录，维护人员使用各自的账号密码，系统管理员沿用服务端固定密码。至少保留一个启用中的系统管理员。修改手机号、角色、启用状态或维护人员密码会退出该账号的所有登录设备；仅改名称不会退出。</p>
     </Card>
 
     <Modal :open="authorized && editorOpen" :title="editingId === null ? '新增登录账号' : '编辑登录账号'" :footer="null" width="min(520px, calc(100vw - 32px))" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" destroy-on-close @cancel="editorOpen = false">
@@ -219,11 +249,21 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
           <Input v-model:value="form.name" :maxlength="100" placeholder="用于页面显示；未设置时显示手机号" />
         </Form.Item>
         <Form.Item name="mobile" label="登录手机号" :rules="[{ required: true, whitespace: true, message: '请输入手机号' }]">
-          <Input v-model:value="form.mobile" type="tel" autocomplete="off" placeholder="保留国际区号；格式由服务端验证" />
+          <Input v-model:value="form.mobile" type="tel" inputmode="tel" autocomplete="off" placeholder="6–20 位数字，可带 + 国际区号" />
         </Form.Item>
         <Form.Item name="role" label="角色" :rules="[{ required: true, message: '请选择角色' }]">
           <Select v-model:value="form.role" :options="roleOptions" />
         </Form.Item>
+        <template v-if="form.role === 'maintainer'">
+          <Alert type="info" show-icon :message="needsInitialPassword ? '请设置维护人员的初始密码，之后由该人员使用手机号和密码登录。' : '不修改密码请留空。重设密码后，该账号所有已登录设备都会退出。'" class="account-alert" />
+          <Form.Item name="password" :label="needsInitialPassword ? '初始密码' : '重设密码（选填）'">
+            <Input.Password v-model:value="form.password" :aria-label="needsInitialPassword ? '初始密码' : '重设密码（选填）'" autocomplete="new-password" placeholder="8–128 个字符，不能全为空格" :maxlength="128" />
+          </Form.Item>
+          <Form.Item name="confirmPassword" label="确认密码">
+            <Input.Password v-model:value="form.confirmPassword" aria-label="确认密码" autocomplete="new-password" placeholder="请再次输入新密码" :maxlength="128" />
+          </Form.Item>
+        </template>
+        <Alert v-else-if="form.role === 'sysadmin'" type="info" show-icon message="系统管理员使用服务端配置的固定密码，此处无需设置密码。" class="account-alert" />
         <div class="account-form-actions">
           <Button :disabled="submitting" @click="editorOpen = false">取消</Button>
           <Button type="primary" html-type="submit" :loading="submitting">保存到云端</Button>
@@ -244,6 +284,7 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
 .account-search { width: 320px; max-width: 100%; }
 .account-alert { margin-bottom: 16px; }
 .account-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.account-form-actions :deep(.ant-btn-primary) { min-height: 44px; }
 .account-note { color: #64748b; margin: 16px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 .login-user-manager :deep(.ant-card-body) { min-width: 0; }
 .login-user-manager :deep(.ant-table-wrapper) { max-width: 100%; min-width: 0; }

@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+import { normalizeFamilyBrowseData } from '../../src/services/familyBrowseData'
 
 const members = Array.from({ length: 600 }, (_, index) => ({
   id: index + 1,
@@ -29,6 +30,7 @@ test.beforeEach(async ({ page }) => {
     const path = new URL(route.request().url()).pathname
     if (route.request().method() !== 'GET') throw new Error('Layout tests must not write data')
     if (path === '/api/auth/session') return route.fulfill({ json: { user } })
+    if (path === '/api/browse-data') return route.fulfill({ json: { contractVersion: 1, data: normalizeFamilyBrowseData(data), revision: 1 } })
     if (path === '/api/family-data') return route.fulfill({ json: { data, revision: 1 } })
     if (path === '/api/login-users') return route.fulfill({ json: { users: [user] } })
     throw new Error(`Unexpected API request: ${path}`)
@@ -110,3 +112,50 @@ test('phone rotation preserves a manually chosen depth and keeps the page contai
   await page.setViewportSize({ width: 390, height: 844 })
   await expectNoPageOverflow(page)
 })
+
+test('management navigation opens from the header and can change pages', async ({ page, isMobile }) => {
+  await page.goto('/app/system')
+  const toggle = page.getByRole('button', { name: '展开导航', exact: true })
+  if (!isMobile) {
+    await page.getByRole('button', { name: '收起导航', exact: true }).click()
+  }
+  await expect(toggle).toBeVisible()
+  if (isMobile) await toggle.tap()
+  else await toggle.click()
+  await expect(page.getByRole('button', { name: '收起导航', exact: true })).toHaveAttribute('aria-expanded', 'true')
+  const manage = page.getByRole('menuitem', { name: '数据维护', exact: false })
+  await expect(manage).toBeVisible()
+  if (isMobile) await manage.tap()
+  else await manage.click()
+  await expect(page).toHaveURL(/\/app\/manage$/)
+  await expectNoPageOverflow(page)
+})
+
+test('the mobile header brand returns from system management to the family directory', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'The desktop brand lives in the sidebar')
+  await page.goto('/app/system')
+  const brand = page.locator('header .workspace-brand')
+  await expect(brand).toBeVisible()
+  await brand.tap()
+  await expect(page).toHaveURL(/\/app\/overview$/)
+  await expect(page.getByRole('tab', { name: '找家人', exact: true })).toBeVisible()
+})
+
+for (const input of ['touch', 'mouse'] as const) {
+  test(`mobile header controls respond to ${input} input with the account menu open after scrolling`, async ({ page, isMobile }) => {
+    test.skip(!isMobile, 'Mobile input interaction regression')
+    const activate = (target: Locator) => input === 'touch' ? target.tap() : target.click()
+    await page.goto('/app/system')
+    await page.getByText('D1 云端诊断', { exact: true }).scrollIntoViewIfNeeded()
+    await activate(page.getByRole('button', { name: /^账号菜单：/ }))
+    await expect(page.getByRole('menuitem', { name: '使用帮助' })).toBeVisible()
+    await activate(page.getByRole('button', { name: '展开导航', exact: true }))
+    await expect(page.getByRole('button', { name: '收起导航', exact: true })).toHaveAttribute('aria-expanded', 'true')
+    await activate(page.getByRole('menuitem', { name: '系统管理', exact: false }))
+    await expect(page.getByRole('button', { name: '展开导航', exact: true })).toHaveAttribute('aria-expanded', 'false')
+    await activate(page.getByRole('button', { name: /^账号菜单：/ }))
+    await expect(page.getByRole('menuitem', { name: '使用帮助' })).toBeVisible()
+    await activate(page.locator('header .workspace-brand'))
+    await expect(page).toHaveURL(/\/app\/overview$/)
+  })
+}

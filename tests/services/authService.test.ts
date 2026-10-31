@@ -9,7 +9,10 @@ const api = vi.hoisted(() => ({
   logoutCurrentSession: vi.fn(),
   setSessionToken: vi.fn(),
 }))
-vi.mock('../../src/services/d1ApiService', () => api)
+vi.mock('../../src/services/d1ApiService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/services/d1ApiService')>(),
+  ...api,
+}))
 
 const user: LoginUser = {
   id: 1, mobile: '13900000001', role: 'user', enabled: true,
@@ -91,5 +94,61 @@ describe('authentication lifecycle', () => {
     expect(api.logoutCurrentSession).toHaveBeenCalledOnce()
     expect(saved.has('family_auth_session_token')).toBe(false)
     expect(auth.useAuth().role.value).toBe('anonymous')
+  })
+
+  it('exposes typed password challenges without authenticating or persisting passwords', async () => {
+    const { ApiError } = await import('../../src/services/d1ApiService')
+    api.loginWithMobile.mockRejectedValueOnce(new ApiError('请输入账号密码', 401, 'PASSWORD_REQUIRED'))
+    const auth = await import('../../src/services/authService')
+    expect(await auth.loginAsUserByMobile(' +852 1234 5678 ')).toEqual({
+      ok: false, message: '请输入账号密码', code: 'PASSWORD_REQUIRED',
+    })
+    expect(api.loginWithMobile).toHaveBeenLastCalledWith('+85212345678', undefined)
+    expect(auth.useAuth().isAuthenticated.value).toBe(false)
+    api.loginWithMobile.mockResolvedValueOnce({ user: { ...user, role: 'maintainer' }, token: 'session' })
+    await auth.loginAsUserByMobile(user.mobile, ' password with spaces ')
+    expect(api.loginWithMobile).toHaveBeenLastCalledWith(user.mobile, ' password with spaces ')
+    expect([...saved.values()]).toEqual(['session'])
+  })
+
+  it.each(['PASSWORD_NOT_SET', 'INVALID_PASSWORD', 'INVALID_SYSADMIN_PASSWORD', 'USER_DISABLED', 'USER_NOT_FOUND'])('preserves %s errors for the login page', async (code) => {
+    const { ApiError } = await import('../../src/services/d1ApiService')
+    api.loginWithMobile.mockRejectedValue(new ApiError('服务端提示', 403, code))
+    const auth = await import('../../src/services/authService')
+    expect(await auth.loginAsUserByMobile(user.mobile)).toEqual({ ok: false, message: '服务端提示', code })
+    expect(saved.size).toBe(0)
+  })
+
+  it('ignores a successful response after the login identity has changed', async () => {
+    let resolve!: (session: unknown) => void
+    api.loginWithMobile.mockReturnValue(new Promise((done) => { resolve = done }))
+    const auth = await import('../../src/services/authService')
+    const pending = auth.loginAsUserByMobile(user.mobile)
+    auth.cancelPendingLogin()
+    resolve({ user, token: 'stale-session' })
+    expect((await pending).code).toBe('AUTH_REQUEST_CANCELLED')
+    expect(auth.useAuth().isAuthenticated.value).toBe(false)
+    expect(saved.size).toBe(0)
+  })
+
+  it.each([
+    { role: 'maintainer' as const },
+    { role: 'sysadmin' as const },
+    { mobile: '+85212345678' },
+    { enabled: false },
+  ])('clears the token instead of applying an invalidating self edit: %j', async (changes) => {
+    api.loginWithMobile.mockResolvedValue({ user, token: 'session' })
+    const auth = await import('../../src/services/authService')
+    await auth.loginAsUserByMobile(user.mobile)
+    auth.updateCurrentLoginUser({ ...user, ...changes })
+    expect(auth.useAuth().role.value).toBe('anonymous')
+    expect(saved.size).toBe(0)
+    expect(api.setSessionToken).toHaveBeenLastCalledWith(null)
+  })
+
+  it.each(['12345', '+123456789012345678901', 'legacy-account'])('rejects invalid phone %s without a request', async (mobile) => {
+    const auth = await import('../../src/services/authService')
+    expect((await auth.loginAsUserByMobile(mobile)).ok).toBe(false)
+    expect(api.loginWithMobile).not.toHaveBeenCalled()
   })
 })

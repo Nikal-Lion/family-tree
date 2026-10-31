@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { createEmptyFamilyData } from '../../src/services/importExport'
+import { toFamilyBrowseData } from '../../src/services/familyBrowseData'
 import type { UserRole } from '../../src/types/auth'
 import { familyFixture } from '../fixtures/familyData'
 
@@ -25,7 +26,7 @@ async function mockBrowsing(page: Page, role: UserRole = 'user', data = familyFi
     }
     const path = new URL(request.url()).pathname
     if (path === '/api/auth/session') return route.fulfill({ json: { user } })
-    if (path === '/api/family-data') return route.fulfill({ json: { data, revision: 1 } })
+    if (path === '/api/browse-data') return route.fulfill({ json: { contractVersion: 1, data: toFamilyBrowseData(data), revision: 1 } })
     throw new Error(`Unexpected browsing request: ${path}`)
   })
   return mutations
@@ -64,12 +65,12 @@ test('an empty family has a read-only empty state rather than an import prompt',
 test('a failed read shows a retry action rather than pretending the family is empty', async ({ page }) => {
   const mutations = await mockBrowsing(page)
   let failing = true
-  await page.route((url) => url.pathname === '/api/family-data', async (route) => {
+  await page.route((url) => url.pathname === '/api/browse-data', async (route) => {
     expect(route.request().method()).toBe('GET')
     if (failing) return route.fulfill({ status: 503, json: { error: '模拟加载失败' } })
     const data = familyFixture()
     data.members[0]!.photoUrl = ''
-    return route.fulfill({ json: { data, revision: 1 } })
+    return route.fulfill({ json: { contractVersion: 1, data: toFamilyBrowseData(data), revision: 1 } })
   })
   await page.goto('/app/overview')
   await expect(page.getByText('族谱加载失败', { exact: true })).toBeVisible()

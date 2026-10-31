@@ -1,63 +1,78 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Alert, Button, Form, Input, Segmented, Tag } from 'ant-design-vue'
+import { Alert, Button, Form, Input, Tag } from 'ant-design-vue'
 import { ApartmentOutlined, BookOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
 import {
   initializeFirstSysadmin,
   loginAsUserByMobile,
-  loginWithSysadminPassword,
+  cancelPendingLogin,
   useAuth,
 } from '../services/authService'
 import { resolveLoginRedirect } from '../services/accessControl'
 
-type LoginMode = 'user' | 'sysadmin' | 'bootstrap'
 const route = useRoute()
 const router = useRouter()
 const { role } = useAuth()
-const mode = ref<LoginMode>('user')
+const bootstrap = ref(false)
+const passwordRequired = ref(false)
 const pending = ref(false)
 const errorMessage = ref('')
 const form = reactive({ mobile: '', password: '', confirmPassword: '' })
-const needsPassword = computed(() => mode.value !== 'user')
-const modeOptions = [
-  { label: '成员 / 维护人员', value: 'user' },
-  { label: '系统管理员', value: 'sysadmin' },
-  { label: '首次初始化', value: 'bootstrap' },
-]
-const descriptions = {
-  user: '使用已登记的手机号登录，系统将自动识别你的角色。',
-  sysadmin: '使用管理员手机号及验证密码登录，管理家族资料与系统设置。',
-  bootstrap: '仅首次使用时操作。验证密码须与服务端管理员密钥配置一致。',
-}
+const needsPassword = computed(() => bootstrap.value || passwordRequired.value)
+let requestSequence = 0
 
-watch(mode, () => {
+function resetLogin() {
+  ++requestSequence
+  cancelPendingLogin()
+  pending.value = false
+  passwordRequired.value = false
   errorMessage.value = ''
   form.password = ''
   form.confirmPassword = ''
-})
+}
+
+watch([() => form.mobile, bootstrap], resetLogin, { flush: 'sync' })
+onUnmounted(resetLogin)
+
+async function changePhone() {
+  resetLogin()
+  await nextTick()
+  document.getElementById('login-mobile')?.focus()
+}
 
 async function submit() {
   if (pending.value) return
   errorMessage.value = ''
-  if (mode.value === 'bootstrap' && form.password !== form.confirmPassword) {
+  const mobile = form.mobile.trim().replace(/\s+/g, '')
+  if (!/^\+?\d{6,20}$/.test(mobile)) {
+    errorMessage.value = '请输入有效的手机号（可含国际区号，6–20 位数字）'
+    return
+  }
+  if (bootstrap.value && form.password !== form.confirmPassword) {
     errorMessage.value = '两次输入的密码不一致'
     return
   }
   pending.value = true
+  const started = ++requestSequence
   try {
-    const result = mode.value === 'user'
-      ? await loginAsUserByMobile(form.mobile)
-      : mode.value === 'sysadmin'
-        ? await loginWithSysadminPassword(form.mobile, form.password)
-        : await initializeFirstSysadmin(form.mobile, form.password)
+    const result = bootstrap.value
+      ? await initializeFirstSysadmin(mobile, form.password)
+      : await loginAsUserByMobile(mobile, passwordRequired.value ? form.password : undefined)
+    if (started !== requestSequence) return
     if (!result.ok) {
+      if (result.code === 'PASSWORD_REQUIRED' && !bootstrap.value) {
+        passwordRequired.value = true
+        await nextTick()
+        if (started !== requestSequence) return
+        document.getElementById('login-password')?.focus()
+      }
       errorMessage.value = result.message
       return
     }
     await router.replace(resolveLoginRedirect(route.query.redirect, role.value))
   } finally {
-    pending.value = false
+    if (started === requestSequence) pending.value = false
   }
 }
 </script>
@@ -85,38 +100,41 @@ async function submit() {
       <div class="login-card">
         <div class="login-mobile-brand"><BookOutlined /> 家族云谱</div>
         <h2>欢迎回来</h2>
-        <p class="login-subtitle">登录后，继续整理与探索你的家族故事。</p>
-        <Segmented v-model:value="mode" :options="modeOptions" block :disabled="pending" />
-        <p class="login-mode-description">{{ descriptions[mode] }}</p>
-        <Form :model="form" layout="vertical" size="large" :disabled="pending" @finish="submit">
+        <p class="login-subtitle">登录后，找到家人，查看族谱与家族故事。</p>
+        <p class="login-mode-description">{{ bootstrap ? '仅首次启用时使用。请填写与服务端配置一致的系统管理员固定密码。' : '输入已登记的手机号即可继续；管理人员还需验证密码，系统会自动识别账号权限。' }}</p>
+        <Form :model="form" layout="vertical" size="large" @finish="submit">
           <Form.Item
             label="手机号"
             name="mobile"
-            :rules="[{ required: true, message: '请输入手机号' }, { pattern: /^1\d{10}$/, message: '请输入有效的 11 位手机号' }]"
+            :rules="[{ required: true, message: '请输入手机号' }]"
           >
-            <Input v-model:value="form.mobile" type="tel" autocomplete="username" placeholder="请输入已登记的手机号" :maxlength="11" />
+            <Input id="login-mobile" v-model:value="form.mobile" aria-label="手机号" type="tel" inputmode="tel" autocomplete="username" placeholder="请输入已登记的手机号（可含国际区号）" :readonly="passwordRequired" />
           </Form.Item>
+          <Button v-if="passwordRequired" type="link" class="change-phone" @click="changePhone">更换手机号</Button>
           <Form.Item
             v-if="needsPassword"
-            label="管理员验证密码"
+            :label="bootstrap ? '系统管理员固定密码' : '账号密码'"
             name="password"
-            :rules="[{ required: true, message: '请输入管理员验证密码' }]"
+            :rules="[{ required: true, message: '请输入密码' }]"
           >
-            <Input.Password v-model:value="form.password" autocomplete="current-password" placeholder="请输入管理员验证密码" />
+            <Input.Password id="login-password" v-model:value="form.password" :aria-label="bootstrap ? '系统管理员固定密码' : '账号密码'" autocomplete="current-password" placeholder="请输入此账号的密码" />
           </Form.Item>
           <Form.Item
-            v-if="mode === 'bootstrap'"
+            v-if="bootstrap"
             label="确认密码"
             name="confirmPassword"
             :rules="[{ required: true, message: '请再次输入密码' }]"
           >
-            <Input.Password v-model:value="form.confirmPassword" autocomplete="current-password" placeholder="请再次输入管理员验证密码" />
+            <Input.Password v-model:value="form.confirmPassword" aria-label="确认密码" autocomplete="current-password" placeholder="请再次输入系统管理员固定密码" />
           </Form.Item>
           <Alert v-if="errorMessage" :message="errorMessage" type="error" show-icon class="login-error" role="alert" />
-          <Button type="primary" html-type="submit" block :loading="pending">
-            {{ mode === 'bootstrap' ? '初始化并登录' : '登录' }}
+          <Button type="primary" html-type="submit" block :loading="pending" class="login-submit">
+            {{ bootstrap ? '初始化并登录' : passwordRequired ? '验证并登录' : '登录' }}
           </Button>
         </Form>
+        <Button type="link" class="bootstrap-toggle" :aria-expanded="bootstrap" @click="bootstrap = !bootstrap">
+          {{ bootstrap ? '返回账号登录' : '首次启用？初始化系统管理员' }}
+        </Button>
         <div class="login-access-note"><SafetyCertificateOutlined /><span>账号由管理员维护，按角色开放数据与管理权限。</span></div>
       </div>
       <footer class="login-form-footer">家族云谱 · 用心留存每一代</footer>
@@ -146,6 +164,10 @@ async function submit() {
 .login-subtitle { color: #98a2b3; margin: 0 0 30px; line-height: 1.8; }
 .login-mode-description { color: #98a2b3; min-height: 44px; font-size: 12px; line-height: 1.8; margin: 16px 0 20px; }
 .login-error { margin-bottom: 20px; }
+.login-submit, .bootstrap-toggle, .change-phone { min-height: 44px; }
+.login-card :deep(.ant-input), .login-card :deep(.ant-input-affix-wrapper) { min-height: 44px; }
+.change-phone { margin: -20px 0 12px; padding-left: 0; }
+.bootstrap-toggle { margin-top: 12px; padding-left: 0; white-space: normal; height: auto; }
 .login-access-note { display: flex; justify-content: center; gap: 7px; margin-top: 24px; color: #98a2b3; font-size: 12px; line-height: 1.8; }
 .login-form-footer { position: absolute; bottom: 24px; color: #b0b7c3; font-size: 12px; }
 .login-mobile-brand { display: none; }

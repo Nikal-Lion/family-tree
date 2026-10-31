@@ -14,10 +14,18 @@ import { ACTIVITY_EVENT_TYPES, filterActivityEvents, filterActivityTracks } from
 import { computeGenerations, countByGeneration, getMaxGeneration } from '../services/generationService'
 import { openTrackNavigation } from '../services/navigationBridge'
 import { filterOverviewMembers, getAncestorIds, getBranchTreeMembers } from '../services/overview'
-import { useFamilyStore } from '../stores/familyStore'
+import { createFamilyBrowseStore } from '../stores/familyBrowseStore'
+import { useAuth } from '../services/authService'
 import type { FamilyEvent, FamilyEventType, Member, Track } from '../types/member'
 
-const store = useFamilyStore()
+const auth = useAuth()
+const accountKey = computed(() => {
+  const user = auth.user.value
+  return user?.enabled ? `${user.id}:${user.mobile}:${user.role}` : null
+})
+const store = createFamilyBrowseStore(accountKey)
+let loadGeneration = 0
+let disposed = false
 const mobile = useMobile()
 const initializing = ref(true)
 const refreshing = ref(false)
@@ -154,23 +162,33 @@ watch(members, () => {
 })
 
 async function load() {
-  if (refreshing.value) return
+  const started = ++loadGeneration
+  refreshing.value = false
   initializing.value = true
   loadError.value = ''
+  syncError.value = ''
   try { await store.init() }
-  catch (error) { loadError.value = error instanceof Error ? error.message : '无法加载云端族谱' }
-  finally { initializing.value = false }
+  catch (error) {
+    if (!disposed && started === loadGeneration) loadError.value = error instanceof Error ? error.message : '无法加载云端族谱'
+  }
+  finally { if (!disposed && started === loadGeneration) initializing.value = false }
 }
 async function refresh() {
-  if (initializing.value || refreshing.value || !store.ready.value || store.saving.value) return
+  if (initializing.value || refreshing.value || !store.ready.value) return
+  const started = loadGeneration
   refreshing.value = true
   try {
     await store.syncFromCloud()
-    syncError.value = ''
+    if (!disposed && started === loadGeneration) syncError.value = ''
   } catch (error) {
-    syncError.value = error instanceof Error ? error.message : '同步云端数据失败'
-  } finally { refreshing.value = false }
+    if (!disposed && started === loadGeneration) syncError.value = error instanceof Error ? error.message : '同步云端数据失败'
+  } finally { if (!disposed && started === loadGeneration) refreshing.value = false }
 }
+watch(accountKey, () => {
+  detailOpen.value = false
+  archiveHistory.value = []
+  void load()
+}, { flush: 'sync' })
 function onFocus() { void refresh() }
 function onVisibility() { if (document.visibilityState === 'visible') void refresh() }
 onMounted(() => {
@@ -179,6 +197,9 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onVisibility)
 })
 onBeforeUnmount(() => {
+  disposed = true
+  loadGeneration += 1
+  store.dispose()
   window.removeEventListener('focus', onFocus)
   document.removeEventListener('visibilitychange', onVisibility)
 })
@@ -203,7 +224,7 @@ function navigate(id: number) {
   <div class="family-overview">
     <header class="overview-heading">
       <div><h1>找家人，读族谱</h1><p>先搜索姓名，查看人物档案，再了解已记录的家族关系。浏览不会修改资料。</p></div>
-      <Button :loading="refreshing" :disabled="initializing || !!loadError || store.saving.value" @click="refresh"><template #icon><ReloadOutlined /></template>刷新资料</Button>
+      <Button :loading="refreshing" :disabled="initializing || !!loadError" @click="refresh"><template #icon><ReloadOutlined /></template>刷新资料</Button>
     </header>
     <Alert v-if="loadError" type="error" show-icon message="族谱加载失败" :description="loadError">
       <template #action><Button @click="load">重试</Button></template>
@@ -304,7 +325,7 @@ function navigate(id: number) {
     </template>
     <Drawer v-model:open="detailOpen" :title="selected ? `${selected.name} · 人物档案` : '人物档案'" width="min(680px, 100vw)">
       <template #extra><Button v-if="archiveHistory.length" class="overview-archive-back" @click="previousArchive">返回上一位</Button></template>
-      <div ref="archiveContent"><MemberArchive :member="selected" @select="select" @view-tree="viewTree" /></div>
+      <div ref="archiveContent"><MemberArchive :member="selected" :data="store.data.value" @select="select" @view-tree="viewTree" /></div>
     </Drawer>
   </div>
 </template>
