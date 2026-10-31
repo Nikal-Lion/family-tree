@@ -1262,6 +1262,13 @@ export default {
       await ensureSchema(env.DB)
       const auth = await resolveAuth(request, env)
 
+      if (request.method === 'GET' && url.pathname === '/api/auth/status') {
+        const existing = await env.DB
+          .prepare("SELECT COUNT(*) AS count FROM login_users WHERE role = 'sysadmin'")
+          .all<{ count: number | string }>()
+        return jsonResponse({ initialized: Number(existing.results?.[0]?.count ?? 0) > 0 })
+      }
+
       if (request.method === 'POST' && url.pathname === '/api/auth/bootstrap-sysadmin') {
         const payload = parseJsonBody<{ mobile?: string; password?: string }>(await request.json())
         if (!payload) {
@@ -1313,7 +1320,7 @@ export default {
         })
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/auth/login') {
+      if (request.method === 'POST' && ['/api/auth/login', '/api/auth/login-options'].includes(url.pathname)) {
         const payload = parseJsonBody<{ mobile?: string; password?: string }>(await request.json())
         if (!payload) {
           return errorResponse('请求体格式错误', 400, 'BAD_REQUEST')
@@ -1336,13 +1343,17 @@ export default {
           return errorResponse('登录失败：手机号不存在或已禁用', 401, 'LOGIN_FAILED')
         }
 
+        if (user.role === 'maintainer' && !user.password_hash) {
+          return errorResponse('此维护账号尚未设置密码，请联系系统管理员设置后登录', 403, 'PASSWORD_NOT_SET')
+        }
+        if (url.pathname === '/api/auth/login-options') {
+          return jsonResponse({ passwordRequired: user.role !== 'user' })
+        }
+
         const password = typeof payload.password === 'string' ? payload.password : ''
         if (user.role === 'maintainer') {
-          if (!user.password_hash) {
-            return errorResponse('此维护账号尚未设置密码，请联系系统管理员设置后登录', 403, 'PASSWORD_NOT_SET')
-          }
           if (!password) return errorResponse('此账号需要密码，请输入后继续登录', 401, 'PASSWORD_REQUIRED')
-          if (password.length > 128 || !await verifyMaintainerPassword(password, user.password_hash)) {
+          if (password.length > 128 || !user.password_hash || !await verifyMaintainerPassword(password, user.password_hash)) {
             return errorResponse('密码错误，请重新输入；忘记密码请联系系统管理员', 401, 'INVALID_PASSWORD')
           }
         } else if (user.role === 'sysadmin') {

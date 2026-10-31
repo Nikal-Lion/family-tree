@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
-  Alert, Button, Card, Checkbox, Descriptions, Drawer, Empty, Form, Image, Input,
+  Alert, Button, Card, Checkbox, Empty, Form, Image, Input,
   InputNumber, List, Modal, Select, Space, Table, Tag, message,
   type TableProps,
 } from 'ant-design-vue'
@@ -14,6 +14,8 @@ import { canAssignParent } from '../services/validators'
 import type { Member, UncertaintyFlag } from '../types/member'
 import type { SpouseInput, SpouseRelation } from '../types/spouse'
 import MemberCardList from './MemberCardList.vue'
+import ProfileFields from './ProfileFields.vue'
+import WorkspaceDrawer from './WorkspaceDrawer.vue'
 import { useMobile } from '../composables/useMobile'
 
 const store = useFamilyStore()
@@ -21,7 +23,6 @@ const mobile = useMobile()
 const initializing = ref(true)
 const loadError = ref('')
 const keyword = ref('')
-const gender = ref<string>()
 const page = ref(1)
 const pageSize = ref(10)
 const editingId = ref<number | null>(null)
@@ -42,13 +43,12 @@ const byId = computed(() => new Map(members.value.map((member) => [member.id, me
 const filtered = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   return members.value.filter((member) => (
-    (!gender.value || member.gender === gender.value)
-    && (!query || [member.name, String(member.id), member.lineageBranch ?? '',
+    (!query || [member.name, String(member.id), member.lineageBranch ?? '',
       ...store.aliases.value.filter((alias) => alias.memberId === member.id).map((alias) => alias.name),
     ].some((value) => value.toLowerCase().includes(query)))
   ))
 })
-watch([keyword, gender], () => { page.value = 1 })
+watch(keyword, () => { page.value = 1 })
 watch(() => filtered.value.length, (total) => {
   page.value = Math.min(page.value, Math.max(1, Math.ceil(total / pageSize.value)))
 })
@@ -191,7 +191,6 @@ function removeSpouse(id: number) {
           <Input v-model:value="keyword" allow-clear placeholder="搜索姓名、ID、分支或别名" class="member-search">
             <template #prefix><SearchOutlined /></template>
           </Input>
-          <Select v-model:value="gender" allow-clear placeholder="全部性别" :options="[{label:'男',value:'男'}, {label:'女',value:'女'}]" style="width:120px" />
         </Space>
         <Space>
           <Button :disabled="busy || initializing" @click="load(true)"><template #icon><ReloadOutlined /></template>刷新</Button>
@@ -237,26 +236,28 @@ function removeSpouse(id: number) {
     </Form>
   </Modal>
 
-  <Drawer v-model:open="detailOpen" :title="selected ? `${selected.name} · 人物档案` : '人物档案'" width="min(680px, 100vw)">
+  <WorkspaceDrawer v-model:open="detailOpen" :title="selected ? `${selected.name} · 人物档案` : '人物档案'">
     <template v-if="selected">
-      <Space class="member-detail-actions" wrap>
+      <div class="member-detail-identity">
         <Tag color="blue">ID {{ selected.id }}</Tag><Tag>{{ selected.gender }}</Tag>
+      </div>
+      <div class="member-detail-actions">
         <Button :disabled="busy" @click="openEditor(selected)">编辑档案</Button>
         <Button :disabled="busy" @click="openEditor(undefined, selected.id)">添加子女</Button>
         <Button danger :disabled="busy" @click="remove(selected.id)">删除</Button>
-      </Space>
+      </div>
       <Image v-if="selected.photoUrl" :src="selected.photoUrl" :width="120" :alt="selected.name" />
-      <Descriptions bordered :column="1" size="small">
-        <Descriptions.Item label="父亲">{{ selected.parentId === null ? '始祖 / 未录父亲' : nameOf(selected.parentId) }}</Descriptions.Item>
-        <Descriptions.Item label="出生日期">{{ selected.birthDate || '未记录' }}</Descriptions.Item>
-        <Descriptions.Item label="谱载代数">{{ selected.generationNumber || '未确定' }}</Descriptions.Item>
-        <Descriptions.Item label="相对树层级">{{ generations.get(selected.id) ?? '未确定' }}</Descriptions.Item>
-        <Descriptions.Item label="世代原文">{{ selected.generationLabelRaw || '未记录' }}</Descriptions.Item>
-        <Descriptions.Item label="分支">{{ selected.lineageBranch || '未记录' }}</Descriptions.Item>
-        <Descriptions.Item label="生平"><span class="member-preserved-text">{{ selected.biography || '未记录' }}</span></Descriptions.Item>
-        <Descriptions.Item label="谱文备注"><span class="member-preserved-text">{{ selected.rawNotes || '未记录' }}</span></Descriptions.Item>
-        <Descriptions.Item label="不确定标记">{{ flagOptions.filter(option=>selected?.uncertaintyFlags?.includes(option.value)).map(option=>option.label).join('、') || '无' }}</Descriptions.Item>
-      </Descriptions>
+      <ProfileFields :fields="[
+        { label: '父亲', value: selected.parentId === null ? '始祖 / 未录父亲' : nameOf(selected.parentId) },
+        { label: '出生日期', value: selected.birthDate || '未记录' },
+        { label: '谱载代数', value: selected.generationNumber || '未确定' },
+        { label: '相对树层级', value: generations.get(selected.id) ?? '未确定' },
+        { label: '世代原文', value: selected.generationLabelRaw || '未记录' },
+        { label: '分支', value: selected.lineageBranch || '未记录' },
+        { label: '生平', value: selected.biography || '未记录' },
+        { label: '谱文备注', value: selected.rawNotes || '未记录' },
+        { label: '不确定标记', value: flagOptions.filter(option=>selected?.uncertaintyFlags?.includes(option.value)).map(option=>option.label).join('、') || '无' },
+      ]" />
       <Card title="配偶记录" size="small" class="member-detail-card">
         <template #extra><Button type="link" :disabled="busy" @click="openSpouse()">添加配偶</Button></template>
         <Empty v-if="!selectedSpouses.length" :image="Empty.PRESENTED_IMAGE_SIMPLE" description="暂无配偶记录" />
@@ -281,7 +282,7 @@ function removeSpouse(id: number) {
         <p v-if="!selectedAliases.length && !selectedRelations.length && !selectedTemporals.length && !selectedBurials.length" class="member-save-note">暂无附加资料</p>
       </Card>
     </template>
-  </Drawer>
+  </WorkspaceDrawer>
 
   <Modal v-model:open="spouseOpen" title="添加配偶记录" :footer="null" :closable="!busy" :mask-closable="!busy" :keyboard="!busy">
     <Form :model="spouseForm" layout="vertical" :disabled="busy" @finish="addSpouse">

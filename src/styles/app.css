@@ -3,7 +3,10 @@
 }
 
 html, body { max-width: 100%; overflow-x: hidden; overflow-x: clip; }
-body { width: 100%; margin: 0; background: #f4f6f9; }
+/* A viewport-height body collapses the document when a drawer locks overflow. */
+body { width: 100%; height: auto; min-height: 100vh; margin: 0; background: #f4f6f9; }
+/* Ant overlays lock body; the document remains the page's scroll container. */
+html:has(.ant-drawer-open, .ant-modal-wrap:not([style*="display: none"])) { overflow-y: hidden; }
 #app { width: 100%; min-width: 0; min-height: 100vh; }
 *, *::before, *::after { box-sizing: border-box; }
 .workspace-shell, .workspace-shell main { min-width: 0; max-width: 100%; }
@@ -38,7 +41,9 @@ body { width: 100%; margin: 0; background: #f4f6f9; }
 .member-search { width: 280px; max-width: 100%; }
 .member-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
 .member-form-actions { display: flex; justify-content: flex-end; gap: 12px; }
-.member-detail-actions { margin-bottom: 20px; }
+.member-detail-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.member-detail-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 20px; }
+.member-detail-actions .ant-btn { min-height: 44px; padding-inline: 8px; }
 .member-detail-card { margin-top: 20px; }
 .member-preserved-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .workspace-shell .legacy-workspace .workspace-tools-layout .right-pane { width: 100%; min-width: 0; background: transparent; border: 0; box-shadow: none; }
@@ -54,6 +59,23 @@ button, input, textarea, select { font: inherit; }
 .ant-btn > .anticon > svg { display: block; }
 .ant-btn-icon-only { padding-inline: 0; }
 .workspace-shell { min-height: 100vh; background: #f4f6f9; }
+.workspace-shell main { display: flow-root; }
+.workspace-drawer-content { min-width: 0; outline: none; }
+.workspace-drawer .ant-drawer-body { overscroll-behavior-y: contain; }
+.workspace-drawer .ant-drawer-header { padding-top: max(16px, env(safe-area-inset-top)); }
+.workspace-drawer .ant-drawer-body { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.workspace-drawer .ant-drawer-content-wrapper,
+.workspace-drawer .ant-drawer-mask { transition-duration: 240ms !important; transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important; }
+.workspace-drawer .ant-drawer-content-wrapper { transition-property: transform, opacity !important; }
+@media (max-width: 767px) {
+  .workspace-drawer .ant-drawer-panel-motion-right-enter-start,
+  .workspace-drawer .ant-drawer-panel-motion-right-leave-active { transform: translateX(24px) !important; opacity: 0; }
+  .workspace-drawer .ant-drawer-panel-motion-right-enter-active { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-drawer .ant-drawer-content-wrapper, .workspace-drawer .ant-drawer-mask { transition-duration: 1ms !important; }
+  .workspace-drawer .ant-drawer-content-wrapper { transform: none !important; }
+}
 .workspace-brand { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 20px; color: #172033; font-size: 18px; font-weight: 700; white-space: nowrap; }
 .workspace-brand-icon { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border-radius: 10px; color: #fff; background: #4f46e5; }
 .workspace-menu-caption { padding: 24px 24px 12px; color: #98a2b3; font-size: 11px; letter-spacing: 2px; }
@@ -97,6 +119,9 @@ button, input, textarea, select { font: inherit; }
 .workspace-shell .legacy-workspace .footer { color: #98a2b3; }
 .workspace-shell-browse .legacy-workspace .page { max-width: 1600px; margin: auto; }
 @media (max-width: 767px) {
+  input.ant-input, textarea.ant-input, .ant-input-number-input,
+  .ant-select, .ant-select .ant-select-selector, .ant-select .ant-select-selection-search-input { font-size: 16px !important; }
+  .workspace-drawer .ant-drawer-body { padding-inline: 16px; }
   .workspace-brand { padding: 0 8px; gap: 8px; font-size: 16px; }
   .workspace-shell header > div:first-child { flex-shrink: 0; }
   .workspace-shell header .workspace-brand-name { display: none; }

@@ -9,7 +9,9 @@ burials and exact track points; it is not a sensitive-field filtering policy.
 
 ## Sysadmin Initialization (Bootstrap)
 
-1. A secondary first-time setup entry opens sysadmin bootstrap; it is not a role selector.
+1. `GET /api/auth/status` checks initialization before showing the secondary
+   first-time setup entry; initialized systems hide it. Detection failures show a
+   retry instead of assuming an empty system. This entry is not a role selector.
 2. It requires mobile number and sysadmin password.
 3. Server checks whether any sysadmin already exists, including disabled accounts.
 4. If no sysadmin exists and password hash validation passes:
@@ -21,16 +23,25 @@ burials and exact track points; it is not a sensitive-field filtering policy.
 
 1. The default login form starts with one registered mobile number. It accepts an
    optional international `+` prefix and 6–20 digits, removing whitespace.
-2. `POST /api/auth/login` resolves the enabled account's role on the server:
+2. Leaving the phone field calls `POST /api/auth/login-options`. This anonymous,
+   no-store query returns only `passwordRequired`, not an identity, role or token,
+   and never creates a session. Management accounts reveal the password field
+   before submitting; ordinary accounts still require an explicit login action.
+   Changing the phone discards pending lookup results and clears the password.
+3. `POST /api/auth/login` resolves the enabled account's role on the server:
    ordinary users log in directly, maintainers require their own account password,
    and sysadmins require the existing fixed server-configured password.
-3. `PASSWORD_REQUIRED` reveals a password field without asking the user to select
+4. `PASSWORD_REQUIRED` also reveals a password field when submitting without a
+   prior lookup, without asking the user to select
    a role. `PASSWORD_NOT_SET` asks legacy maintainers to contact a system
    administrator; it never falls back to phone-only maintenance access.
-4. Successful login creates a server-side session and returns token plus role.
-5. Frontend stores token, initializes auth state on app start, and validates current session.
-6. Router guard redirects unauthenticated users away from protected workspace routes.
-7. Logout revokes the server session and clears client auth state.
+5. Successful login creates a server-side session and returns token plus role.
+6. Frontend stores token, initializes auth state on app start, and validates current session.
+7. Router guard redirects unauthenticated users away from protected workspace routes.
+8. Ordinary users automatically see the usage guide on their first visit in this
+   browser. Only a local display preference is stored; the account menu can
+   reopen the guide. Existing “do not show again” preferences are respected.
+9. Logout revokes the server session and clears client auth state.
 
 ## Role and Access Behavior
 
@@ -82,8 +93,9 @@ burials and exact track points; it is not a sensitive-field filtering policy.
 
 1. Ordinary-user login deliberately has no password or OTP. Knowing a registered
    mobile number is not proof of possessing that phone or of a family identity.
-2. Bootstrap remains a secondary entry after initialization; the server rejects
-   further initialization even if an existing sysadmin is disabled.
+2. Bootstrap is hidden after initialization; the server still rejects further
+   initialization even if an existing sysadmin is disabled or initialization
+   occurred in another browser after the status check.
 3. Legacy API token bypass is now disabled by default and should only be enabled temporarily for emergency rollback.
 4. Session token persistence in localStorage increases impact if XSS occurs.
 5. `GET /api/browse-data` requires authentication and exposes all approved family

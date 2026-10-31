@@ -227,6 +227,22 @@ interface LoginUserPayload {
   user: LoginUser
 }
 
+export async function fetchAuthStatus(): Promise<{ initialized: boolean }> {
+  const response = await fetch(resolveApiUrl('/api/auth/status'), {
+    headers: buildHeaders({ includeAuth: false }),
+  })
+  return parseJsonResponse<{ initialized: boolean }>(response)
+}
+
+export async function fetchLoginOptions(mobile: string): Promise<{ passwordRequired: boolean }> {
+  const response = await fetch(resolveApiUrl('/api/auth/login-options'), {
+    method: 'POST',
+    headers: buildHeaders({ includeAuth: false }),
+    body: JSON.stringify({ mobile }),
+  })
+  return parseJsonResponse<{ passwordRequired: boolean }>(response)
+}
+
 export async function loginWithMobile(mobile: string, password?: string): Promise<{ user: LoginUser; token: string; expiresAt: string }> {
   const response = await fetch(resolveApiUrl('/api/auth/login'), {
     method: 'POST',

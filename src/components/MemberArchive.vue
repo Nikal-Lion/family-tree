@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Button, Card, Descriptions, Empty, Image, Space, Tag } from 'ant-design-vue'
+import { Button, Card, Empty, Image, Space, Tag } from 'ant-design-vue'
+import ProfileFields from './ProfileFields.vue'
 import { computeGenerations } from '../services/generationService'
 import { childClaimAdoptionLabel } from '../services/childClaimService'
 import type { FamilyBrowseData, KinshipRelation, Member, NameAliasType } from '../types/member'
@@ -69,15 +70,13 @@ function fatherRecordStatus(child: Member) {
     <p v-if="(nameCounts.get(member.name) ?? 0) > 1" class="archive-note">族谱中有同名人物，请结合生父、分支和族谱代数区分；同名不代表同一人。</p>
     <Button class="archive-tree-action" @click="$emit('view-tree', member.id)">在族谱中查看</Button>
     <Image v-if="member.photoUrl" :src="member.photoUrl" :width="120" :alt="member.name" />
-    <Descriptions bordered size="small" :column="1">
-      <Descriptions.Item label="族谱代数">{{ member.generationNumber ? `族谱记载：第 ${member.generationNumber} 代` : member.generationLabelRaw || '暂未记录' }}</Descriptions.Item>
-      <Descriptions.Item label="分支">{{ member.lineageBranch || '未记录' }}</Descriptions.Item>
-      <Descriptions.Item label="出生日期">{{ member.birthDate || '未记录' }}</Descriptions.Item>
-      <Descriptions.Item label="生平">{{ member.biography || '未记录' }}</Descriptions.Item>
-      <Descriptions.Item v-if="aliases.length" label="姓名与称呼">
-        <p v-for="alias in aliases" :key="alias.id">{{ aliasLabels[alias.type] }}：{{ alias.name }}</p>
-      </Descriptions.Item>
-    </Descriptions>
+    <ProfileFields :fields="[
+      { label: '族谱代数', value: member.generationNumber ? `族谱记载：第 ${member.generationNumber} 代` : member.generationLabelRaw || '暂未记录' },
+      { label: '分支', value: member.lineageBranch || '未记录' },
+      { label: '出生日期', value: member.birthDate || '未记录' },
+      { label: '生平', value: member.biography || '未记录' },
+      ...(aliases.length ? [{ label: '姓名与称呼', value: aliases.map(alias => `${aliasLabels[alias.type]}：${alias.name}`).join('\n') }] : []),
+    ]" />
     <Card title="生父记载" size="small">
       <Button v-if="member.parentId !== null && membersById.has(member.parentId)" type="link" @click="$emit('select', member.parentId)">{{ nameOf(member.parentId) }}</Button>
       <span v-else-if="member.parentId !== null">{{ nameOf(member.parentId) }}</span>
@@ -137,12 +136,12 @@ function fatherRecordStatus(child: Member) {
     <details class="archive-evidence">
       <summary>查看原始记录与详细资料</summary>
       <p class="archive-note">原文、整理备注及技术编号保留在此，供核对；记载不完整或有疑义时，请以待核验状态理解。</p>
-      <Descriptions bordered size="small" :column="1">
-        <Descriptions.Item label="档案编号">{{ member.id }}</Descriptions.Item>
-        <Descriptions.Item label="世代原文">{{ member.generationLabelRaw || '未记录' }}</Descriptions.Item>
-        <Descriptions.Item label="相对树层级">{{ generations.get(member.id) ?? '未确定' }}（仅用于图谱布局，不是谱载代数）</Descriptions.Item>
-        <Descriptions.Item label="谱文备注">{{ member.rawNotes || '未记录' }}</Descriptions.Item>
-      </Descriptions>
+      <ProfileFields :fields="[
+        { label: '档案编号', value: member.id },
+        { label: '世代原文', value: member.generationLabelRaw || '未记录' },
+        { label: '相对树层级', value: `${generations.get(member.id) ?? '未确定'}（仅用于图谱布局，不是谱载代数）` },
+        { label: '谱文备注', value: member.rawNotes || '未记录' },
+      ]" />
       <section v-for="spouse in spouses" :key="`spouse-${spouse.id}`" class="archive-entry">
         <h4>配偶原文 · {{ spouse.fullName || spouse.surname }}（记录编号 {{ spouse.id }}）</h4>
         <p>{{ spouse.rawText || '未记录原文' }}</p>
@@ -181,7 +180,4 @@ function fatherRecordStatus(child: Member) {
 .archive-note { color: #64748b; font-size: 12px; line-height: 1.8; margin: 8px 0; }
 .archive-entry + .archive-entry { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
 .archive-entry p { margin: 8px 0 0; }
-.member-archive :deep(.ant-descriptions-item-label) { width: 88px; }
-.member-archive :deep(.ant-descriptions-view table) { table-layout: fixed; width: 100%; }
-.member-archive :deep(.ant-descriptions-item-content) { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

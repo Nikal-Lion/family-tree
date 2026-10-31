@@ -5,6 +5,7 @@ import type { UserRole } from '../types/auth'
 
 const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { left: 0, top: 0 },
   routes: [
     { path: '/', redirect: '/app' },
     { path: '/login', component: () => import('../pages/LoginPage.vue'), meta: { title: '登录' } },

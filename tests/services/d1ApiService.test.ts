@@ -11,6 +11,20 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 describe('login API contract', () => {
+  it('queries initialization and password requirements without authentication or credential storage', async () => {
+    const api = await import('../../src/services/d1ApiService')
+    api.setSessionToken('old-session')
+    fetchMock.mockResolvedValueOnce(Response.json({ initialized: true }))
+    expect(await api.fetchAuthStatus()).toEqual({ initialized: true })
+    fetchMock.mockResolvedValueOnce(Response.json({ passwordRequired: true }))
+    expect(await api.fetchLoginOptions('+85212345678')).toEqual({ passwordRequired: true })
+    expect(new URL(fetchMock.mock.calls[0]![0]).pathname).toBe('/api/auth/status')
+    expect(new URL(fetchMock.mock.calls[1]![0]).pathname).toBe('/api/auth/login-options')
+    expect(fetchMock.mock.calls[1]![1].method).toBe('POST')
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ mobile: '+85212345678' })
+    for (const [, options] of fetchMock.mock.calls) expect((options.headers as Headers).has('Authorization')).toBe(false)
+  })
+
   it('exposes error codes and status while retaining normal Error messages', async () => {
     const api = await import('../../src/services/d1ApiService')
     fetchMock.mockResolvedValueOnce(Response.json({ error: '请输入密码', code: 'PASSWORD_REQUIRED' }, { status: 401 }))

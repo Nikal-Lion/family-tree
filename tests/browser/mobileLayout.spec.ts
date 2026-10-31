@@ -88,6 +88,81 @@ test('overview stays inside the viewport while charts and tables scroll locally'
   }
 })
 
+test('the first content starts below the fixed header after opening the workspace', async ({ page }) => {
+  await page.goto('/app/overview')
+  const intro = page.getByRole('region', { name: '浏览入门提示', exact: true })
+  await expect(intro).toBeVisible()
+  await expect.poll(async () => {
+    const header = await page.locator('.workspace-shell header').first().boundingBox()
+    const content = await intro.boundingBox()
+    return content!.y - (header!.y + header!.height)
+  }).toBeGreaterThanOrEqual(0)
+  expect(await page.evaluate(() => window.scrollY)).toBe(0)
+})
+
+test('mobile search controls use zoom-safe text and omit the removed filters', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'iOS focus zoom regression')
+  await page.goto('/app/overview')
+  await expect(page.getByRole('button', { name: '刷新资料', exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('筛选性别', { exact: true })).toHaveCount(0)
+  const select = page.getByLabel('筛选分支', { exact: true })
+  await select.click()
+  expect(await select.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16)
+  const inputs = page.locator('.overview-find input')
+  for (const input of await inputs.all()) {
+    expect(await input.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16)
+  }
+})
+
+for (const path of ['/app/overview', '/app/manage']) {
+  for (const close of ['button', 'escape', 'mask'] as const) {
+    test(`${path} preserves mobile reading position when closing an archive by ${close}`, async ({ page, isMobile }) => {
+      test.skip(!isMobile, 'Mobile card browsing regression')
+      await page.setViewportSize({ width: close === 'mask' ? 740 : 360, height: 780 })
+      await page.goto(path)
+      const card = page.locator('.member-summary-card').nth(12)
+      await card.scrollIntoViewIfNeeded()
+      const originY = await page.evaluate(() => window.scrollY)
+      expect(originY).toBeGreaterThan(500)
+      await card.click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('.ant-drawer-close')).toBeInViewport()
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(originY)
+      await expect(dialog.locator('table')).toHaveCount(0)
+      if (path.endsWith('manage')) {
+        const actions = dialog.locator('.member-detail-actions .ant-btn')
+        const boxes = await Promise.all((await actions.all()).map(action => action.boundingBox()))
+        expect(boxes).toHaveLength(3)
+        expect(new Set(boxes.map(box => box!.y)).size).toBe(1)
+        for (const box of boxes) expect(box!.height).toBeGreaterThanOrEqual(44)
+        const identity = await dialog.locator('.member-detail-identity').boundingBox()
+        expect(boxes[0]!.y - (identity!.y + identity!.height)).toBeGreaterThanOrEqual(12)
+      }
+      await dialog.locator('.ant-drawer-body').evaluate(element => { element.scrollTop = 500 })
+      if (close === 'button') await dialog.locator('.ant-drawer-close').click()
+      else if (close === 'escape') await page.keyboard.press('Escape')
+      else {
+        await page.locator('.ant-drawer-mask').click({ position: { x: 10, y: 180 } })
+      }
+      await expect(dialog).not.toBeVisible()
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(originY)
+      await expect(card).toBeInViewport()
+      const top = page.getByRole('button', { name: '返回顶部', exact: true })
+      if (path.endsWith('overview')) {
+        await expect(top).toBeVisible()
+        const bounds = await top.boundingBox()
+        const viewport = page.viewportSize()!
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
+        expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height)
+        await top.click()
+        await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+      }
+      await expectNoPageOverflow(page)
+    })
+  }
+}
+
 test('default depth limits the rendered tree on phones without changing desktop defaults', async ({ page, isMobile }) => {
   await page.goto('/app/overview')
   await page.getByRole('tab', { name: '看族谱', exact: true }).click()
@@ -97,6 +172,56 @@ test('default depth limits the rendered tree on phones without changing desktop 
   await expect(page.getByText(isMobile ? '当前显示 31 / 600 人' : '当前显示 156 / 600 人', { exact: false })).toBeVisible()
   await depth.click()
   await expect(page.locator('.ant-select-item-option[title="展开 3 层"]')).toBeVisible()
+})
+
+test('opening an editor over an archive keeps the archive and reading position intact', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 780 })
+  await page.goto('/app/manage')
+  const card = page.locator('.member-summary-card').nth(12)
+  await card.scrollIntoViewIfNeeded()
+  const originY = await page.evaluate(() => window.scrollY)
+  await card.click()
+  const archive = page.getByRole('dialog', { name: /人物档案/ })
+  await archive.getByRole('button', { name: '编辑档案', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: '编辑人物档案', exact: true })
+  await expect(editor).toBeVisible()
+  await expect.poll(() => editor.evaluate(element => element.contains(document.activeElement))).toBe(true)
+  await page.keyboard.press('Escape')
+  await expect(editor).not.toBeVisible()
+  await expect(archive).toBeVisible()
+  await archive.locator('.ant-drawer-close').click()
+  await expect(archive).not.toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(originY)
+})
+
+test('a drawer locks background wheel scrolling without moving the page', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'Mobile WebKit does not expose wheel input')
+  await page.setViewportSize({ width: 740, height: 780 })
+  await page.goto('/app/overview')
+  await page.locator('.member-summary-card').nth(12).scrollIntoViewIfNeeded()
+  const originY = await page.evaluate(() => window.scrollY)
+  await page.locator('.member-summary-card').nth(12).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.mouse.move(10, 300)
+  await page.mouse.wheel(0, 300)
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).overflowY)).toBe('hidden')
+  expect(await page.evaluate(() => window.scrollY)).toBe(originY)
+  await page.locator('.ant-drawer-mask').click({ position: { x: 10, y: 180 } })
+  await expect(page.getByRole('dialog')).not.toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(originY)
+})
+
+test('archive transitions respect reduced motion without losing close behavior', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 360, height: 780 })
+  await page.goto('/app/overview')
+  await page.locator('.member-summary-card').first().click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  const duration = await page.locator('.workspace-drawer .ant-drawer-content-wrapper').evaluate(element =>
+    parseFloat(getComputedStyle(element).transitionDuration))
+  expect(duration).toBeLessThanOrEqual(0.001)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).not.toBeVisible()
 })
 
 test('phone rotation preserves a manually chosen depth and keeps the page contained', async ({ page, isMobile }) => {

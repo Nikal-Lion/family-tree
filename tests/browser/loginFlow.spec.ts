@@ -10,9 +10,11 @@ function account(role: LoginUserRole = 'user', id = 1): LoginUser {
   }
 }
 
-async function mockApi(page: Page, login: (route: Route) => Promise<void>, current = account()) {
+async function mockApi(page: Page, login: (route: Route) => Promise<void>, current = account(), initialized = true) {
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname
+    if (path === '/api/auth/status') return route.fulfill({ json: { initialized } })
+    if (path === '/api/auth/login-options') return route.fulfill({ json: { passwordRequired: false } })
     if (path === '/api/auth/login' || path === '/api/auth/bootstrap-sysadmin') return login(route)
     if (path === '/api/auth/session') return route.fulfill({ json: { user: current } })
     if (path === '/api/browse-data') return route.fulfill({ json: { contractVersion: 1, data: toFamilyBrowseData(familyFixture()), revision: 1 } })
@@ -38,6 +40,131 @@ test('ordinary accounts log in directly with a normalized international phone an
   await submit.click()
   await expect(page).toHaveURL(/\/app\/overview$/)
   expect(requests).toEqual([{ mobile: '+85212345678' }])
+})
+
+for (const role of ['maintainer', 'sysadmin'] as const) {
+  test(`${role} sees its password field on phone blur without creating a login session`, async ({ page }) => {
+    const logins: unknown[] = []
+    const lookups: unknown[] = []
+    await mockApi(page, async route => {
+      logins.push(route.request().postDataJSON())
+      await route.fulfill({ json: { ok: true, token: 'blur-session', user: account(role), expiresAt: '' } })
+    }, account(role))
+    await page.route('**/api/auth/login-options', async route => {
+      lookups.push(route.request().postDataJSON())
+      await route.fulfill({ json: { passwordRequired: true } })
+    })
+    await page.goto('/login')
+    const phone = page.getByLabel('手机号', { exact: true })
+    await phone.fill(' +852 1234 5678 ')
+    await phone.press('Tab')
+    await expect(page.getByLabel('账号密码', { exact: true })).toBeVisible()
+    expect(lookups).toEqual([{ mobile: '+85212345678' }])
+    expect(logins).toEqual([])
+    expect(await page.evaluate(() => localStorage.getItem('family_auth_session_token'))).toBeNull()
+    await page.getByLabel('账号密码', { exact: true }).fill('account-password')
+    await page.getByRole('button', { name: '验证并登录', exact: true }).click()
+    await expect(page).toHaveURL(/\/app\/manage$/)
+    expect(logins).toEqual([{ mobile: '+85212345678', password: 'account-password' }])
+  })
+}
+
+test('ordinary phone blur does not log in; first login opens the guide only once on this browser', async ({ page }) => {
+  const logins: unknown[] = []
+  await mockApi(page, async route => {
+    logins.push(route.request().postDataJSON())
+    await route.fulfill({ json: { ok: true, token: 'ordinary-session', user: account(), expiresAt: '' } })
+  })
+  await page.goto('/login')
+  const phone = page.getByLabel('手机号', { exact: true })
+  await phone.fill('+85212345678')
+  await phone.press('Tab')
+  await expect(page.getByRole('status')).toHaveCount(0)
+  await expect(page.getByLabel('账号密码', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '首次启用？初始化系统管理员', exact: true })).toHaveCount(0)
+  expect(logins).toEqual([])
+  await page.getByRole('button', { name: /^登\s*录$/ }).click()
+  await expect(page).toHaveURL(/\/app\/overview$/)
+  const guide = page.getByRole('dialog', { name: '使用帮助', exact: true })
+  await expect(guide).toBeVisible()
+  await guide.locator('.ant-drawer-close').click()
+  await expect(guide).not.toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+  const header = await page.locator('.workspace-shell header').first().boundingBox()
+  const intro = await page.getByRole('region', { name: '浏览入门提示', exact: true }).boundingBox()
+  expect(intro!.y).toBeGreaterThanOrEqual(header!.y + header!.height)
+  await page.reload()
+  await expect(page.getByRole('tab', { name: '找家人', exact: true })).toBeVisible()
+  await expect(guide).not.toBeVisible()
+  await page.getByRole('button', { name: /^账号菜单：/ }).click()
+  await page.getByRole('menuitem', { name: '使用帮助' }).click()
+  await expect(guide).toBeVisible()
+})
+
+test('changing phone ignores a delayed password lookup', async ({ page }) => {
+  let release!: () => void
+  await mockApi(page, async () => { throw new Error('Lookup must not authenticate') })
+  await page.route('**/api/auth/login-options', async route => {
+    await new Promise<void>(resolve => { release = resolve })
+    await route.fulfill({ json: { passwordRequired: true } })
+  })
+  await page.goto('/login')
+  const phone = page.getByLabel('手机号', { exact: true })
+  await phone.fill('+85212345678')
+  const lookup = page.waitForRequest('**/api/auth/login-options')
+  await phone.press('Tab')
+  await lookup
+  await phone.fill('123456')
+  const response = page.waitForResponse('**/api/auth/login-options')
+  release()
+  await response
+  await expect(page.getByRole('status')).toHaveCount(0)
+  await expect(page.getByLabel('账号密码', { exact: true })).toHaveCount(0)
+  await expect(phone).toBeEditable()
+  expect(await page.evaluate(() => localStorage.getItem('family_auth_session_token'))).toBeNull()
+})
+
+test('submitting during phone lookup waits for the password requirement instead of logging in twice', async ({ page }) => {
+  let release!: () => void
+  const logins: unknown[] = []
+  await mockApi(page, async route => {
+    logins.push(route.request().postDataJSON())
+    await route.fulfill({ json: { ok: true, token: 'detected-session', user: account('maintainer'), expiresAt: '' } })
+  })
+  await page.route('**/api/auth/login-options', async route => {
+    await new Promise<void>(resolve => { release = resolve })
+    await route.fulfill({ json: { passwordRequired: true } })
+  })
+  await page.goto('/login')
+  const phone = page.getByLabel('手机号', { exact: true })
+  await phone.fill('+85212345678')
+  const lookup = page.waitForRequest('**/api/auth/login-options')
+  await phone.press('Tab')
+  await lookup
+  await page.getByRole('button', { name: /^登\s*录$/ }).click()
+  release()
+  const password = page.getByLabel('账号密码', { exact: true })
+  await expect(password).toBeVisible()
+  await expect(password).toBeFocused()
+  expect(logins).toEqual([])
+  await password.fill('account-password')
+  await page.getByRole('button', { name: '验证并登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/app\/manage$/)
+  expect(logins).toEqual([{ mobile: '+85212345678', password: 'account-password' }])
+})
+
+test('a failed initialization check keeps bootstrap hidden and provides an explicit retry', async ({ page }) => {
+  await mockApi(page, async () => { throw new Error('Unexpected login') })
+  let failing = true
+  await page.route('**/api/auth/status', route => failing
+    ? route.fulfill({ status: 503, json: { error: '检测暂不可用' } })
+    : route.fulfill({ json: { initialized: false } }))
+  await page.goto('/login')
+  await expect(page.getByText('无法检测系统初始化状态', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '首次启用？初始化系统管理员', exact: true })).toHaveCount(0)
+  failing = false
+  await page.getByRole('button', { name: '重试检测', exact: true }).click()
+  await expect(page.getByRole('button', { name: '首次启用？初始化系统管理员', exact: true })).toBeVisible()
 })
 
 for (const role of ['maintainer', 'sysadmin'] as const) {
@@ -127,7 +254,7 @@ test('bootstrap is secondary, confirms the fixed password, and uses its dedicate
   await mockApi(page, async (route) => {
     requests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() })
     await route.fulfill({ json: { ok: true, token: 'bootstrap-session', user: account('sysadmin'), expiresAt: '' } })
-  })
+  }, account(), false)
   await page.goto('/login')
   await page.getByRole('button', { name: '首次启用？初始化系统管理员', exact: true }).click()
   await page.getByLabel('手机号', { exact: true }).fill('123456')
