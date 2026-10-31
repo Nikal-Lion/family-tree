@@ -1,9 +1,11 @@
 # 📊 项目迁移完成度统计
 
+> 已归档：仅保留当时统计；当前入口见[文档索引](../../README.md)，不要将历史完成度用于当前验收。
+
 > 归档说明（2026-04-18）
 >
 > 本文档用于记录 Drizzle/D1 迁移阶段进度，包含历史时点信息。
-> 当前项目实现状态请以 `README.md`、`README_CN.md` 与 `docs/stage2-plan.MD` 为准。
+> 当前项目实现状态请以 [产品说明](../../product/overview.md)与[历史 Stage2 计划](../stage2-plan.md) 为准。
 
 ## 总体进度：✅ 95%
 
@@ -93,13 +95,13 @@ wrangler tail
 | **配置** | `.env.local` | ✅ | 已配置 |
 | **示例** | `.env.example` | ✅ | 环境变量示例 |
 | **工具** | `d1-diagnose.js` | ✅ | 诊断脚本 |
-| **文档** | `DRIZZLE_MIGRATION.md` | ✅ | 迁移详情 |
-| **文档** | `DRIZZLE_COMPARISON.md` | ✅ | 代码对比 |
-| **文档** | `DRIZZLE_QUICKSTART.md` | ✅ | 快速开始 |
-| **文档** | `D1_DEBUGGING.md` | ✅ | 完整调试 |
-| **文档** | `D1_SETUP.md` | ✅ | 配置方案 |
-| **文档** | `D1_QUICK_FIX.md` | ✅ | 快速修复 |
-| **文档** | `STATUS_SUMMARY.md` | ✅ | 完成总结 |
+| **文档** | `drizzle-migration.md` | ✅ | 迁移详情 |
+| **文档** | `drizzle-comparison.md` | ✅ | 代码对比 |
+| **文档** | `drizzle-quickstart.md` | ✅ | 快速开始 |
+| **文档** | `d1-debugging.md` | ✅ | 完整调试 |
+| **文档** | `d1-setup.md` | ✅ | 配置方案 |
+| **文档** | `d1-quick-fix.md` | ✅ | 快速修复 |
+| **文档** | `status-summary.md` | ✅ | 完成总结 |
 
 ## 🎯 关键性能指标
 
@@ -150,16 +152,16 @@ curl -X GET http://localhost:8787/api/family-data \
 ## 📚 文档导航
 
 ### 快速开始（推荐阅读顺序）
-1. 📄 [D1_QUICK_FIX.md](./D1_QUICK_FIX.md) - 3 分钟快速修复
-2. 📄 [D1_SETUP.md](./D1_SETUP.md) - 完整配置指南
-3. 📄 [DRIZZLE_QUICKSTART.md](./DRIZZLE_QUICKSTART.md) - 开发指南
+1. 📄 [d1-quick-fix.md](./d1-quick-fix.md) - 3 分钟快速修复
+2. 📄 [d1-setup.md](./d1-setup.md) - 完整配置指南
+3. 📄 [drizzle-quickstart.md](./drizzle-quickstart.md) - 开发指南
 
 ### 深度学习
-1. 📄 [DRIZZLE_MIGRATION.md](./DRIZZLE_MIGRATION.md) - 迁移详情
-2. 📄 [DRIZZLE_COMPARISON.md](./DRIZZLE_COMPARISON.md) - 代码对比
+1. 📄 [drizzle-migration.md](./drizzle-migration.md) - 迁移详情
+2. 📄 [drizzle-comparison.md](./drizzle-comparison.md) - 代码对比
 
 ### 故障排除
-1. 📄 [D1_DEBUGGING.md](./D1_DEBUGGING.md) - 完整调试指南
+1. 📄 [d1-debugging.md](./d1-debugging.md) - 完整调试指南
 2. 🔧 `node d1-diagnose.js` - 自动诊断工具
 
 ## 💡 关键要点
@@ -224,7 +226,7 @@ wrangler tail
 ```
 
 ### 快速参考
-📄 [D1_QUICK_FIX.md](./D1_QUICK_FIX.md)
+📄 [d1-quick-fix.md](./d1-quick-fix.md)
 
 ## ✨ 项目亮点
 
@@ -262,4 +264,4 @@ wrangler tail
 
 ---
 
-**下一步**：按照 [D1_QUICK_FIX.md](./D1_QUICK_FIX.md) 中的 5 个步骤完成配置！ 🚀
+**下一步**：按照 [d1-quick-fix.md](./d1-quick-fix.md) 中的 5 个步骤完成配置！ 🚀

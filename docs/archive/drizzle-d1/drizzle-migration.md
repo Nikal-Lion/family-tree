@@ -1,5 +1,8 @@
 # D1 API 服务 Drizzle ORM 迁移总结
 
+> 历史迁移记录，结论仅对应当时的独立 Worker。当前真实入口为根目录 `api/index.ts`，
+> 不应由本文推断所有在线查询均已改用 Drizzle；当前边界见[产品说明](../../product/overview.md)。
+
 ## 概述
 已成功将 Cloudflare Worker 中对 D1 数据库的所有操作从原生 SQL + prepared statements 迁移到 Drizzle ORM。
 

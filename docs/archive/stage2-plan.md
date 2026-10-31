@@ -1,4 +1,7 @@
-# Stage2 实施计划（基于 docs/stage2.MD + docs/navigation.MD + docs/OCR.MD）
+# Stage2 实施计划
+
+> 历史计划，基于 [Stage2 需求](stage2.md)、[扫墓轨迹需求](../product/navigation.md)与 [OCR 需求](../product/ocr.md)。
+> 文中的 localStorage 基线、排期与验收项保留当时口径；当前实现边界见[产品说明](../product/overview.md)。
 
 ## 1. 当前基线与差距
 
@@ -141,7 +144,7 @@
 ## M1.5（P0）：扫墓轨迹最小闭环（1-2 周，与 M1 并行）
 
 ### 范围
-- navigation.MD：TR-01~TR-04、MV-01~MV-02、NA-01
+- [扫墓轨迹需求](../product/navigation.md)：TR-01~TR-04、MV-01~MV-02、NA-01
 
 ### 任务
 1. 轨迹模型与存储：
@@ -170,7 +173,7 @@
 ## M1.8（P0）：族谱照片 OCR 识别导入闭环（2-3 周，与 M1.5 并行）
 
 ### 范围
-- OCR.MD：UP-01/UP-02/UP-04、OC-01/OC-02、PA-01/PA-02/PA-04、IM-01/IM-02
+- [OCR 需求](../product/ocr.md)：UP-01/UP-02/UP-04、OC-01/OC-02、PA-01/PA-02/PA-04、IM-01/IM-02
 
 ### 任务
 1. 图片上传与预处理：

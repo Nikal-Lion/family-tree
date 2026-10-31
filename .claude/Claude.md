@@ -408,11 +408,11 @@
 - 导入导出加入版本校验、迁移与预检查。
 
 ### M1.5（P0，与 M1 并行）：扫墓轨迹最小闭环 ✅ 已完成
-- 对齐 `docs/navigation.MD`：TR-01~TR-04、NA-01。
+- 对齐 `docs/product/navigation.md`：TR-01~TR-04、NA-01。
 - 交付最小闭环：GPX 上传解析、轨迹管理、导航跳转。
 
 ### M1.8（P0，与 M1.5 并行）：OCR 识别导入最小闭环 ✅ 已完成
-- 对齐 `docs/OCR.MD`：UP-01/UP-04、OC-01/OC-02、PA-01/PA-02/PA-04、IM-01/IM-02。
+- 对齐 `docs/product/ocr.md`：UP-01/UP-04、OC-01/OC-02、PA-01/PA-02/PA-04、IM-01/IM-02。
 - 交付最小闭环：图片上传压缩、OCR 识别、可编辑预览、去重提示与批量导入。
 
 ### M1.9（P0）：家族事件管理 ✅ 已完成
@@ -426,7 +426,7 @@
 - ⬜ 待完成：PNG/PDF/CSV 导出。
 
 ### M2.5（P1）：存储升级收口与性能验证
-- 对齐 `docs/storage-upgrade.MD` 验收项：迁移、导入导出、一致性与回滚。
+- 对齐 `docs/product/storage-upgrade.md` 验收项：迁移、导入导出、一致性与回滚。
 - 完成 1k/5k/10k 规模压测并沉淀性能基线。
 
 ### M3（P2）：可视化与移动增强

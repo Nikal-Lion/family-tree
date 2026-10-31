@@ -1,5 +1,8 @@
 # 🎉 Family Tree 项目 - Drizzle ORM 迁移 完成报告
 
+> 历史完成报告，文中的完成度、测试统计、推荐操作和文件清单不代表当前状态。
+> 当前入口统一为[文档索引](../../README.md)，当时的报告正文保留供追溯。
+
 **生成时间**：2026-04-04  
 **项目**：family-tree  
 **迁移类型**：D1 + 原始 SQL → D1 + Drizzle ORM
@@ -57,15 +60,15 @@
 
 | 文档 | 用途 | 行数 | 质量 |
 |------|------|------|------|
-| **INDEX.md** | 完整文档索引和导航 | 400+ | ⭐⭐⭐⭐⭐ |
-| **DRIZZLE_MIGRATION.md** | 迁移总结和技术细节 | 700+ | ⭐⭐⭐⭐⭐ |
-| **DRIZZLE_COMPARISON.md** | 迁移前后代码对比 | 900+ | ⭐⭐⭐⭐⭐ |
-| **DRIZZLE_QUICKSTART.md** | 快速开始和部署指南 | 600+ | ⭐⭐⭐⭐ |
-| **D1_SETUP.md** | D1 完整配置方案 | 550+ | ⭐⭐⭐⭐⭐ |
-| **D1_QUICK_FIX.md** | 3 分钟快速修复 | 150+ | ⭐⭐⭐⭐⭐ |
-| **D1_DEBUGGING.md** | 完整调试和故障排查 | 800+ | ⭐⭐⭐⭐⭐ |
-| **STATUS_SUMMARY.md** | 项目完成情况总结 | 500+ | ⭐⭐⭐⭐ |
-| **MIGRATION_PROGRESS.md** | 迁移进度和质量指标 | 400+ | ⭐⭐⭐⭐ |
+| **原文档索引（已由[分类索引](../../README.md)替代）** | 当时的完整文档索引和导航 | 400+ | ⭐⭐⭐⭐⭐ |
+| **drizzle-migration.md** | 迁移总结和技术细节 | 700+ | ⭐⭐⭐⭐⭐ |
+| **drizzle-comparison.md** | 迁移前后代码对比 | 900+ | ⭐⭐⭐⭐⭐ |
+| **drizzle-quickstart.md** | 快速开始和部署指南 | 600+ | ⭐⭐⭐⭐ |
+| **d1-setup.md** | D1 完整配置方案 | 550+ | ⭐⭐⭐⭐⭐ |
+| **d1-quick-fix.md** | 3 分钟快速修复 | 150+ | ⭐⭐⭐⭐⭐ |
+| **d1-debugging.md** | 完整调试和故障排查 | 800+ | ⭐⭐⭐⭐⭐ |
+| **status-summary.md** | 项目完成情况总结 | 500+ | ⭐⭐⭐⭐ |
+| **migration-progress.md** | 迁移进度和质量指标 | 400+ | ⭐⭐⭐⭐ |
 
 **总文档字数**：5,400+ 行，~25,000+ 字
 
@@ -165,7 +168,7 @@
 
 ```bash
 # 1. 查看快速修复指南
-cat D1_QUICK_FIX.md
+cat d1-quick-fix.md
 
 # 2. 运行诊断脚本
 node d1-diagnose.js
@@ -182,11 +185,11 @@ curl http://localhost:8787/api/family-data
 
 ### 完整学习（2 小时）
 
-1. 📄 阅读 INDEX.md（文档索引）
-2. 📄 阅读 STATUS_SUMMARY.md（项目状态）
-3. 📄 阅读 DRIZZLE_MIGRATION.md（技术细节）
-4. 📄 阅读 DRIZZLE_COMPARISON.md（代码对比）
-5. 📄 阅读 DRIZZLE_QUICKSTART.md（开发指南）
+1. 📄 阅读[文档索引](../../README.md)
+2. 📄 阅读 status-summary.md（项目状态）
+3. 📄 阅读 drizzle-migration.md（技术细节）
+4. 📄 阅读 drizzle-comparison.md（代码对比）
+5. 📄 阅读 drizzle-quickstart.md（开发指南）
 
 ---
 
@@ -214,7 +217,7 @@ wrangler d1 list
 npm run preview
 ```
 
-**详细指南**：📄 [D1_QUICK_FIX.md](./D1_QUICK_FIX.md)
+**详细指南**：📄 [d1-quick-fix.md](./d1-quick-fix.md)
 
 ---
 
@@ -316,9 +319,9 @@ npm run preview
 ## 📞 支持资源
 
 ### 文档
-- 📖 [INDEX.md](./INDEX.md) - 完整文档索引
-- 📖 [D1_QUICK_FIX.md](./D1_QUICK_FIX.md) - 快速修复（推荐首先阅读）
-- 📖 [STATUS_SUMMARY.md](./STATUS_SUMMARY.md) - 完成情况总结
+- 📖 [文档索引](../../README.md) - 完整文档索引
+- 📖 [d1-quick-fix.md](./d1-quick-fix.md) - 快速修复（推荐首先阅读）
+- 📖 [status-summary.md](./status-summary.md) - 完成情况总结
 
 ### 工具
 - 🔧 `node d1-diagnose.js` - 自动诊断
@@ -354,7 +357,7 @@ npm run preview
 wrangler d1 list
 
 # 2. 查看快速修复指南
-cat D1_QUICK_FIX.md
+cat d1-quick-fix.md
 
 # 3. 按指南完成剩余 5 个步骤
 # （预计 13 分钟）
