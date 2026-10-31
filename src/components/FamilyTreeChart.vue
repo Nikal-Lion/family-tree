@@ -8,7 +8,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Alert, Button, Empty, Select, Space } from 'ant-design-vue'
 import { useMobile } from '../composables/useMobile'
 import { buildTreeData } from '../services/treeBuilder'
-import { buildTreeView, indexTreeView, measureTreeView, renderTreeScene, revealTreePaths, type TreeNodePosition } from '../services/treeView'
+import { buildTreeView, indexTreeView, measureTreeView, renderTreeScene, revealTreePaths, type TreeNodePosition, type TreeViewNode } from '../services/treeView'
 import type { Member } from '../types/member'
 
 echarts.use([TreeChart, TooltipComponent, CanvasRenderer, LabelLayout])
@@ -34,6 +34,12 @@ const viewIndex = computed(() => indexTreeView(treeView.value))
 const selectedNode = computed(() => props.selectedId === null ? undefined : viewIndex.value.get(props.selectedId))
 const extent = computed(() => measureTreeView(treeView.value))
 const canToggleSelected = computed(() => !!selectedNode.value?.children?.length)
+const canCenterSelected = computed(() => {
+  function visible(node: TreeViewNode): boolean {
+    return node.id === props.selectedId || (!node.collapsed && !!node.children?.some(visible))
+  }
+  return props.selectedId !== null && visible(treeView.value)
+})
 let chart: echarts.ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
 let renderFrame: number | null = null
@@ -127,6 +133,10 @@ function resetView() {
   revealTargets()
   queueRender(true)
 }
+function centerSelected() {
+  if (!canCenterSelected.value) return
+  queueRender(true)
+}
 function setSelectedExpanded(expanded: boolean) {
   if (props.selectedId === null || !canToggleSelected.value) return
   const point = nodePositions.get(props.selectedId)
@@ -207,12 +217,13 @@ watch(depth, resetView)
   <div class="family-chart">
     <div class="chart-toolbar">
       <Space wrap>
-        <Select v-model:value="direction" aria-label="图谱方向" :options="[{label:'横向世系',value:'LR'},{label:'纵向世系',value:'TB'}]" style="width:130px" />
+        <Select v-model:value="direction" aria-label="图谱方向" :options="[{label:'横向排列',value:'LR'},{label:'纵向排列',value:'TB'}]" style="width:130px" />
         <Select v-model:value="depth" aria-label="展开层级" :options="[{label:'展开 2 层',value:2},{label:'展开 3 层',value:3},{label:'展开 4 层',value:4},{label:'展开 6 层',value:6},{label:'展开全部',value:-1}]" style="width:130px" />
+        <Button :disabled="!canCenterSelected" @click="centerSelected">回到当前人物</Button>
         <Button @click="resetView">重置视图</Button>
-        <Button :disabled="!canToggleSelected || !selectedNode?.collapsed" @click="setSelectedExpanded(true)">展开所选</Button>
-        <Button :disabled="!canToggleSelected || !!selectedNode?.collapsed" @click="setSelectedExpanded(false)">收起所选</Button>
-        <Button :disabled="!selectedNode" @click="selectedId !== null && emit('inspect', selectedId)">查看档案</Button>
+        <Button :disabled="!canToggleSelected || !selectedNode?.collapsed" @click="setSelectedExpanded(true)">展开后代</Button>
+        <Button :disabled="!canToggleSelected || !!selectedNode?.collapsed" @click="setSelectedExpanded(false)">收起后代</Button>
+        <Button :disabled="!selectedNode" @click="selectedId !== null && emit('inspect', selectedId)">查看资料</Button>
       </Space>
       <span class="chart-hint">当前显示 {{ extent.members }} / {{ viewIndex.size }} 人 · 点击节点展开/收起 · 拖拽移动 · 滚轮 / 双指缩放</span>
     </div>
@@ -223,7 +234,11 @@ watch(depth, resetView)
       <div ref="chartRef" class="chart-canvas" :style="canvasSize" role="img" aria-label="族谱父系树图，可通过族人名录选择成员查看档案" />
       <Empty v-if="!members.length" class="chart-empty" description="当前范围没有族人资料" />
     </div>
-    <p class="chart-hint chart-note">“+”表示可展开，“-”表示可收起；叶节点仅选中人物。未录父亲但有代数依据者按辈分对齐，不补造父亲或连线。连线只表示已记录的父系关系；配偶、过继及待关联声明请查看档案。搜索或从名录选人会展开其祖先路径，其他分支的手动状态保留。</p>
+    <details class="chart-hint chart-note">
+      <summary>图谱怎么看</summary>
+      <p>“+”表示可展开，“-”表示可收起；无展开标记不代表没有子女。连线只表示已记录的父子关系，配偶、过继和尚待确认的记载请查看人物资料。</p>
+      <p>暂未记录父亲但有代数依据的人物按辈分对齐，不补造父亲或连线。搜索或从名录选人会展开其祖先路径，其他分支的手动展开状态保留。“回到当前人物”只调整视角；若人物已被收起，请先展开其路径。</p>
+    </details>
   </div>
 </template>
 
@@ -235,5 +250,7 @@ watch(depth, resetView)
 .chart-canvas { touch-action: none; }
 .chart-empty { position: absolute; inset: 30% 0 auto; pointer-events: none; }
 .chart-note { margin: 0; }
+.chart-note summary { cursor: pointer; min-height: 44px; align-content: center; }
+.chart-note p { margin: 8px 0; }
 @media (max-width: 767px) { .chart-stage { height: 440px; } }
 </style>

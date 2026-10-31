@@ -62,7 +62,8 @@ async function expectNoPageOverflow(page: Page) {
 
 test('overview stays inside the viewport while charts and tables scroll locally', async ({ page, isMobile }) => {
   await page.goto('/app/overview')
-  await expect(page.getByRole('heading', { name: '父系世系图' })).toBeVisible()
+  await page.getByRole('tab', { name: '看族谱', exact: true }).click()
+  await expect(page.locator('.chart-toolbar')).toBeVisible()
   await expectNoPageOverflow(page)
   const stage = page.locator('.chart-stage')
   await expect.poll(() => stage.evaluate((element, horizontal) => horizontal
@@ -74,10 +75,10 @@ test('overview stays inside the viewport while charts and tables scroll locally'
   expect(await stage.evaluate((element, horizontal) => horizontal ? element.scrollLeft : element.scrollTop, isMobile)).toBeGreaterThan(0)
   await expectNoPageOverflow(page)
 
-  for (const name of ['世代统计', '家族事件 · 1', '寻根足迹 · 0', '族谱与族人']) {
+  for (const name of ['家族记事', '找家人', '看族谱']) {
     await page.getByRole('tab', { name, exact: true }).click()
-    if (isMobile && name === '家族事件 · 1') {
-      const table = page.locator('.ant-tabs-tabpane-active .ant-table-content')
+    if (isMobile && name === '家族记事') {
+      const table = page.locator('.ant-tabs-tabpane-active .ant-table-content:visible').first()
       await table.evaluate(element => { element.scrollLeft = 100 })
       expect(await table.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
     }
@@ -87,6 +88,7 @@ test('overview stays inside the viewport while charts and tables scroll locally'
 
 test('default depth limits the rendered tree on phones without changing desktop defaults', async ({ page, isMobile }) => {
   await page.goto('/app/overview')
+  await page.getByRole('tab', { name: '看族谱', exact: true }).click()
   const depth = page.getByLabel('展开层级')
   await expect(depth).toBeVisible()
   await expect(page.locator('.chart-toolbar')).toContainText(isMobile ? '展开 3 层' : '展开 4 层')
@@ -98,6 +100,7 @@ test('default depth limits the rendered tree on phones without changing desktop 
 test('phone rotation preserves a manually chosen depth and keeps the page contained', async ({ page, isMobile }) => {
   test.skip(!isMobile, 'Phone rotation only')
   await page.goto('/app/overview')
+  await page.getByRole('tab', { name: '看族谱', exact: true }).click()
   await page.getByLabel('展开层级').click()
   await page.locator('.ant-select-item-option[title="展开 2 层"]').click()
   await expect(page.locator('.chart-toolbar')).toContainText('展开 2 层')

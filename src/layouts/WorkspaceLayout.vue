@@ -7,10 +7,11 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  QuestionCircleOutlined,
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons-vue'
-import { Breadcrumb, Button, Dropdown, Menu, Tag, message } from 'ant-design-vue'
+import { Breadcrumb, Button, Drawer, Dropdown, Menu, Tag, message } from 'ant-design-vue'
 import { getWorkspaceEntries } from '../services/accessControl'
 import { logout, useAuth } from '../services/authService'
 
@@ -27,6 +28,7 @@ const avatarText = computed(() => user.value?.name?.trim()
   ? Array.from(user.value.name.trim())[0] : user.value?.mobile.slice(-2))
 const collapsed = ref(false)
 const loggingOut = ref(false)
+const helpOpen = ref(false)
 const media = window.matchMedia('(max-width: 767px)')
 const mobile = ref(media.matches)
 
@@ -147,16 +149,20 @@ async function handleLogout() {
         <div class="workspace-account">
           <Button v-if="browsing && canMaintain" class="workspace-header-switch" @click="navigate('/app/manage')">进入管理</Button>
           <Button v-else-if="!browsing" type="text" class="workspace-header-switch" @click="navigate('/app/overview')">浏览族谱</Button>
-          <Tag color="blue" class="workspace-role">{{ roleLabels[role] }}</Tag>
+          <Tag v-if="!browsing || canMaintain" color="blue" class="workspace-role">{{ roleLabels[role] }}</Tag>
           <Dropdown :trigger="['click']">
             <Button type="text" class="workspace-account-button" :aria-label="`账号菜单：${accountName}`">
               <span class="workspace-avatar" aria-hidden="true">{{ avatarText }}</span>
               <span class="workspace-account-name" :title="accountName">{{ accountName }}</span>
             </Button>
             <template #overlay>
-              <Menu @click="handleLogout">
+              <Menu>
                 <Menu.Item key="identity" disabled>{{ accountName }} · {{ user?.mobile }}</Menu.Item>
-                <Menu.Item key="logout" :disabled="loggingOut">
+                <Menu.Item key="help" @click="helpOpen = true">
+                  <template #icon><QuestionCircleOutlined /></template>
+                  使用帮助
+                </Menu.Item>
+                <Menu.Item key="logout" :disabled="loggingOut" @click="handleLogout">
                   <template #icon><LogoutOutlined /></template>
                   退出登录
                 </Menu.Item>
@@ -171,4 +177,16 @@ async function handleLogout() {
       <RouterView />
     </template>
   </VbenAdminLayout>
+  <Drawer v-model:open="helpOpen" title="使用帮助" width="min(420px, 100vw)">
+    <div class="workspace-browse-help">
+      <h2>从找到一位家人开始</h2>
+      <ol>
+        <li><strong>找家人</strong><p>输入姓名或别名，结合父亲、分支和代数区分同名人物。</p></li>
+        <li><strong>看资料</strong><p>打开人物资料，查看生平和已记录的亲属。点击亲属姓名，可以继续查看。</p></li>
+        <li><strong>看族谱</strong><p>点击“在族谱中查看”定位人物。点击图中的人物可展开或收起后代，查看资料需使用单独的按钮。</p></li>
+      </ol>
+      <p>图中连线表示已记录的父子关系，配偶和承继等关系请查看人物资料。暂未记录不等于不存在，待确认的记载也不代表已确认的关系。</p>
+      <p>浏览不会修改族谱。发现资料有误或需要补充时，请联系家族维护人员。</p>
+    </div>
+  </Drawer>
 </template>

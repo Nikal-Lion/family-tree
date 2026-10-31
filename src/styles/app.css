@@ -69,6 +69,11 @@ button, input, textarea, select { font: inherit; }
 .workspace-account-button { display: flex; align-items: center; gap: 8px; height: 42px; min-width: 0; }
 .workspace-account-button .workspace-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; line-height: 1; border-radius: 50%; color: #4f46e5; background: #eeedff; font-size: 12px; font-weight: 600; }
 .workspace-account-name { min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-browse-help { color: #475467; line-height: 1.8; overflow-wrap: anywhere; }
+.workspace-browse-help h2 { margin-top: 0; color: #182230; font-size: 18px; }
+.workspace-browse-help ol { padding-left: 24px; }
+.workspace-browse-help li { padding-left: 4px; margin-bottom: 16px; }
+.workspace-browse-help li p { margin: 4px 0 0; }
 .workspace-shell .legacy-workspace { background: transparent; }
 .workspace-shell .legacy-workspace .page { font-family: Inter, system-ui, sans-serif; }
 .workspace-shell:not(.workspace-shell-browse) .legacy-workspace { --accent: #4f46e5; --accent-2: #4338ca; --panel: #f4f6f9; --line: #e4e7ec; --shadow: 0 2px 6px #10182803; }

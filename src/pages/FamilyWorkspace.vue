@@ -24,6 +24,10 @@ const refreshing = ref(false)
 const loadError = ref('')
 const syncError = ref('')
 const detailOpen = ref(false)
+const archiveContent = ref<HTMLElement | null>(null)
+const activeTab = ref('directory')
+const archiveHistory = ref<number[]>([])
+const graphIncludesAllBranches = ref(false)
 const keyword = ref('')
 const branch = ref<string>()
 const gender = ref<Member['gender']>()
@@ -38,7 +42,8 @@ const filtered = computed(() => filterOverviewMembers(members.value, store.alias
 }))
 const branchOptions = computed(() => [...new Set(members.value.map((member) => member.lineageBranch ?? ''))]
   .sort((a, b) => a.localeCompare(b, 'zh-CN')).map((value) => ({ label: value || '未记录分支', value })))
-const treeMembers = computed(() => getBranchTreeMembers(members.value, branch.value))
+const branchTreeMembers = computed(() => getBranchTreeMembers(members.value, branch.value))
+const treeMembers = computed(() => graphIncludesAllBranches.value ? members.value : branchTreeMembers.value)
 const highlighted = computed(() => keyword.value.trim() || gender.value
   ? filtered.value.map((member) => member.id) : [])
 const stats = computed(() => [
@@ -62,7 +67,7 @@ const memberColumns: TableProps<Member>['columns'] = [
   { title: '姓名', key: 'name', width: 180 },
   { title: '性别', dataIndex: 'gender', width: 70 },
   { title: '父亲', key: 'parent', width: 180 },
-  { title: '谱载代数', key: 'generation', width: 110, sorter: (a, b) => (a.generationNumber ?? 0) - (b.generationNumber ?? 0) },
+  { title: '族谱代数', key: 'generation', width: 110, sorter: (a, b) => (a.generationNumber ?? 0) - (b.generationNumber ?? 0) },
   { title: '分支', dataIndex: 'lineageBranch', width: 160 },
 ]
 const eventKeyword = ref('')
@@ -89,20 +94,59 @@ const trackColumns: TableProps<Track>['columns'] = [
 function nameOf(id: number) { return members.value.find((member) => member.id === id)?.name ?? `成员 #${id}` }
 function select(id: number, openArchive = true) {
   if (!members.value.some((member) => member.id === id)) { message.error('人物不存在，请刷新云端数据'); return }
-  if (!treeMembers.value.some((member) => member.id === id)) branch.value = undefined
-  if (rootId.value !== null && !getAncestorIds(members.value, [id]).has(rootId.value)) rootId.value = null
+  if (openArchive && detailOpen.value && selected.value && selected.value.id !== id) {
+    archiveHistory.value = [...archiveHistory.value, selected.value.id].slice(-30)
+  }
   store.selectMember(id)
   detailOpen.value = openArchive
 }
+function previousArchive() {
+  while (archiveHistory.value.length) {
+    const id = archiveHistory.value.pop()!
+    if (id !== selected.value?.id && members.value.some((member) => member.id === id)) {
+      store.selectMember(id)
+      return
+    }
+  }
+}
+function prepareTree(id: number) {
+  graphIncludesAllBranches.value = !branchTreeMembers.value.some((member) => member.id === id)
+  if (rootId.value !== null && !getAncestorIds(members.value, [id]).has(rootId.value)) rootId.value = null
+}
 function focusSelected() {
   if (!selected.value) return
-  if (!treeMembers.value.some((member) => member.id === selected.value?.id)) branch.value = undefined
+  prepareTree(selected.value.id)
   rootId.value = selected.value.id
+  activeTab.value = 'genealogy'
   detailOpen.value = false
 }
+function viewTree(id: number) {
+  select(id, false)
+  if (selected.value?.id !== id) return
+  prepareTree(id)
+  activeTab.value = 'genealogy'
+}
 watch([keyword, branch, gender], () => { page.value = 1 })
-watch(branch, () => { rootId.value = null }, { flush: 'sync' })
+watch(detailOpen, (open) => { if (!open) archiveHistory.value = [] }, { flush: 'sync' })
+watch([archiveContent, selected], () => {
+  // Drawer does not forward accessibility attributes to its content element.
+  const dialog = archiveContent.value?.closest('.ant-drawer-content')
+  if (!dialog) return
+  dialog.setAttribute('role', 'dialog')
+  dialog.setAttribute('aria-modal', 'true')
+  dialog.setAttribute('aria-label', selected.value ? `${selected.value.name} · 人物档案` : '人物档案')
+  dialog.querySelector('.ant-drawer-body')?.scrollTo({ top: 0 })
+}, { flush: 'post' })
+watch(activeTab, (tab) => {
+  if (tab === 'genealogy' && selected.value) prepareTree(selected.value.id)
+})
+watch(branch, () => {
+  rootId.value = null
+  graphIncludesAllBranches.value = false
+}, { flush: 'sync' })
 watch(members, () => {
+  const ids = new Set(members.value.map((member) => member.id))
+  archiveHistory.value = archiveHistory.value.filter((id) => ids.has(id))
   if (rootId.value !== null && !members.value.some((member) => member.id === rootId.value)) rootId.value = null
   if (branch.value !== undefined && !branchOptions.value.some((option) => option.value === branch.value)) branch.value = undefined
   if (!selected.value) detailOpen.value = false
@@ -158,8 +202,8 @@ function navigate(id: number) {
 <template>
   <div class="family-overview">
     <header class="overview-heading">
-      <div><h1>读懂世系，留住家族记忆</h1><p>浏览族人档案、世系与家族足迹。此页面只读，不修改族谱资料。</p></div>
-      <Button :loading="refreshing" :disabled="initializing || !!loadError || store.saving.value" @click="refresh"><template #icon><ReloadOutlined /></template>刷新云端</Button>
+      <div><h1>找家人，读族谱</h1><p>先搜索姓名，查看人物档案，再了解已记录的家族关系。浏览不会修改资料。</p></div>
+      <Button :loading="refreshing" :disabled="initializing || !!loadError || store.saving.value" @click="refresh"><template #icon><ReloadOutlined /></template>刷新资料</Button>
     </header>
     <Alert v-if="loadError" type="error" show-icon message="族谱加载失败" :description="loadError">
       <template #action><Button @click="load">重试</Button></template>
@@ -169,38 +213,45 @@ function navigate(id: number) {
     </Alert>
     <Card v-if="initializing" :loading="true" title="正在加载云端族谱" />
     <template v-else-if="!loadError">
-      <div class="overview-stats"><Card v-for="stat in stats" :key="stat.title" :bordered="false"><Statistic :title="stat.title" :value="stat.value" :suffix="stat.suffix" /></Card></div>
       <Card :bordered="false" class="overview-content">
-        <Tabs default-active-key="genealogy">
-          <Tabs.TabPane key="genealogy" tab="族谱与族人">
-            <div class="overview-filters">
-              <Input v-model:value="keyword" allow-clear placeholder="搜索姓名、ID、分支或别名" aria-label="搜索族人" class="overview-search"><template #prefix><SearchOutlined /></template></Input>
+        <div v-show="activeTab !== 'stories'" class="overview-find">
+          <label for="family-name-search" class="overview-search-label">找一位家人</label>
+          <Input id="family-name-search" v-model:value="keyword" allow-clear size="large" placeholder="输入姓名、别名或分支" aria-label="搜索族人" class="overview-name-search"><template #prefix><SearchOutlined /></template></Input>
+          <div class="overview-filters">
               <Select v-model:value="branch" allow-clear placeholder="全部分支" aria-label="筛选分支" :options="branchOptions" class="overview-select" />
               <Select v-model:value="gender" allow-clear placeholder="全部性别" aria-label="筛选性别" :options="[{label:'男',value:'男'},{label:'女',value:'女'}]" class="overview-select" />
               <Tag color="blue">名录 {{ filtered.length }} / {{ members.length }} 人</Tag>
-            </div>
-            <div class="overview-tree-heading">
-              <div><h2>父系世系图</h2><p>谱载代数与相对树层级分别展示，不以树层级代替谱载代数。分支筛选保留已记录的祖先路径；子树按当前分支范围显示。</p></div>
-              <Space wrap>
-                <Button :disabled="!selected" @click="focusSelected">查看所选子树</Button>
-                <Button v-if="rootId !== null" @click="rootId = null">返回当前分支全图</Button>
-                <Button :disabled="!treeMembers.length" @click="exportTree"><template #icon><DownloadOutlined /></template>导出 PNG</Button>
-              </Space>
-            </div>
-            <p v-if="selected" class="overview-selection">当前人物：<Button type="link" @click="select(selected.id)">{{ selected.name }} · #{{ selected.id }}</Button><Tag v-if="rootId !== null" color="blue">子树视图</Tag></p>
-            <FamilyTreeChart ref="chart" :members="treeMembers" :selected-id="store.selectedId.value" :highlight-ids="highlighted" :root-id="rootId" :generations="generations" @select="id => select(id, false)" @inspect="select" />
-            <h2 class="overview-directory-title">族人名录</h2>
-            <MemberCardList v-if="mobile" :members="filtered" :all-members="members" @select="select" />
+          </div>
+        </div>
+        <Tabs v-model:active-key="activeTab" :destroy-inactive-tab-pane="false" class="overview-tabs">
+          <Tabs.TabPane key="directory" tab="找家人">
+            <h2 class="overview-directory-heading">族人名录</h2>
+            <p class="overview-directory-hint">点击姓名查看资料。同名人物可结合父亲、分支和族谱代数辨认。</p>
+            <MemberCardList v-if="mobile" :members="filtered" :all-members="members" :empty-text="members.length ? '没有符合条件的族人，请调整筛选' : '暂无族谱资料，家族资料正在整理中'" @select="select" />
             <Table v-else :columns="memberColumns" :data-source="filtered" row-key="id" :scroll="{x:700}" :pagination="{current:page,pageSize:10,showSizeChanger:false,showTotal:(total:number)=>`共 ${total} 人`,onChange:(value:number)=>page=value}">
               <template #bodyCell="{column, record}">
-                <template v-if="column.key === 'name'"><Button type="link" @click="select(record.id)">{{ record.name }} · #{{ record.id }}</Button></template>
-                <template v-else-if="column.key === 'parent'"><Button v-if="record.parentId !== null" type="link" @click="select(record.parentId)">{{ nameOf(record.parentId) }}</Button><span v-else>未录父亲</span></template>
+                <template v-if="column.key === 'name'"><Button type="link" :title="`档案编号 ${record.id}`" @click="select(record.id)">{{ record.name }}</Button></template>
+                <template v-else-if="column.key === 'parent'"><Button v-if="record.parentId !== null" type="link" @click="select(record.parentId)">{{ nameOf(record.parentId) }}</Button><span v-else>暂未记录父亲</span></template>
                 <template v-else-if="column.key === 'generation'">{{ record.generationNumber || '未记录' }}</template>
               </template>
-              <template #emptyText><Empty :image="Empty.PRESENTED_IMAGE_SIMPLE" :description="members.length ? '没有符合条件的族人，请调整筛选' : '暂无族谱资料，请由维护人员添加或导入'" /></template>
+              <template #emptyText><Empty :image="Empty.PRESENTED_IMAGE_SIMPLE" :description="members.length ? '没有符合条件的族人，请调整筛选' : '暂无族谱资料，家族资料正在整理中'" /></template>
             </Table>
           </Tabs.TabPane>
-          <Tabs.TabPane key="statistics" tab="世代统计">
+          <Tabs.TabPane key="genealogy" tab="看族谱">
+            <div class="overview-tree-heading">
+              <div><h2>家族族谱</h2><p>连线只表示已记录的父子关系。搜索或选择人物可展开其祖先路径，查看资料可了解更多关系。</p></div>
+              <Space wrap>
+                <Button :disabled="!selected" @click="focusSelected">查看此人及后代</Button>
+                <Button v-if="rootId !== null" @click="rootId = null">{{ graphIncludesAllBranches ? '返回全部分支全图' : '返回当前分支全图' }}</Button>
+                <Button :disabled="!treeMembers.length" @click="exportTree"><template #icon><DownloadOutlined /></template>保存族谱图片</Button>
+              </Space>
+            </div>
+            <p v-if="graphIncludesAllBranches" class="overview-note">当前人物不在所选分支的世系范围内，图中暂显示全部分支；找家人的筛选保持不变。</p>
+            <p v-if="selected" class="overview-selection">当前人物：<Button type="link" @click="select(selected.id)">{{ selected.name }}</Button><Tag v-if="rootId !== null" color="blue">此人及后代</Tag></p>
+            <FamilyTreeChart ref="chart" :members="treeMembers" :selected-id="store.selectedId.value" :highlight-ids="highlighted" :root-id="rootId" :generations="generations" @select="id => select(id, false)" @inspect="select" />
+            <details class="overview-secondary">
+              <summary>世代统计与资料概况</summary>
+              <div class="overview-stats"><Card v-for="stat in stats" :key="stat.title" :bordered="false"><Statistic :title="stat.title" :value="stat.value" :suffix="stat.suffix" /></Card></div>
             <Alert type="info" show-icon message="谱载代数来自原始记录；相对树层级按父系逐层计算，并以谱载代数对齐独立分支。无代数依据的分支从第 1 层起算，两者不能互相替代。" />
             <Space wrap class="overview-gender">
               <Tag color="blue">男性 {{ members.filter(member=>member.gender==='男').length }} 人</Tag>
@@ -218,7 +269,11 @@ function navigate(id: number) {
                 </Table>
               </section>
             </div>
+            </details>
           </Tabs.TabPane>
+          <Tabs.TabPane key="stories" tab="家族记事">
+            <p class="overview-directory-hint">浏览家族事件与寻根足迹，点击关联族人可查看档案。</p>
+            <Tabs default-active-key="events" :destroy-inactive-tab-pane="false">
           <Tabs.TabPane key="events" :tab="`家族事件 · ${store.events.value.length}`">
             <Space wrap class="overview-filters">
               <Input v-model:value="eventKeyword" allow-clear placeholder="搜索事件或关联族人" aria-label="搜索事件" />
@@ -241,13 +296,15 @@ function navigate(id: number) {
             </Table>
             <p class="overview-note">导航将打开外部 Google 地图；本页不采集当前位置，也不修改轨迹。</p>
           </Tabs.TabPane>
+            </Tabs>
+          </Tabs.TabPane>
         </Tabs>
       </Card>
-      <footer class="overview-note">资料来自 Cloudflare D1 云端。未记录、待匹配及待消歧不等于已确认事实；同音异字不会自动合并。请由维护人员定期导出备份。</footer>
+      <footer class="overview-note">资料以已收录记录为准。暂未记录父亲不代表始祖，暂未记录子女不代表没有子女；尚待确认的记载不代表已确认的关系。同名或读音相似不会自动合并为同一人。</footer>
     </template>
     <Drawer v-model:open="detailOpen" :title="selected ? `${selected.name} · 人物档案` : '人物档案'" width="min(680px, 100vw)">
-      <template #extra><Button :disabled="!selected" @click="focusSelected">查看此人及后代</Button></template>
-      <MemberArchive :member="selected" @select="select" />
+      <template #extra><Button v-if="archiveHistory.length" class="overview-archive-back" @click="previousArchive">返回上一位</Button></template>
+      <div ref="archiveContent"><MemberArchive :member="selected" @select="select" @view-tree="viewTree" /></div>
     </Drawer>
   </div>
 </template>
@@ -260,6 +317,16 @@ function navigate(id: number) {
 .overview-heading p, .overview-tree-heading p, .overview-note { color: #64748b; font-size: 13px; line-height: 1.8; margin: 0; }
 .overview-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .overview-content { min-width: 0; }
+.overview-find { margin-bottom: 4px; }
+.overview-search-label { display: block; color: #1e293b; font-size: 17px; font-weight: 600; margin-bottom: 10px; }
+.overview-name-search { width: min(100%, 560px); margin-bottom: 12px; }
+.overview-directory-heading { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
+.overview-directory-hint { color: #64748b; font-size: 13px; line-height: 1.8; margin: 0 0 16px; }
+.overview-secondary { margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 16px; }
+.overview-secondary summary { cursor: pointer; color: #475569; font-size: 14px; min-height: 44px; align-content: center; }
+.overview-archive-back { min-height: 44px; }
+.overview-secondary .overview-stats { margin: 16px 0; }
+.overview-tabs :deep(.ant-tabs-tab-btn) { display: flex; align-items: center; min-height: 44px; }
 .overview-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
 .overview-search { width: min(100%, 320px); }
 .overview-select { width: 160px; }
@@ -276,6 +343,7 @@ function navigate(id: number) {
   .overview-heading h1 { font-size: 20px; }
   .overview-content :deep(.ant-card-body) { padding: 14px; }
   .overview-select { width: calc(50% - 6px); }
+  .overview-tabs :deep(> .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab) { margin-left: 20px; }
   .overview-generation-grid { grid-template-columns: minmax(0, 1fr); }
 }
 </style>
