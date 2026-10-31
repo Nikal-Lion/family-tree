@@ -23,6 +23,6 @@ defineProps<{ fields: { label: string; value: string | number }[] }>()
   .profile-field { display: block; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
   .profile-field + .profile-field { border-top: 1px solid #e2e8f0; }
   .profile-field dt, .profile-field dd { padding: 0; background: transparent; }
-  .profile-field dt { margin-bottom: 6px; font-size: 13px; }
+  .profile-field dt { margin-bottom: 6px; font-size: 0.8125rem; }
 }
 </style>

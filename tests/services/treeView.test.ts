@@ -3,6 +3,7 @@ import * as echarts from 'echarts/core'
 import { TreeChart } from 'echarts/charts'
 import { SVGRenderer } from 'echarts/renderers'
 import { LabelLayout } from 'echarts/features'
+import { TooltipComponent } from 'echarts/components'
 import { computeGenerations } from '../../src/services/generationService'
 import { buildTreeData, type TreeNode } from '../../src/services/treeBuilder'
 import { buildTreeView, indexTreeView, measureTreeView, renderTreeScene, revealTreePaths } from '../../src/services/treeView'
@@ -76,7 +77,7 @@ describe('图谱展开状态', () => {
   describe('真实 ECharts 图形更新', () => {
     let chart: echarts.ECharts
     beforeEach(() => {
-      echarts.use([TreeChart, SVGRenderer, LabelLayout])
+      echarts.use([TreeChart, SVGRenderer, LabelLayout, TooltipComponent])
       chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width: 1200, height: 600 })
     })
     afterEach(() => chart.dispose())
@@ -163,6 +164,32 @@ describe('图谱展开状态', () => {
       })
       expect(vertical.get(7)!.y).toBeCloseTo(vertical.get(4)!.y)
       expect(vertical.get(5)!.y - vertical.get(4)!.y).toBeCloseTo(90)
+    })
+
+    it('大字模式同步放大文字、节点与间距，并保留折叠和漫游状态', () => {
+      render()
+      chart.dispatchAction({ type: 'treeRoam', seriesId: 'family-tree', zoom: 1.2, originX: 400, originY: 200 })
+      const previous = chart.getOption().series[0]
+      const expansion = new Map([[3, false]])
+      const view = buildTreeView(buildTreeData(members), -1, expansion)
+      for (const direction of ['LR', 'TB'] as const) {
+        const positions = renderTreeScene(chart, view, {
+          direction, selectedId: 2, highlightIds: [4], reset: false, textScale: 1.5,
+        })
+        const series = chart.getOption().series[0]
+        expect(series).toMatchObject({
+          symbolSize: [138, 48], label: { fontSize: 18, width: 120 },
+          center: previous.center, zoom: previous.zoom,
+        })
+        expect(chart.getOption().tooltip[0].textStyle.fontSize).toBe(21)
+        expect(positions.has(6)).toBe(false)
+        expect(series.data[0].children[0].children.find((node: TreeNode) => node.id === 2).itemStyle.color).toBe('#1677ff')
+        expect(chart.renderToSVGString()).toContain('18px')
+      }
+      render()
+      expect(chart.getOption().series[0]).toMatchObject({
+        symbolSize: [92, 32], label: { fontSize: 12, width: 80 },
+      })
     })
   })
 

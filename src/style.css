@@ -77,7 +77,7 @@ select {
 }
 
 .readonly-tip {
-  font-size: 13px;
+  font-size: 0.8125rem;
   opacity: 0.9;
 }
 
@@ -94,7 +94,7 @@ select {
   color: #fffef7;
   border-radius: 999px;
   padding: 6px 12px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .workspace-nav-item-active {
@@ -176,7 +176,7 @@ select {
 
 .diagnostic-kicker {
   margin: 0 0 6px;
-  font-size: 12px;
+  font-size: 0.75rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: #6e7f52;
@@ -211,7 +211,7 @@ select {
 }
 
 .diagnostic-item span {
-  font-size: 12px;
+  font-size: 0.75rem;
   opacity: 0.72;
 }
 
@@ -360,7 +360,7 @@ select {
 
 .search-meta {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   opacity: 0.75;
 }
 
@@ -433,7 +433,7 @@ select {
 }
 
 .member-text span {
-  font-size: 12px;
+  font-size: 0.75rem;
   opacity: 0.8;
 }
 
@@ -489,7 +489,7 @@ select {
 }
 
 .track-text span {
-  font-size: 12px;
+  font-size: 0.75rem;
   opacity: 0.8;
 }
 
@@ -530,7 +530,7 @@ select {
 }
 
 .event-text span {
-  font-size: 12px;
+  font-size: 0.75rem;
   opacity: 0.8;
 }
 
@@ -576,7 +576,7 @@ select {
 .ocr-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.8125rem;
   margin-bottom: 8px;
 }
 
@@ -602,7 +602,7 @@ select {
 .ocr-duplicate-list {
   margin: 0 0 10px;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: #5a5548;
 }
 
@@ -631,7 +631,7 @@ select {
 
 .footer {
   text-align: center;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: #676150;
   padding: 8px 0 14px;
 }
@@ -646,7 +646,7 @@ select {
   border: 1px solid transparent;
   padding: 10px 12px;
   box-shadow: var(--shadow);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.4;
 }
 

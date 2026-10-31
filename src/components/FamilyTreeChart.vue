@@ -7,6 +7,7 @@ import { LabelLayout } from 'echarts/features'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Alert, Button, Empty, Select, Space } from 'ant-design-vue'
 import { useMobile } from '../composables/useMobile'
+import { useTextSize } from '../composables/useTextSize'
 import { buildTreeData } from '../services/treeBuilder'
 import { buildTreeView, indexTreeView, measureTreeView, renderTreeScene, revealTreePaths, type TreeNodePosition, type TreeViewNode } from '../services/treeView'
 import type { Member } from '../types/member'
@@ -24,6 +25,8 @@ const emit = defineEmits<{ select: [id: number]; inspect: [id: number] }>()
 const chartRef = ref<HTMLElement | null>(null)
 const direction = ref<'LR' | 'TB'>('LR')
 const mobile = useMobile()
+const { largeText } = useTextSize()
+const textScale = computed(() => largeText.value ? 1.5 : 1)
 const depth = ref(mobile.value ? 3 : 4)
 const chartError = ref('')
 const canvasSize = ref({ width: '100%', height: '560px' })
@@ -63,13 +66,14 @@ function renderChart(reset = false) {
   pendingAnchor = null
   focusId = null
   const width = Math.max(viewport?.clientWidth ?? 0,
-    direction.value === 'LR' ? extent.value.levels * 160 + 120 : extent.value.leaves * 112 + 120)
+    (direction.value === 'LR' ? extent.value.levels * 160 + 120 : extent.value.leaves * 112 + 120) * textScale.value)
   const height = Math.max(viewport?.clientHeight ?? 440,
-    direction.value === 'LR' ? extent.value.leaves * 46 + 110 : extent.value.levels * 90 + 100)
+    (direction.value === 'LR' ? extent.value.leaves * 46 + 110 : extent.value.levels * 90 + 100) * textScale.value)
   canvasSize.value = { width: `${width}px`, height: `${height}px` }
   if (chart.getWidth() !== width || chart.getHeight() !== height) chart.resize({ width, height })
   nodePositions = renderTreeScene(chart, treeView.value, {
     direction: direction.value, selectedId: props.selectedId, highlightIds: props.highlightIds, reset,
+    textScale: textScale.value,
   })
   if (viewport) {
     const anchoredPosition = anchor ? nodePositions.get(anchor.id) : undefined
@@ -211,14 +215,20 @@ watch([treeView, () => props.highlightIds, () => props.selectedId], () => queueR
 watch(() => props.rootId, resetView)
 watch(direction, () => queueRender(true))
 watch(depth, resetView)
+watch(textScale, () => {
+  const id = props.selectedId ?? nodePositions.keys().next().value
+  const point = id === undefined ? undefined : nodePositions.get(id)
+  if (id !== undefined && point) pendingAnchor = { id, point: { ...point } }
+  queueRender()
+})
 </script>
 
 <template>
   <div class="family-chart">
     <div class="chart-toolbar">
       <Space wrap>
-        <Select v-model:value="direction" aria-label="图谱方向" :options="[{label:'横向排列',value:'LR'},{label:'纵向排列',value:'TB'}]" style="width:130px" />
-        <Select v-model:value="depth" aria-label="展开层级" :options="[{label:'展开 2 层',value:2},{label:'展开 3 层',value:3},{label:'展开 4 层',value:4},{label:'展开 6 层',value:6},{label:'展开全部',value:-1}]" style="width:130px" />
+        <Select v-model:value="direction" aria-label="图谱方向" :options="[{label:'横向排列',value:'LR'},{label:'纵向排列',value:'TB'}]" style="width:9rem" />
+        <Select v-model:value="depth" aria-label="展开层级" :options="[{label:'展开 2 层',value:2},{label:'展开 3 层',value:3},{label:'展开 4 层',value:4},{label:'展开 6 层',value:6},{label:'展开全部',value:-1}]" style="width:9rem" />
         <Button :disabled="!canCenterSelected" @click="centerSelected">回到当前人物</Button>
         <Button @click="resetView">重置视图</Button>
         <Button :disabled="!canToggleSelected || !selectedNode?.collapsed" @click="setSelectedExpanded(true)">展开后代</Button>
@@ -245,7 +255,7 @@ watch(depth, resetView)
 <style scoped>
 .family-chart { width: 100%; min-width: 0; max-width: 100%; }
 .chart-toolbar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.chart-hint { color: #64748b; font-size: 12px; line-height: 1.8; }
+.chart-hint { color: #64748b; font-size: 0.75rem; line-height: 1.8; }
 .chart-stage { position: relative; width: 100%; min-width: 0; height: 560px; contain: inline-size; overflow: auto; overflow-anchor: none; scrollbar-gutter: stable; overscroll-behavior: contain; margin-top: 12px; }
 .chart-canvas { touch-action: none; }
 .chart-empty { position: absolute; inset: 30% 0 auto; pointer-events: none; }

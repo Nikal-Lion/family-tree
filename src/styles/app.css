@@ -1,6 +1,14 @@
 :root {
+  --app-text-scale: 1;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+html.large-text { font-size: 125%; --app-text-scale: 1.25; }
+.large-text body { font-size: 18px; }
+.large-text .ant-btn { height: auto; min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+.large-text .ant-tag { white-space: normal; overflow-wrap: anywhere; }
+.large-text .member-detail-actions { grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); }
+.large-text .login-form-footer { position: static; margin-top: 32px; text-align: center; }
 
 html, body { max-width: 100%; overflow-x: hidden; overflow-x: clip; }
 /* A viewport-height body collapses the document when a drawer locks overflow. */
@@ -34,8 +42,8 @@ html:has(.ant-drawer-open, .ant-modal-wrap:not([style*="display: none"])) { over
 .workspace-data-fields { display: contents; border: 0; padding: 0; margin: 0; min-width: 0; }
 .storage-error { color: #b42318; background: #fef3f2; padding: 12px; border-radius: 8px; }
 .manage-page { padding: 24px; min-width: 0; }
-.manage-page-heading h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #182230; }
-.manage-page-heading p, .member-save-note { color: #667085; font-size: 13px; }
+.manage-page-heading h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 8px; color: #182230; }
+.manage-page-heading p, .member-save-note { color: #667085; font-size: 0.8125rem; }
 .member-manager { width: 100%; }
 .member-table-toolbar { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .member-search { width: 280px; max-width: 100%; }
@@ -76,20 +84,20 @@ button, input, textarea, select { font: inherit; }
   .workspace-drawer .ant-drawer-content-wrapper, .workspace-drawer .ant-drawer-mask { transition-duration: 1ms !important; }
   .workspace-drawer .ant-drawer-content-wrapper { transform: none !important; }
 }
-.workspace-brand { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 20px; color: #172033; font-size: 18px; font-weight: 700; white-space: nowrap; }
+.workspace-brand { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 20px; color: #172033; font-size: 1.125rem; font-weight: 700; white-space: nowrap; }
 .workspace-brand-icon { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border-radius: 10px; color: #fff; background: #4f46e5; }
-.workspace-menu-caption { padding: 24px 24px 12px; color: #98a2b3; font-size: 11px; letter-spacing: 2px; }
+.workspace-menu-caption { padding: 24px 24px 12px; color: #98a2b3; font-size: 0.6875rem; letter-spacing: 2px; }
 .workspace-menu.ant-menu { border-inline-end: 0; background: transparent; padding: 0 8px; }
 .workspace-menu.ant-menu-inline-collapsed { width: 64px; padding: 0; }
 .workspace-shell-collapsed .workspace-brand { justify-content: center; padding: 0; }
 .workspace-menu .ant-menu-item { height: 44px; line-height: 44px; }
-.workspace-sidebar-note { margin: 32px 20px; padding: 16px; border-radius: 12px; background: #f5f5ff; color: #667085; display: grid; gap: 8px; font-size: 12px; }
+.workspace-sidebar-note { margin: 32px 20px; padding: 16px; border-radius: 12px; background: #f5f5ff; color: #667085; display: grid; gap: 8px; font-size: 0.75rem; }
 .workspace-sidebar-note strong { color: #4f46e5; font-weight: 500; }
 .workspace-header { display: flex; flex: 1; align-items: center; justify-content: space-between; min-width: 0; gap: 12px; padding: 0 20px; }
 .workspace-header-context, .workspace-account { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.workspace-browse-label { color: #667085; font-size: 13px; }
+.workspace-browse-label { color: #667085; font-size: 0.8125rem; }
 .workspace-account-button { display: flex; align-items: center; gap: 8px; height: 42px; min-width: 0; }
-.workspace-account-button .workspace-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; line-height: 1; border-radius: 50%; color: #4f46e5; background: #eeedff; font-size: 12px; font-weight: 600; }
+.workspace-account-button .workspace-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; line-height: 1; border-radius: 50%; color: #4f46e5; background: #eeedff; font-size: 0.75rem; font-weight: 600; }
 .workspace-account-name { min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-browse-intro { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; min-width: 0; margin: 16px 24px 0; padding: 16px; border: 1px solid #d9d6fe; border-radius: 12px; color: #344054; background: #f5f4ff; }
 .workspace-browse-intro > div:first-child { flex: 1 1 280px; min-width: 0; }
@@ -97,7 +105,7 @@ button, input, textarea, select { font: inherit; }
 .workspace-intro-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .workspace-intro-actions .ant-btn { min-height: 44px; }
 .workspace-browse-help { color: #475467; line-height: 1.8; overflow-wrap: anywhere; }
-.workspace-browse-help h2 { margin-top: 0; color: #182230; font-size: 18px; }
+.workspace-browse-help h2 { margin-top: 0; color: #182230; font-size: 1.125rem; }
 .workspace-browse-help ol { padding-left: 24px; }
 .workspace-browse-help li { padding-left: 4px; margin-bottom: 16px; }
 .workspace-browse-help li p { margin: 4px 0 0; }
@@ -106,8 +114,8 @@ button, input, textarea, select { font: inherit; }
 .workspace-shell:not(.workspace-shell-browse) .legacy-workspace { --accent: #4f46e5; --accent-2: #4338ca; --panel: #f4f6f9; --line: #e4e7ec; --shadow: 0 2px 6px #10182803; }
 .workspace-shell .legacy-workspace .page { max-width: none; min-height: calc(100vh - 64px); padding: 24px; }
 .workspace-shell .legacy-workspace .workspace-toolbar { display: flex; justify-content: space-between; gap: 20px; align-items: center; }
-.workspace-shell .legacy-workspace .workspace-toolbar h1 { margin: 0; color: #182230; font: 600 24px/1.4 Inter, system-ui, sans-serif; }
-.workspace-shell .legacy-workspace .workspace-toolbar p { margin: 6px 0 0; color: #667085; font-size: 13px; }
+.workspace-shell .legacy-workspace .workspace-toolbar h1 { margin: 0; color: #182230; font: 600 1.5rem/1.4 Inter, system-ui, sans-serif; }
+.workspace-shell .legacy-workspace .workspace-toolbar p { margin: 6px 0 0; color: #667085; font-size: 0.8125rem; }
 .workspace-shell .legacy-workspace .top-actions { margin: 0; justify-content: flex-end; }
 .workspace-shell .legacy-workspace .panel-block, .workspace-shell .legacy-workspace .tree-card { background: white; border-color: #eaecf0; border-radius: 12px; box-shadow: 0 2px 6px #10182803; }
 .workspace-shell:not(.workspace-shell-browse) .legacy-workspace .tree-canvas { background: #fff; border-color: #e4e7ec; }
@@ -120,9 +128,12 @@ button, input, textarea, select { font: inherit; }
 .workspace-shell-browse .legacy-workspace .page { max-width: 1600px; margin: auto; }
 @media (max-width: 767px) {
   input.ant-input, textarea.ant-input, .ant-input-number-input,
-  .ant-select, .ant-select .ant-select-selector, .ant-select .ant-select-selection-search-input { font-size: 16px !important; }
+  .ant-select, .ant-select .ant-select-selector, .ant-select .ant-select-selection-search-input { font-size: max(16px, 1rem) !important; }
+  .workspace-account .text-size-toggle { width: 44px; height: 44px; padding: 0; }
+  .workspace-account .text-size-toggle .text-size-toggle-label { display: none; }
+  .workspace-account .text-size-toggle .anticon + span { margin-inline-start: 0; }
   .workspace-drawer .ant-drawer-body { padding-inline: 16px; }
-  .workspace-brand { padding: 0 8px; gap: 8px; font-size: 16px; }
+  .workspace-brand { padding: 0 8px; gap: 8px; font-size: 1rem; }
   .workspace-shell header > div:first-child { flex-shrink: 0; }
   .workspace-shell header .workspace-brand-name { display: none; }
   .workspace-header { padding: 0 8px; gap: 4px; }
@@ -142,4 +153,7 @@ button, input, textarea, select { font: inherit; }
   .workspace-shell .legacy-workspace .page { padding: 14px; }
   .workspace-shell .legacy-workspace .workspace-toolbar { align-items: flex-start; flex-direction: column; gap: 12px; }
   .workspace-shell .legacy-workspace .top-actions { justify-content: flex-start; }
+}
+@media (max-width: 480px) {
+  .workspace-account-name { max-width: 64px; }
 }

@@ -368,7 +368,7 @@ function navigate(id: number): void {
 .activity-member { width: 200px; }
 .activity-type { width: 120px; }
 .activity-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.activity-note { color: #64748b; font-size: 12px; margin: 12px 0 0; overflow-wrap: anywhere; }
+.activity-note { color: #64748b; font-size: 0.75rem; margin: 12px 0 0; overflow-wrap: anywhere; }
 .activity-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .activity-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .activity-error { margin-bottom: 16px; }

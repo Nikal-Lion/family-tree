@@ -13,6 +13,7 @@ import {
 } from '@ant-design/icons-vue'
 import { Breadcrumb, Button, Dropdown, Menu, Tag, message } from 'ant-design-vue'
 import WorkspaceDrawer from '../components/WorkspaceDrawer.vue'
+import TextSizeToggle from '../components/TextSizeToggle.vue'
 import { getWorkspaceEntries } from '../services/accessControl'
 import { logout, useAuth } from '../services/authService'
 
@@ -178,6 +179,7 @@ function dismissIntro() {
           </Breadcrumb>
         </div>
         <div class="workspace-account">
+          <TextSizeToggle />
           <Button v-if="browsing && canMaintain" class="workspace-header-switch" @click="navigate('/app/manage')">进入管理</Button>
           <Button v-else-if="!browsing" type="text" class="workspace-header-switch" @click="navigate('/app/overview')">浏览族谱</Button>
           <Tag v-if="!browsing || canMaintain" color="blue" class="workspace-role">{{ roleLabels[role] }}</Tag>
@@ -228,6 +230,8 @@ function dismissIntro() {
       </ol>
       <p>图中连线表示已记录的父子关系，配偶和承继等关系请查看人物资料。暂未记录不等于不存在，待确认的记载也不代表已确认的关系。</p>
       <p>浏览不会修改族谱。发现资料有误或需要补充时，请联系家族维护人员。</p>
+      <h2>需要更大的文字时</h2>
+      <p>点击顶栏的字号按钮切换“大字模式”，登录页也有同样的开关。正文、表单、弹窗和图谱文字会一起放大；设置只保存在本浏览器，退出账号后仍会保留。</p>
       <h2>登录遇到问题时</h2>
       <p>账号由系统管理员登记，不需要自行注册。请使用已登记且启用的手机号；系统提示需要密码时，再输入此账号的密码。忘记密码或维护账号尚未设置密码，请联系系统管理员。</p>
       <p>普通用户可以查看已收录的族谱资料，包括原始记载、葬地和寻根轨迹，但不能修改资料或管理账号。维护人员与系统管理员验证密码后，才可进入相应管理页面。</p>

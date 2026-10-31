@@ -285,7 +285,7 @@ onUnmounted(() => { alive = false; ++epoch; ++loadSequence })
 .account-alert { margin-bottom: 16px; }
 .account-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .account-form-actions :deep(.ant-btn-primary) { min-height: 44px; }
-.account-note { color: #64748b; margin: 16px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+.account-note { color: #64748b; margin: 16px 0 0; font-size: 0.75rem; overflow-wrap: anywhere; }
 .login-user-manager :deep(.ant-card-body) { min-width: 0; }
 .login-user-manager :deep(.ant-table-wrapper) { max-width: 100%; min-width: 0; }
 .login-user-manager :deep(.ant-pagination) { flex-wrap: wrap; }
