@@ -1,5 +1,8 @@
 # Drizzle ORM 迁移 - 代码对比详解
 
+> 历史代码对比，记录当时独立 Worker 的迁移，不描述当前 `api/index.ts` 的完整实现。
+> 当前实现边界见[产品说明](../../product/overview.md)。
+
 ## 1. 导入和初始化
 
 ### 迁移前（原始 D1 API）

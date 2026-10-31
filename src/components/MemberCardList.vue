@@ -60,10 +60,10 @@ onBeforeUnmount(() => observer?.disconnect())
 .member-summary-card:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
 .member-summary-card { font: inherit; }
 .member-summary-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.member-summary-title strong { font-size: 17px; color: #182230; }
+.member-summary-title strong { font-size: 1.0625rem; color: #182230; }
 .member-summary-title > * { min-width: 0; }
-.member-same-name { color: #92400e; font-size: 12px; }
-.member-card-hint { color: #4f46e5; font-size: 12px; }
+.member-same-name { color: #92400e; font-size: 0.75rem; }
+.member-card-hint { color: #4f46e5; font-size: 0.75rem; }
 .member-load-more { text-align: center; padding: 8px 0; }
 .member-load-more :deep(.ant-btn) { min-height: 44px; height: auto; max-width: 100%; white-space: normal; }
 </style>

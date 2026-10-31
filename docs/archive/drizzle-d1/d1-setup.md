@@ -1,5 +1,8 @@
 # D1 连接问题 - 完整解决方案
 
+> 历史指南：本文基于独立 API Worker 与旧登录方式，配置和回退建议不适用于当前版本。
+> 当前配置步骤已统一到[部署指南](../../guides/deployment.md)。
+
 ## 问题症状
 - 页面加载时出现警告：`D1 初始化失败，已回退到本地数据`
 - 浏览器控制台错误：`TypeError: Failed to fetch`
@@ -336,9 +339,9 @@ interface Env {
 
 ## 🔗 更多资源
 
-- [D1 完整调试指南](./D1_DEBUGGING.md)
-- [Drizzle ORM 迁移详情](./DRIZZLE_MIGRATION.md)
-- [快速开始指南](./DRIZZLE_QUICKSTART.md)
+- [D1 完整调试指南](./d1-debugging.md)
+- [Drizzle ORM 迁移详情](./drizzle-migration.md)
+- [快速开始指南](./drizzle-quickstart.md)
 - [官方 Cloudflare D1 文档](https://developers.cloudflare.com/d1/)
 - [官方 Wrangler CLI 文档](https://developers.cloudflare.com/workers/wrangler/)
 

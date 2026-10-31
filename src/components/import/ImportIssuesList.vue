@@ -46,5 +46,5 @@ watch(() => props.report, () => { unmatchedPage.value = 1; notesPage.value = 1 }
 <style scoped>
 .import-issues { margin-top: 16px; }
 .import-issues p { overflow-wrap: anywhere; }
-.issue-source { color: #64748b; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.issue-source { color: #64748b; font-size: 0.75rem; line-height: 1.8; overflow-wrap: anywhere; }
 </style>

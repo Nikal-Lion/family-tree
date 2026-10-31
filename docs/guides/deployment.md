@@ -1,4 +1,4 @@
-# Cloudflare 自动部署指南
+# Cloudflare Workers 部署与发布指南
 
 当前项目使用 **Cloudflare Workers + 静态资源 + D1**，不是仅上传 `dist/`
 的 Pages 静态站点。前端与 `api/index.ts` 由同一个 `family-tree` Worker 提供服务，
@@ -36,7 +36,7 @@ Token 至少需要目标账户的 Workers Scripts 编辑权限与 D1 读取权�
 `v0.1.4` 增加维护人员独立密码：发布前需安排旧维护账号密码设置，
 升级后其旧免密会话将失效；普通用户和 sysadmin 登录策略分别保留手机号直登与
 原服务端固定验证密码。认证字段由 Worker 自动补齐，手动迁移脚本不可重复执行，
-详见[登录与迁移说明](Login.md)。浏览客户端同时切换到 `/api/browse-data`，
+详见[登录与迁移说明](login.md)。浏览客户端同时切换到 `/api/browse-data`，
 完整 `/api/family-data` 仅供维护账号使用，旧页面需刷新，不提供自动回退。
 
 ## 3. 自动发布

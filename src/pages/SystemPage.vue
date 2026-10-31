@@ -87,11 +87,11 @@ onUnmounted(() => { alive = false; ++epoch })
 <style scoped>
 .system-page, .system-content { width: 100%; min-width: 0; }
 .system-heading { margin-bottom: 20px; }
-.system-heading h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; }
+.system-heading h1 { margin: 0 0 8px; font-size: 1.5rem; font-weight: 600; }
 .system-heading p, .diagnostic-note { color: #64748b; overflow-wrap: anywhere; }
 .system-heading p { margin: 0; }
 .diagnostic-alert { margin-bottom: 16px; }
-.diagnostic-note { font-size: 12px; margin: 16px 0 0; }
+.diagnostic-note { font-size: 0.75rem; margin: 16px 0 0; }
 .system-content :deep(.ant-space-item) { min-width: 0; }
 .system-content :deep(.ant-descriptions-item-content) { overflow-wrap: anywhere; }
 @media (max-width: 600px) {

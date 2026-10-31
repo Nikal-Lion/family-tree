@@ -172,12 +172,12 @@ function fatherRecordStatus(child: Member) {
 .member-archive :deep(.ant-space-item) { min-width: 0; max-width: 100%; }
 .member-archive :deep(.ant-btn) { height: auto; min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .member-archive :deep(.ant-tag) { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.archive-name { font-size: 20px; }
+.archive-name { font-size: 1.25rem; }
 .archive-evidence { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }
 .archive-evidence summary { cursor: pointer; font-weight: 600; min-height: 44px; align-content: center; }
 .archive-evidence summary:focus-visible { outline: 2px solid #4f46e5; outline-offset: 4px; }
 .archive-evidence h4 { margin: 12px 0 8px; }
-.archive-note { color: #64748b; font-size: 12px; line-height: 1.8; margin: 8px 0; }
+.archive-note { color: #64748b; font-size: 0.75rem; line-height: 1.8; margin: 8px 0; }
 .archive-entry + .archive-entry { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
 .archive-entry p { margin: 8px 0 0; }
 </style>

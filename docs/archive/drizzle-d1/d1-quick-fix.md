@@ -1,5 +1,8 @@
 # D1 连接问题 - 快速参考卡
 
+> 历史参考卡：不适用于当前同源 Workers + D1 架构，不要按本文设置前端 Token 或启用本地回退。
+> 快速排查已合并到[当前部署指南](../../guides/deployment.md#6-常见问题)。
+
 ## 🚨 问题
 ```
 TypeError: Failed to fetch
@@ -104,9 +107,9 @@ wrangler tail
 
 ## 📚 完整指南
 
-- 详细配置：[D1_SETUP.md](./D1_SETUP.md)
-- 完整调试：[D1_DEBUGGING.md](./D1_DEBUGGING.md)
-- Drizzle 迁移：[DRIZZLE_MIGRATION.md](./DRIZZLE_MIGRATION.md)
+- 详细配置：[d1-setup.md](./d1-setup.md)
+- 完整调试：[d1-debugging.md](./d1-debugging.md)
+- Drizzle 迁移：[drizzle-migration.md](./drizzle-migration.md)
 
 ## 🎯 下一步
 
@@ -118,4 +121,4 @@ wrangler tail
 
 ---
 
-**需要帮助？** 查看 [完整调试指南](./D1_DEBUGGING.md)
+**需要帮助？** 查看 [完整调试指南](./d1-debugging.md)

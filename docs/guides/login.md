@@ -106,15 +106,15 @@ burials and exact track points; it is not a sensitive-field filtering policy.
 
 ## Key References
 
-- [api/index.ts](../api/index.ts)
-- [src/pages/LoginPage.vue](../src/pages/LoginPage.vue)
-- [src/services/authService.ts](../src/services/authService.ts)
-- [src/services/d1ApiService.ts](../src/services/d1ApiService.ts)
-- [src/router/index.ts](../src/router/index.ts)
-- [src/pages/FamilyWorkspace.vue](../src/pages/FamilyWorkspace.vue)
-- [src/components/AuthManager.vue](../src/components/AuthManager.vue)
-- [src/components/LoginUserManager.vue](../src/components/LoginUserManager.vue)
-- [src/types/auth.ts](../src/types/auth.ts)
+- [api/index.ts](../../api/index.ts)
+- [src/pages/LoginPage.vue](../../src/pages/LoginPage.vue)
+- [src/services/authService.ts](../../src/services/authService.ts)
+- [src/services/d1ApiService.ts](../../src/services/d1ApiService.ts)
+- [src/router/index.ts](../../src/router/index.ts)
+- [src/pages/FamilyWorkspace.vue](../../src/pages/FamilyWorkspace.vue)
+- [src/components/AuthManager.vue](../../src/components/AuthManager.vue)
+- [src/components/LoginUserManager.vue](../../src/components/LoginUserManager.vue)
+- [src/types/auth.ts](../../src/types/auth.ts)
 
 ## Zero-Downtime Sysadmin Password Rotation Plan
 

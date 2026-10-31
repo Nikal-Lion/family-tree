@@ -1,9 +1,11 @@
 # Family Tree 项目 - Drizzle ORM 迁移完成总结
 
+> 已归档：仅保留当时总结；当前实现边界见[产品说明](../../product/overview.md)。
+
 > 归档说明（2026-04-18）
 >
 > 本文档是 Drizzle/D1 迁移阶段的历史快照，部分状态描述已过期。
-> 当前项目功能与里程碑状态请以 `README.md`、`README_CN.md` 与 `docs/stage2-plan.MD` 为准。
+> 当前项目功能与里程碑状态请以 [产品说明](../../product/overview.md)与[历史 Stage2 计划](../stage2-plan.md) 为准。
 
 ## 📊 项目当前状态
 
@@ -17,12 +19,12 @@
 - [x] 创建详细的调试和修复文档
 
 ### 📝 新增文档
-1. **DRIZZLE_MIGRATION.md** - 完整迁移总结和改进说明
-2. **DRIZZLE_COMPARISON.md** - 迁移前后的代码对比
-3. **DRIZZLE_QUICKSTART.md** - 快速开始指南
-4. **D1_DEBUGGING.md** - 完整的调试指南
-5. **D1_SETUP.md** - D1 配置和修复方案
-6. **D1_QUICK_FIX.md** - 3 分钟快速修复卡片
+1. **drizzle-migration.md** - 完整迁移总结和改进说明
+2. **drizzle-comparison.md** - 迁移前后的代码对比
+3. **drizzle-quickstart.md** - 快速开始指南
+4. **d1-debugging.md** - 完整的调试指南
+5. **d1-setup.md** - D1 配置和修复方案
+6. **d1-quick-fix.md** - 3 分钟快速修复卡片
 
 ### 🔧 新增配置文件
 - `wrangler.jsonc` - 已更新，添加 D1 绑定占位符
@@ -226,10 +228,10 @@ node d1-diagnose.js
 ```
 
 ### 2. 查看完整调试指南
-参考 [D1_DEBUGGING.md](./D1_DEBUGGING.md)
+参考 [d1-debugging.md](./d1-debugging.md)
 
 ### 3. 查看快速修复卡片
-参考 [D1_QUICK_FIX.md](./D1_QUICK_FIX.md)
+参考 [d1-quick-fix.md](./d1-quick-fix.md)
 
 ### 4. 实时日志监控
 ```bash
@@ -251,11 +253,11 @@ wrangler tail
 ## 📚 相关资源
 
 ### 项目文档
-- [Drizzle ORM 迁移说明](./DRIZZLE_MIGRATION.md) - 详细的迁移和改进说明
-- [代码对比分析](./DRIZZLE_COMPARISON.md) - 迁移前后的代码对比
-- [快速开始指南](./DRIZZLE_QUICKSTART.md) - 开发和部署指南
-- [D1 完整调试指南](./D1_DEBUGGING.md) - 详细的故障排除步骤
-- [D1 配置方案](./D1_SETUP.md) - 完整的配置示例
+- [Drizzle ORM 迁移说明](./drizzle-migration.md) - 详细的迁移和改进说明
+- [代码对比分析](./drizzle-comparison.md) - 迁移前后的代码对比
+- [快速开始指南](./drizzle-quickstart.md) - 开发和部署指南
+- [D1 完整调试指南](./d1-debugging.md) - 详细的故障排除步骤
+- [D1 配置方案](./d1-setup.md) - 完整的配置示例
 
 ### 官方文档
 - [Cloudflare D1 文档](https://developers.cloudflare.com/d1/)
@@ -343,7 +345,7 @@ await db
 ## 📞 支持
 
 如遇到问题，请：
-1. 查看 [D1_DEBUGGING.md](./D1_DEBUGGING.md) 的故障排除部分
+1. 查看 [d1-debugging.md](./d1-debugging.md) 的故障排除部分
 2. 运行 `node d1-diagnose.js` 进行自动诊断
 3. 查看 `wrangler tail` 的实时日志
 4. 查看浏览器开发者工具的 Console 和 Network 标签

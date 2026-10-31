@@ -1,5 +1,8 @@
 # 电子族谱系统部署手册（Cloudflare Pages）
 
+> 已归档：本文混合早期单文件静态站点与独立 D1 Worker 的部署方式，不适用于当前版本。
+> 不要照本文配置前端 Token、localStorage 回退或 Pages 发布；请使用[当前部署指南](../guides/deployment.md)。
+
 ## 1. 概述
 本系统为纯前端静态应用（HTML/CSS/JS），数据存储于浏览器本地 localStorage，无需后端服务。推荐使用 **Cloudflare Pages** 进行部署，享受全球 CDN 加速、自动 HTTPS、免费额度等优势。
 

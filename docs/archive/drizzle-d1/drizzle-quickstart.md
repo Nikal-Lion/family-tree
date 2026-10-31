@@ -1,5 +1,8 @@
 # Drizzle ORM 迁移 - 快速开始指南
 
+> 历史开发指南，依赖版本、目录结构、独立 Worker 与部署命令仅供追溯。
+> 当前开发入口已合并到[项目首页](../../../README.md)，发布请使用[部署指南](../../guides/deployment.md)。
+
 ## ✅ 迁移完成清单
 
 - [x] 安装 `drizzle-orm@^0.32.0` 依赖
@@ -21,8 +24,8 @@ family-tree/
 ├── src/
 │   └── services/
 │       └── d1ApiService.ts                   ✅ 无需改动
-├── DRIZZLE_MIGRATION.md                      📄 新建 (迁移总结文档)
-└── DRIZZLE_COMPARISON.md                     📄 新建 (代码对比文档)
+├── drizzle-migration.md                      📄 新建 (迁移总结文档)
+└── drizzle-comparison.md                     📄 新建 (代码对比文档)
 ```
 
 ## 🚀 本地开发
@@ -189,8 +192,8 @@ Error: Cannot find module 'drizzle-orm'
 
 ## 📚 相关文档
 
-- [DRIZZLE_MIGRATION.md](./DRIZZLE_MIGRATION.md) - 详细的迁移说明和改进项目
-- [DRIZZLE_COMPARISON.md](./DRIZZLE_COMPARISON.md) - 迁移前后的代码对比
+- [drizzle-migration.md](./drizzle-migration.md) - 详细的迁移说明和改进项目
+- [drizzle-comparison.md](./drizzle-comparison.md) - 迁移前后的代码对比
 - [Drizzle ORM 官方文档](https://orm.drizzle.team/)
 - [Cloudflare D1 文档](https://developers.cloudflare.com/d1/)
 
