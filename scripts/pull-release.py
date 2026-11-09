@@ -13,6 +13,8 @@ import sys
 import tarfile
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlsplit
 
 
 ROOT = Path(os.environ.get("DEPLOY_ROOT", "/srv/family-tree")).resolve(strict=True)
@@ -29,10 +31,11 @@ REQUIRED_FILES = {
 OPTIONAL_FILES = {"scripts/pull-release.py", "scripts/run-weekly.sh"}
 TAG_PATTERN = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 HASH_PATTERN = re.compile(r"[a-f0-9]{64}")
+CHUNK_SIZE = 256 * 1024
+DOWNLOAD_WORKERS = 8
 
 
-def fetch(url, destination, max_time, binary=False):
-    accept = "application/octet-stream" if binary else "application/vnd.github+json"
+def fetch(url, destination, max_time):
     subprocess.run(
         [
             "curl", "--ipv4", "--fail", "--location", "--silent", "--show-error",
@@ -40,11 +43,139 @@ def fetch(url, destination, max_time, binary=False):
             "--retry", "6", "--retry-all-errors", "--retry-delay", "4",
             "--connect-timeout", "10", "--max-time", str(max_time),
             "--retry-max-time", "1800", "--output", str(destination),
-            "--header", f"Accept: {accept}",
+            "--header", "Accept: application/vnd.github+json",
             "--header", "User-Agent: family-tree-release-puller", url,
         ],
         check=True,
     )
+
+
+def asset_download_url(api_url):
+    result = subprocess.run(
+        [
+            "curl", "--ipv4", "--fail", "--silent", "--show-error", "--head",
+            "--proto", "=https", "--retry", "4", "--retry-all-errors",
+            "--retry-delay", "4", "--connect-timeout", "10", "--max-time", "60",
+            "--output", os.devnull, "--write-out", "%{redirect_url}",
+            "--header", "Accept: application/octet-stream",
+            "--header", "User-Agent: family-tree-release-puller", api_url,
+        ],
+        capture_output=True, text=True,
+    )
+    if result.returncode:
+        raise RuntimeError(f"Cannot obtain GitHub asset redirect (curl exit {result.returncode})")
+    url = result.stdout.strip()
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "release-assets.githubusercontent.com"
+        or not parsed.path
+        or not parsed.query
+        or parsed.fragment
+        or any(ord(char) < 33 or ord(char) > 126 or char in '"\\' for char in url)
+    ):
+        raise ValueError("GitHub asset redirect has an unexpected URL")
+    return url
+
+
+def fetch_chunk(url, part, start, end):
+    temporary = part.with_suffix(".partial")
+    length = end - start + 1
+    try:
+        result = subprocess.run(
+            [
+                "curl", "--ipv4", "--fail", "--silent", "--show-error",
+                "--proto", "=https", "--retry", "4", "--retry-all-errors",
+                "--retry-delay", "2", "--retry-max-time", "420",
+                "--connect-timeout", "10", "--max-time", "90",
+                "--speed-limit", "1024", "--speed-time", "20",
+                "--max-filesize", str(length), "--range", f"{start}-{end}",
+                "--output", str(temporary), "--write-out", "%{http_code}",
+                "--config", "-",
+            ],
+            input=f'url = "{url}"\n', capture_output=True, text=True,
+        )
+        status = result.stdout.strip()
+        if result.returncode or status != "206":
+            status = status if re.fullmatch(r"[0-9]{3}", status) else "unknown"
+            raise RuntimeError(
+                f"Download failed for bytes {start}-{end} "
+                f"(curl exit {result.returncode}, HTTP {status})"
+            )
+        if temporary.stat().st_size != length:
+            raise ValueError(f"Download returned the wrong size for bytes {start}-{end}")
+        os.replace(temporary, part)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def download_asset(api_url, archive, expected_hash, expected_size):
+    parts = archive.parent / f".{archive.name}.{expected_hash}.chunks"
+    if parts.is_symlink():
+        raise ValueError("Download chunk directory must not be a symlink")
+    parts.mkdir(mode=0o700, exist_ok=True)
+    chunks = []
+    for index, start in enumerate(range(0, expected_size, CHUNK_SIZE)):
+        end = min(start + CHUNK_SIZE, expected_size) - 1
+        part = parts / f"{index:06d}.part"
+        if part.is_symlink():
+            raise ValueError("Download chunk must not be a symlink")
+        if part.exists() and (not part.is_file() or part.stat().st_size != end - start + 1):
+            part.unlink()
+        chunks.append((part, start, end))
+
+    pending = [(part, start, end) for part, start, end in chunks if not part.exists()]
+    completed = expected_size - sum(end - start + 1 for _, start, end in pending)
+    if completed:
+        print(f"Resuming release download: {completed}/{expected_size} bytes", flush=True)
+
+    for attempt in range(2):
+        if not pending:
+            break
+        url = asset_download_url(api_url)
+        try:
+            with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
+                futures = {
+                    pool.submit(fetch_chunk, url, part, start, end): (start, end)
+                    for part, start, end in pending
+                }
+                try:
+                    next_report = completed + 16 * 1024 * 1024
+                    for future in as_completed(futures):
+                        future.result()
+                        start, end = futures[future]
+                        completed += end - start + 1
+                        if completed >= next_report or completed == expected_size:
+                            print(f"Downloaded {completed}/{expected_size} bytes", flush=True)
+                            next_report = completed + 16 * 1024 * 1024
+                except Exception:
+                    for future in futures:
+                        future.cancel()
+                    raise
+        except (OSError, RuntimeError, ValueError) as error:
+            if attempt:
+                raise
+            print(f"Download interrupted; retrying missing chunks: {error}", flush=True)
+            pending = [(part, start, end) for part, start, end in chunks if not part.exists()]
+            completed = expected_size - sum(end - start + 1 for _, start, end in pending)
+        else:
+            pending = []
+
+    partial = archive.parent / f".{archive.name}.{os.getpid()}.part"
+    try:
+        with partial.open("xb") as output:
+            for part, _, _ in chunks:
+                with part.open("rb") as source:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+        try:
+            verify_download(partial, expected_hash, expected_size)
+        except ValueError:
+            shutil.rmtree(parts)
+            raise
+        os.replace(partial, archive)
+        shutil.rmtree(parts)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def read_release(path):
@@ -195,14 +326,8 @@ def main():
             print(f"Verifying cached {name}", flush=True)
             verify_download(archive, digest, size)
         else:
-            partial = downloads / f".{name}.{os.getpid()}.part"
-            try:
-                print(f"Downloading {name}", flush=True)
-                fetch(url, partial, 900, binary=True)
-                verify_download(partial, digest, size)
-                os.replace(partial, archive)
-            finally:
-                partial.unlink(missing_ok=True)
+            print(f"Downloading {name}", flush=True)
+            download_asset(url, archive, digest, size)
 
         release = releases / f"{tag}-{time.time_ns()}-{os.getpid()}"
         release.mkdir(mode=0o700)

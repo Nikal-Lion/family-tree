@@ -228,6 +228,8 @@ docker compose up -d --wait --wait-timeout 90
 
 服务器需能通过 IPv4 HTTPS 访问 `api.github.com` 和 GitHub Release 资产下载端点。
 当前公开仓库无需 GitHub 凭据；仓库若改为私有，必须先另行设计受限的读取凭据。
+发布包按小块并发拉取；连接中断时保留已完成的块，重试或下次定时运行时继续下载。
+全部块合并并通过 Release 的大小和 SHA-256 校验后才会部署；校验失败会丢弃这些块。
 运行端不需要 npm、Docker Hub 或入站 SSH 访问；保留现有 22 端口白名单。
 自动拉取信任仓库发布者：发布包 SHA-256 由 GitHub Release 元数据提供，能检测下载损坏，
 但并不是独立的发布签名。应严格限制有权限创建或替换 Release 的账号。

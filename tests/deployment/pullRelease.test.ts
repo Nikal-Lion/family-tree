@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync,
@@ -19,18 +19,37 @@ const curlMock = `#!/usr/bin/env node
 const fs = require('node:fs')
 const args = process.argv.slice(2)
 const url = args.at(-1)
-fs.appendFileSync(process.env.TEST_LOG, url + '\\n')
-if (url.endsWith('/healthz')) {
+if (args.includes('--config')) {
+  const config = fs.readFileSync(0, 'utf8')
+  if (config !== 'url = "https://release-assets.githubusercontent.com/asset?signature=test"\\n') process.exit(2)
+  const range = args[args.indexOf('--range') + 1]
+  fs.appendFileSync(process.env.TEST_LOG, 'range ' + range + '\\n')
+  const [start, end] = range.split('-').map(Number)
+  if (process.env.TEST_FAIL === 'download' || (process.env.TEST_FAIL === 'partial' && start === 262144)) {
+    if (process.env.TEST_FAIL === 'partial') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400)
+    process.exit(28)
+  }
+  const bytes = fs.readFileSync(process.env.TEST_ARCHIVE).subarray(start, end + 1)
+  if (process.env.TEST_FAIL === 'corrupt') bytes[0] ^= 0xff
+  const output = args[args.indexOf('--output') + 1]
+  fs.writeFileSync(output, bytes)
+  process.stdout.write(process.env.TEST_FAIL === 'status' ? '200' : '206')
+} else if (url.endsWith('/healthz')) {
+  fs.appendFileSync(process.env.TEST_LOG, url + '\\n')
   if (process.env.TEST_FAIL === 'health') process.exit(22)
   console.log('{"ok":true}')
 } else {
+  fs.appendFileSync(process.env.TEST_LOG, url + '\\n')
   const output = args[args.indexOf('--output') + 1]
   if (url.endsWith('/releases/latest')) {
     if (process.env.TEST_FAIL === 'metadata') process.exit(22)
     fs.copyFileSync(process.env.TEST_METADATA, output)
   } else {
-    if (process.env.TEST_FAIL === 'download') process.exit(28)
-    fs.copyFileSync(process.env.TEST_ARCHIVE, output)
+    if (process.env.TEST_FAIL === 'redirect') {
+      process.stdout.write('https://untrusted.example/asset?signature=test')
+    } else {
+      process.stdout.write('https://release-assets.githubusercontent.com/asset?signature=test')
+    }
   }
 }
 `
@@ -59,12 +78,13 @@ function createRelease(options: {
   unsafeEntry?: boolean
   missingAsset?: boolean
   includeUpdater?: boolean
+  largeImage?: boolean
 } = {}) {
   const tag = options.tag ?? 'v0.2.1'
   const image = `family-tree:${tag.slice(1)}`
-  const files: Record<string, string> = {
+  const files: Record<string, string | Buffer> = {
     'image.txt': `${image}\n`,
-    'family-tree-image.tar.gz': 'test image',
+    'family-tree-image.tar.gz': options.largeImage ? randomBytes(1024 * 1024) : 'test image',
     'docker-compose.yml': 'services: {}\n',
     'docker-compose.production.yml': 'services: {}\n',
     'scripts/deploy.sh': `#!/usr/bin/env bash
@@ -150,6 +170,54 @@ describe('server-side release pull', () => {
     const result = runPull()
     expect(result.status, result.stderr).toBe(0)
     expect(requests().some(url => url.includes('/releases/assets/'))).toBe(false)
+  })
+
+  it('resumes complete chunks after an interrupted download', () => {
+    createRelease({ largeImage: true })
+    const first = runPull('partial')
+    expect(first.status).not.toBe(0)
+    expect(first.stderr).toContain('Download failed for bytes 262144-524287')
+    const firstRequests = requests()
+    const firstRanges = firstRequests.filter(url => url.startsWith('range '))
+    expect(firstRanges.length).toBeGreaterThan(1)
+    const chunks = readdirSync(join(root, 'downloads')).find(name => name.endsWith('.chunks'))
+    expect(chunks).toBeDefined()
+    const completed = readdirSync(join(root, 'downloads', chunks!)).filter(name => name.endsWith('.part'))
+    expect(completed.length).toBeGreaterThan(0)
+
+    const second = runPull()
+    expect(second.status, second.stderr).toBe(0)
+    expect(second.stdout).toContain('Resuming release download:')
+    const secondRanges = requests().slice(firstRequests.length).filter(url => url.startsWith('range '))
+    expect(secondRanges).toContain('range 262144-524287')
+    expect(secondRanges.length).toBeLessThan(firstRanges.length)
+    expect(readdirSync(join(root, 'downloads'))).toEqual([])
+  })
+
+  it('rejects an untrusted asset redirect without downloading', () => {
+    createRelease()
+    const result = runPull('redirect')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('unexpected URL')
+    expect(requests().some(url => url.startsWith('range '))).toBe(false)
+    expect(existsSync(join(root, 'deploy-called'))).toBe(false)
+  })
+
+  it('rejects a response that does not honor the requested byte range', () => {
+    createRelease()
+    const result = runPull('status')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('HTTP 200')
+    expect(existsSync(join(root, 'deploy-called'))).toBe(false)
+  })
+
+  it('discards all chunks when the assembled download fails its digest', () => {
+    createRelease({ largeImage: true })
+    const result = runPull('corrupt')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('size or SHA-256')
+    expect(readdirSync(join(root, 'downloads'))).toEqual([])
+    expect(existsSync(join(root, 'deploy-called'))).toBe(false)
   })
 
   it('does not restart an unchanged version and checks its local health', () => {
