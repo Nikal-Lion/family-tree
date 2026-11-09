@@ -1,0 +1,13 @@
+services:
+  app:
+    environment:
+      TRUST_PROXY: "true"
+    networks:
+      proxy:
+        aliases:
+          - family-tree-app
+
+networks:
+  proxy:
+    external: true
+    name: stock-analyze_default

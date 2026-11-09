@@ -12,10 +12,10 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [部署与发布](guides/deployment.md) | 当前 Workers + Static Assets + D1 部署、CI、版本与 tag、常见问题 |
+| [部署与发布](guides/deployment.md) | 当前 Docker Compose + SQLite 自托管、备份、更新与常见问题 |
 | [登录与迁移](guides/login.md) | 普通用户、维护人员与系统管理员的认证和迁移边界 |
 
-旧 `RELEASE.md`、D1 配置与快速修复、Drizzle 快速开始不再作为操作入口；
+旧 D1 配置与快速修复、Drizzle 快速开始不再作为操作入口；
 当前开发步骤集中在[项目首页](../README.md#本地开发)，发布与配置集中在部署指南。
 
 ## 产品需求
@@ -26,7 +26,7 @@
 | [扫墓轨迹](product/navigation.md) | 基础轨迹需求与验收项 |
 | [轨迹多媒体扩展](product/navigation-v2.md) | 标点照片/视频扩展需求，不代表已实现 |
 | [OCR 导入](product/ocr.md) | 需求参考；当前维护界面暂缓开放 |
-| [存储升级](product/storage-upgrade.md) | 历史 SQLite 主路径方案；当前只实现二进制快照备份，主存储仍为 D1 |
+| [存储升级](product/storage-upgrade.md) | 历史浏览器端 SQLite 主路径方案；当前服务端主存储为 SQLite |
 
 ## 项目企划与后续迭代
 

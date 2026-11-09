@@ -6,6 +6,7 @@ import worker from '../../api/index'
 import { TestD1Database } from '../helpers/d1Database'
 
 const require = createRequire(import.meta.url)
+const appBase = process.env.VITE_BASE_PATH?.replace(/\/$/, '') || ''
 const temporary = 'browser-temporary-password'
 const personal = 'browser-personal-password'
 const reset = 'browser-reset-password'
@@ -25,10 +26,12 @@ test.beforeEach(async ({ page }) => {
   db.database.run(`INSERT INTO login_users (id, mobile, name, role, enabled, created_at, updated_at)
     VALUES (1, ?, '测试管理员', 'sysadmin', 1, '', ''), (2, ?, '测试成员', 'maintainer', 1, '', '')`, [adminMobile, mobile])
   db.database.run('INSERT INTO login_credentials VALUES (1, ?, 0, 1), (2, ?, 1, 1)', [hash, hash])
-  // All API traffic is served by an isolated in-memory Worker, never remote D1.
+  // All API traffic is served by an isolated in-memory database, never a remote service.
   await page.route('**/api/**', async (route) => {
     const incoming = route.request()
-    const path = new URL(incoming.url()).pathname
+    const requestPath = new URL(incoming.url()).pathname
+    expect(requestPath.startsWith(`${appBase}/api/`)).toBe(true)
+    const path = requestPath.slice(appBase.length)
     if (path === '/api/family-data') familyRequests++
     const response = await worker.fetch(new Request(`https://test.invalid${path}`, {
       method: incoming.method(),
@@ -47,7 +50,7 @@ test.afterEach(async ({ page }, testInfo) => {
 })
 
 async function signIn(page: Page, account: string, password: string) {
-  await page.goto('/login')
+  await page.goto(`${appBase}/login`)
   await page.getByLabel('手机号', { exact: true }).fill(account)
   await page.getByLabel('账号密码', { exact: true }).fill(password)
   await page.getByRole('button', { name: /^登\s*录$/ }).click()
@@ -56,7 +59,7 @@ async function signIn(page: Page, account: string, password: string) {
 test('temporary passwords require setup before any family request and survive page reload', async ({ page }) => {
   await signIn(page, mobile, temporary)
   await expect(page).toHaveURL(/\/change-password$/)
-  await page.goto('/app/manage')
+  await page.goto(`${appBase}/app/manage`)
   await expect(page).toHaveURL(/\/change-password$/)
   await page.reload()
   await expect(page.getByText('请先修改初始密码', { exact: true })).toBeVisible()
@@ -101,7 +104,7 @@ test('normal accounts can change passwords through the account menu and retry a 
 test('administrators create and reset temporary passwords without storing plaintext in the browser', async ({ page }) => {
   await signIn(page, adminMobile, temporary)
   await expect(page).toHaveURL(/\/app\/manage$/)
-  await page.goto('/app/system')
+  await page.goto(`${appBase}/app/system`)
   await page.getByRole('button', { name: /新增账号/ }).click()
   const editor = page.getByRole('dialog', { name: '新增登录账号' })
   await editor.getByLabel('登录手机号', { exact: true }).fill('13900000003')

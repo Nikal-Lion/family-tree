@@ -7,7 +7,7 @@ import { guardAuthentication, readAuthJson } from './authRateLimit'
 import { validateNewPassword } from '../src/services/passwordPolicy'
 
 interface Env {
-  DB: D1Database
+  DB: SqliteDatabase
   API_TOKEN?: string
   ALLOW_LEGACY_API_TOKEN_AUTH?: string
   SYSADMIN_PASSWORD_PBKDF2?: string
@@ -15,18 +15,18 @@ interface Env {
   SESSION_TTL_HOURS?: string
 }
 
-interface D1Database {
-  prepare(query: string): D1PreparedStatement
-  batch(statements: D1PreparedStatement[]): Promise<D1QueryResult<unknown>[]>
+export interface SqliteDatabase {
+  prepare(query: string): SqlitePreparedStatement
+  batch(statements: SqlitePreparedStatement[]): Promise<SqliteQueryResult<unknown>[]>
   exec(query: string): Promise<unknown>
 }
 
-interface D1PreparedStatement {
-  bind(...values: unknown[]): D1PreparedStatement
-  all<T>(): Promise<D1QueryResult<T>>
+export interface SqlitePreparedStatement {
+  bind(...values: unknown[]): SqlitePreparedStatement
+  all<T>(): Promise<SqliteQueryResult<T>>
 }
 
-interface D1QueryResult<T> {
+export interface SqliteQueryResult<T> {
   results?: T[]
 }
 
@@ -279,7 +279,7 @@ function toLoginUserView(row: LoginUserRecord): LoginUserView {
   }
 }
 
-async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<LoginUserRecord | null> {
+async function findLoginUserByMobile(db: SqliteDatabase, mobile: string): Promise<LoginUserRecord | null> {
   const rows = await db
     .prepare(
       `${LOGIN_USER_SELECT} WHERE u.mobile = ? LIMIT 1`,
@@ -290,7 +290,7 @@ async function findLoginUserByMobile(db: D1Database, mobile: string): Promise<Lo
   return rows.results?.[0] ?? null
 }
 
-async function findLoginUserById(db: D1Database, id: number): Promise<LoginUserRecord | null> {
+async function findLoginUserById(db: SqliteDatabase, id: number): Promise<LoginUserRecord | null> {
   const rows = await db
     .prepare(`${LOGIN_USER_SELECT} WHERE u.id = ? LIMIT 1`)
     .bind(id)
@@ -299,7 +299,7 @@ async function findLoginUserById(db: D1Database, id: number): Promise<LoginUserR
   return rows.results?.[0] ?? null
 }
 
-async function countSysadmins(db: D1Database): Promise<number> {
+async function countSysadmins(db: SqliteDatabase): Promise<number> {
   const rows = await db
     .prepare("SELECT COUNT(1) AS count FROM login_users WHERE role = 'sysadmin' AND enabled = 1")
     .all<{ count: number }>()
@@ -307,7 +307,7 @@ async function countSysadmins(db: D1Database): Promise<number> {
 }
 
 async function createSessionForUser(
-  db: D1Database,
+  db: SqliteDatabase,
   user: LoginUserRecord,
   env: Env,
 ): Promise<{ token: string; expiresAt: string } | null> {
@@ -365,7 +365,7 @@ async function verifyAccountPassword(user: LoginUserRecord | null, password: str
   return false
 }
 
-async function replacePassword(db: D1Database, user: LoginUserRecord, passwordHash: string, mustChange: boolean): Promise<boolean> {
+async function replacePassword(db: SqliteDatabase, user: LoginUserRecord, passwordHash: string, mustChange: boolean): Promise<boolean> {
   const timestamp = nowIso()
   const results = await db.batch([
     db.prepare(`INSERT INTO login_credentials (user_id, password_hash, must_change_password, version)
@@ -562,7 +562,7 @@ function parseLoginUserId(pathname: string): number | null {
   return toInt(match[1], -1)
 }
 
-async function ensureSchema(db: D1Database): Promise<void> {
+async function ensureSchema(db: SqliteDatabase): Promise<void> {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS family_data_revision (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -747,7 +747,11 @@ async function ensureSchema(db: D1Database): Promise<void> {
   ])
 }
 
-async function ensureAuthColumns(db: D1Database): Promise<void> {
+export async function initializeDatabase(db: SqliteDatabase): Promise<void> {
+  await ensureSchema(db)
+}
+
+async function ensureAuthColumns(db: SqliteDatabase): Promise<void> {
   const additions = [
     ['login_users', 'password_hash', 'TEXT'],
     ['login_users', 'auth_version', 'INTEGER NOT NULL DEFAULT 0'],
@@ -767,7 +771,7 @@ async function ensureAuthColumns(db: D1Database): Promise<void> {
   }
 }
 
-async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
+async function ensureLoginUsersRoleConstraint(db: SqliteDatabase): Promise<void> {
   const row = await db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'login_users' LIMIT 1")
     .all<{ sql: string }>()
@@ -777,7 +781,7 @@ async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
     return
   }
 
-  // D1 runtime does not reliably support PRAGMA toggles in exec(), so run a pure SQL rebuild.
+  // Keep the table rebuild inside SQL statements so it remains atomic across SQLite adapters.
   await db.batch([
     db.prepare('DROP TABLE IF EXISTS auth_sessions__new'),
     db.prepare('DROP TABLE IF EXISTS login_users__new'),
@@ -826,7 +830,7 @@ async function ensureLoginUsersRoleConstraint(db: D1Database): Promise<void> {
   ])
 }
 
-async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
+async function readFamilyData(db: SqliteDatabase): Promise<FamilyData | null> {
   await ensureSchema(db)
 
   const memberRows = await db.prepare('SELECT * FROM members ORDER BY id').all<{
@@ -1085,18 +1089,18 @@ async function readFamilyData(db: D1Database): Promise<FamilyData | null> {
   })
 }
 
-async function readRevision(db: D1Database): Promise<number> {
+async function readRevision(db: SqliteDatabase): Promise<number> {
   const rows = await db.prepare('SELECT revision FROM family_data_revision WHERE singleton = 1').all<{ revision: number }>()
   return rows.results?.[0]?.revision ?? 0
 }
 
-async function writeFamilyData(db: D1Database, data: FamilyData, expectedRevision: number): Promise<void> {
+async function writeFamilyData(db: SqliteDatabase, data: FamilyData, expectedRevision: number): Promise<void> {
   await ensureSchema(db)
 
   const nowTs = Math.floor(Date.now() / 1000)
 
-  const statements: D1PreparedStatement[] = [
-    // A stale revision violates NOT NULL and rolls back the entire D1 batch.
+  const statements: SqlitePreparedStatement[] = [
+    // A stale revision violates NOT NULL and rolls back the entire SQLite transaction.
     db.prepare('UPDATE family_data_revision SET revision = CASE WHEN revision = ? THEN revision + 1 ELSE NULL END WHERE singleton = 1').bind(expectedRevision),
     db.prepare('DELETE FROM child_claims'),
     db.prepare('DELETE FROM spouses'),
@@ -1723,7 +1727,7 @@ export default {
 
       return jsonResponse({ error: '未找到接口' }, 404)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'D1 服务内部错误'
+      const message = error instanceof Error ? error.message : '服务内部错误'
       return jsonResponse({ error: message }, error instanceof FamilyDataValidationError || error instanceof SyntaxError ? 400 : 500)
     }
   },

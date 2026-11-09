@@ -272,7 +272,7 @@ for (const input of ['touch', 'mouse'] as const) {
     test.skip(!isMobile, 'Mobile input interaction regression')
     const activate = (target: Locator) => input === 'touch' ? target.tap() : target.click()
     await page.goto('/app/system')
-    await page.getByText('D1 云端诊断', { exact: true }).scrollIntoViewIfNeeded()
+    await page.getByText('SQLite 服务诊断', { exact: true }).scrollIntoViewIfNeeded()
     await activate(page.getByRole('button', { name: /^账号菜单：/ }))
     await expect(page.getByRole('menuitem', { name: '使用帮助' })).toBeVisible()
     await activate(page.getByRole('button', { name: '展开导航', exact: true }))

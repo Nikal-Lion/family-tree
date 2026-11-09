@@ -84,7 +84,7 @@ async function handleLogout() {
   try {
     await logout()
     // Reload to discard the previous account's in-memory workspace and pending UI state.
-    window.location.replace('/login')
+    window.location.replace(router.resolve('/login').href)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '退出登录失败')
   } finally {

@@ -26,14 +26,14 @@ async function submit() {
     form.currentPassword = ''
     form.newPassword = ''
     form.confirmation = ''
-    window.location.replace('/login?passwordChanged=1')
+    window.location.replace(router.resolve({ path: '/login', query: { passwordChanged: '1' } }).href)
   } finally { pending.value = false }
 }
 async function signOut() {
   if (pending.value) return
   pending.value = true
   await logout()
-  window.location.replace('/login')
+  window.location.replace(router.resolve('/login').href)
 }
 </script>
 

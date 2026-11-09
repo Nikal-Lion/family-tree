@@ -8,9 +8,32 @@ beforeEach(() => {
   fetchMock.mockReset()
   vi.stubGlobal('fetch', fetchMock)
   vi.stubGlobal('location', { origin: 'http://local.invalid' })
+  vi.stubEnv('BASE_URL', '/')
+  vi.stubEnv('VITE_API_BASE_URL', '')
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
 describe('login API contract', () => {
+  it('keeps API calls under the deployed subdirectory', async () => {
+    vi.stubEnv('BASE_URL', '/family/')
+    const api = await import('../../src/services/d1ApiService')
+    fetchMock.mockResolvedValueOnce(Response.json({ initialized: true }))
+    await api.fetchAuthStatus()
+    expect(fetchMock.mock.calls[0]![0]).toBe('http://local.invalid/family/api/auth/status')
+  })
+
+  it.each(['https://api.example.test/service', 'https://api.example.test/service/'])(
+    'honors an explicit API base path: %s', async (base) => {
+      vi.stubEnv('VITE_API_BASE_URL', base)
+      const api = await import('../../src/services/d1ApiService')
+      fetchMock.mockResolvedValueOnce(Response.json({ initialized: true }))
+      await api.fetchAuthStatus()
+      expect(fetchMock.mock.calls[0]![0]).toBe('https://api.example.test/service/api/auth/status')
+    },
+  )
+
   it('queries initialization without authentication or credential storage', async () => {
     const api = await import('../../src/services/d1ApiService')
     api.setSessionToken('old-session')

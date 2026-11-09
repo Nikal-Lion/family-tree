@@ -22,14 +22,14 @@
 - 修改或重置密码会原子地更新凭证版本并撤销该账号所有会话；
   用户改密后需要重新登录。重置不会自动启用被禁用的账号。
 
-密码仅以随机 16 字节盐的 PBKDF2-SHA256 哈希保存，派生长度为 32 字节。
-迭代次数为 100000，受当前 Cloudflare Workers Web Crypto 运行时上限约束。
+密码仅以随机 16 字节盐的 PBKDF2-SHA256 哈希保存，派生长度为 32 字节，
+迭代次数为 100000；密码和哈希均不写入普通日志。
 相同密码的不同账号具有不同盐，不存储明文或可解密的密码。
 账号列表和登录响应仅返回密码是否设置、是否需要改密，不返回哈希。
 
 ## 旧版本升级
 
-Worker 自动创建两个新增表，亦提供幂等迁移
+服务自动创建两个新增表，亦提供幂等迁移
 [`migrations/0004_account_passwords.sql`](../../migrations/0004_account_passwords.sql)：
 
 | 表 | 用途 |
@@ -53,7 +53,7 @@ v0.1.4–v0.1.6 已存在的 `login_users.password_hash` 原样迁入
 
 1. 确认至少有一个启用的旧管理员，并保留其现有
    `SYSADMIN_PASSWORD_PBKDF2`（或轮换期的 `_NEXT`）服务端 Secret。
-2. 同时发布前端和 Worker。不要只换前端或在多入口中继续运行旧免密 Worker。
+2. 更新自托管 Docker 镜像。不要只换前端或在多个入口中继续运行旧免密服务。
 3. 旧管理员使用原手机号和原服务端验证密码登录。
    仅未配置独立密码的旧管理员允许这样过渡，得到的是 15 分钟受限会话。
 4. 按提示设置自己的新密码，再用新密码登录。
@@ -76,20 +76,18 @@ v0.1.4–v0.1.6 已存在的 `login_users.password_hash` 原样迁入
 pbkdf2_sha256$100000$<随机盐的十六进制>$<派生哈希的十六进制>
 ```
 
-使用受控的本地密码管理流程生成随机初始化密码和对应哈希，将哈希写入
-Cloudflare Secrets，而不是前端 `VITE_*` 环境变量：
+使用项目脚本在本机交互式终端生成随机初始化密码和对应哈希，将脚本输出的
+`SYSADMIN_PASSWORD_PBKDF2='…'` 写入服务器 `.env`，不要写入前端 `VITE_*` 变量：
 
 ```bash
-npx wrangler secret put SYSADMIN_PASSWORD_PBKDF2
+node scripts/generate-admin-secret.mjs
 ```
 
-当前部署使用默认环境，不要随意添加 `--env production`。
-`SYSADMIN_PASSWORD_PBKDF2_NEXT` 仅用于初始化/旧管理员过渡密码的轮换窗口，
-不是已设独立密码账号的备用密码。过渡完成后可删除这两个 Secret；
-再次初始化或受控恢复时才需要配置。
+该环境变量只用于首次初始化或受控恢复；首位管理员完成独立密码设置后，可从 `.env`
+删除并重建容器。再次初始化或受控恢复时才需要重新配置。
 
 若唯一管理员忘记独立密码，应用不会通过手机号或初始化入口自动解锁。
-须由有权限的部署维护者在确认身份并备份后，通过受控 D1 维护，
+须由有权限的部署维护者在确认身份并备份后，通过受控 SQLite 数据库维护，
 在同一事务内撤销该管理员全部会话、清空**该管理员**旧
 `login_users.password_hash` 列并删除其 `login_credentials` 记录，
 再配置新的初始化 Secret，使用上述旧管理员过渡流程设置独立密码。
@@ -119,7 +117,7 @@ npx wrangler secret put SYSADMIN_PASSWORD_PBKDF2
 ## 登录、初始化及改密限流
 
 `POST /api/auth/login`、`POST /api/auth/bootstrap-sysadmin` 和
-`POST /api/auth/change-password` 共用同一 `DB` 的原子 D1 计数：
+`POST /api/auth/change-password` 共用同一 SQLite 数据库的原子计数：
 
 | 维度 | 允许尝试次数 | 窗口 |
 | --- | --- | --- |
@@ -134,22 +132,22 @@ npx wrangler secret put SYSADMIN_PASSWORD_PBKDF2
 - 请求体按字节读取，上限 4096 字节，不依赖客户端 `Content-Length`。
   原手机号最多 64 字符，规范化后支持 6–20 位数字和可选的 `+`。
   当前密码最多 1024 字符以兼容旧管理员 Secret，新密码最长 128 字符。
-- 只使用带 Cloudflare `request.cf` 的 `CF-Connecting-IP`，忽略
-  `X-Forwarded-For`。缺少/无效来源信息时使用统一保守桶，不接受自定义头绕过。
+- 默认使用 Node 服务实际看到的 TCP 对端地址，不信任客户端转发头；若显式启用
+  `TRUST_PROXY=true`，服务才读取 `X-Forwarded-For`。只能在网络确保应用端口仅由可信反向代理访问、
+  且代理覆盖该头时启用，否则客户端可伪造来源地址。
 - `auth_rate_limits` 持久化来源/账号的分域 SHA-256 摘要键。
   这些是化名化标识，不是不可逆匿名数据；低熵输入可能被枚举。
-- 每次认证最多清理 100 条已过期计数，数据库/Worker 实例重启不会清空有效计数。
+- 每次认证最多清理 100 条已过期计数，服务重启不会清空有效计数。
   无后续请求时过期记录可以暂留，但不再阻断登录。
 
-这些限制不能代替 DDoS 防护。共享 NAT 可能触发来源限制，
-攻击者也可能暂时耗尽已知账号的额度；大规模分布式攻击仍需 Cloudflare
-边缘防护和监控。所有入口必须使用同一 D1，并在生产确认有效来源 IP，
-尤其是前面还有 Worker/代理的情况。
+这些限制不能代替网络层 DDoS 防护。共享 NAT 或反向代理出口可能触发来源限制，
+攻击者也可能暂时耗尽已知账号的额度；公网部署仍需维护者配置防火墙、反向代理限流和监控。
+当前推荐单个应用实例连接同一个本地 SQLite 文件。
 
 ## 相关入口
 
 - 登录：`/login`
 - 本人改密：`/change-password` 或账号菜单
 - 管理员开通/重置账号：`/app/system`
-- 实际服务端入口：[`api/index.ts`](../../api/index.ts)
+- 实际 API 与服务端入口：[`api/index.ts`](../../api/index.ts)、[`server/index.ts`](../../server/index.ts)
 - 部署与验收：[部署指南](deployment.md)

@@ -108,7 +108,7 @@ async function restore() {
         </Space>
         <input ref="fileInput" class="backup-file-input" type="file" accept=".json,.sqlite,.db" :disabled="busy || initializing || !!loadError" @change="selectBackup" />
         <Alert v-if="fileError" type="error" show-icon :message="fileError" class="backup-alert" />
-        <p class="backup-description">SQLite 是包含完整业务快照的独立备份文件，并非 D1 整库镜像；兼容早期扩展名为 .sqlite 的 JSON 备份，不接受任意 SQLite 数据库。</p>
+        <p class="backup-description">SQLite 是包含完整业务快照的独立备份文件，并非服务端数据库文件；兼容早期扩展名为 .sqlite 的 JSON 备份，不接受任意 SQLite 数据库。</p>
       </Card>
     </Spin>
     <template v-if="!initializing && !loadError">

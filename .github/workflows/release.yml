@@ -3,33 +3,50 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release and deploy (vX.Y.Z)
+        required: true
+        type: string
+
+concurrency:
+  group: family-tree-production
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  TAG_NAME: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
-    name: Create Release
+    name: Build and publish image
     runs-on: ubuntu-latest
-
+    timeout-minutes: 25
+    permissions:
+      contents: write
     steps:
-      - name: Checkout
+      - name: Validate release tag
+        run: |
+          [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Expected a vX.Y.Z tag"; exit 1;
+          }
+
+      - name: Checkout release tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0
+          ref: refs/tags/${{ env.TAG_NAME }}
+          persist-credentials: false
 
-      - name: Validate version tag
-        run: |
-          if ! [[ "${REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid version tag format. Expected vX.Y.Z"
-            exit 1
-          fi
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22.x'
+          cache: npm
 
-        env:
-          REF_NAME: ${{ github.ref_name }}
       - name: Verify package versions match tag
-        env:
-          TAG_NAME: ${{ github.ref_name }}
         run: |
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs'
@@ -37,12 +54,107 @@ jobs:
           const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
           const version = process.env.TAG_NAME.slice(1)
           if ([pkg.version, lock.version, lock.packages[''].version].some(value => value !== version)) {
-            console.error('::error::Release tag, package.json and package-lock.json versions must match')
-            process.exit(1)
+            throw new Error('Tag, package.json and package-lock.json versions must match')
           }
           NODE
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
-        with:
-          generate_release_notes: true
+      - name: Test release
+        run: |
+          npm ci
+          npm test
+          bash -n scripts/deploy.sh
+          shellcheck scripts/deploy.sh
+
+      - name: Test subdirectory login flow
+        run: |
+          npx playwright install --with-deps webkit
+          VITE_BASE_PATH=/family/ npm run test:browser -- tests/browser/passwordLogin.spec.ts --project=desktop
+
+      - name: Build amd64 image for the subdirectory
+        env:
+          NODE_IMAGE: ${{ vars.FAMILY_NODE_IMAGE || 'node:22-bookworm-slim' }}
+          NPM_REGISTRY: ${{ vars.FAMILY_NPM_REGISTRY || 'https://registry.npmjs.org' }}
+        run: |
+          docker build --platform linux/amd64 --build-arg APP_BASE_PATH=/family/ \
+            --build-arg NODE_IMAGE="$NODE_IMAGE" --build-arg NPM_REGISTRY="$NPM_REGISTRY" \
+            --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+            --tag "family-tree:${TAG_NAME#v}" .
+
+      - name: Check constrained runtime
+        run: |
+          export APP_IMAGE="family-tree:${TAG_NAME#v}"
+          docker compose up -d --wait --wait-timeout 90
+          curl --fail http://127.0.0.1:3000/healthz
+          curl --fail http://127.0.0.1:3000/login | grep '/family/assets/'
+
+      - name: Prepare release bundle
+        run: |
+          mkdir -p bundle/scripts
+          printf 'family-tree:%s\n' "${TAG_NAME#v}" > bundle/image.txt
+          docker save "family-tree:${TAG_NAME#v}" | gzip > bundle/family-tree-image.tar.gz
+          cp docker-compose.yml docker-compose.production.yml bundle/
+          cp scripts/deploy.sh bundle/scripts/
+          cd bundle
+          sha256sum image.txt family-tree-image.tar.gz docker-compose.yml \
+            docker-compose.production.yml scripts/deploy.sh > SHA256SUMS
+          tar -czf "../family-tree-${TAG_NAME}-linux-amd64.tar.gz" .
+
+      - name: Publish release bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release create "$TAG_NAME" --verify-tag --generate-notes
+          fi
+          gh release upload "$TAG_NAME" "family-tree-${TAG_NAME}-linux-amd64.tar.gz" --clobber
+
+      - name: Collect logs and clean up test container
+        if: always()
+        run: |
+          export APP_IMAGE="family-tree:${TAG_NAME#v}"
+          docker compose logs --tail=80
+          docker compose down --volumes
+
+  deploy:
+    name: Deploy to Aliyun
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOY_HOST: ${{ vars.FAMILY_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.FAMILY_DEPLOY_USER }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download verified release bundle
+        run: |
+          gh release download "$TAG_NAME" --pattern "family-tree-${TAG_NAME}-linux-amd64.tar.gz"
+          mkdir bundle
+          tar -xzf "family-tree-${TAG_NAME}-linux-amd64.tar.gz" -C bundle
+          cd bundle && sha256sum --check SHA256SUMS
+
+      - name: Configure pinned SSH connection
+        env:
+          DEPLOY_KEY: ${{ secrets.FAMILY_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.FAMILY_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9.-]+$ ]] && [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/family-deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/family-deploy ~/.ssh/known_hosts
+
+      - name: Transfer and deploy
+        run: |
+          release="/srv/family-tree/releases/${TAG_NAME}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          options=(-i "$HOME/.ssh/family-deploy" -o IdentitiesOnly=yes
+            -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          ssh "${options[@]}" "$target" "umask 077; mkdir -p '$release'"
+          scp "${options[@]}" -r bundle/. "$target:$release/"
+          ssh "${options[@]}" "$target" "bash '$release/scripts/deploy.sh' '$release'"
+
+      - name: Remove runner SSH key
+        if: always()
+        run: rm -f ~/.ssh/family-deploy

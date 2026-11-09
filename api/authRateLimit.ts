@@ -24,11 +24,7 @@ function reject(message: string, status: number, code: string, retryAfter?: numb
 }
 
 function sourceIdentity(request: Request): string {
-  // Only Cloudflare supplies request.cf. Local/non-Cloudflare requests share a
-  // conservative bucket; user-supplied forwarding headers must not select it.
-  const cf = (request as Request & { cf?: unknown }).cf
-  if (!cf || typeof cf !== 'object') return 'unknown-source'
-  const address = request.headers.get('CF-Connecting-IP')?.trim() ?? ''
+  const address = (request as Request & { clientAddress?: string }).clientAddress?.trim() ?? ''
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) {
     const parts = address.split('.').map(Number)
     if (parts.every((part) => part <= 255)) return parts.join('.')

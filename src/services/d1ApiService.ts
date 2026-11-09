@@ -3,7 +3,7 @@ import type { FamilyBrowseData, FamilyData } from '../types/member'
 import { normalizeFamilyData } from './importExport'
 import { FAMILY_BROWSE_CONTRACT_VERSION, normalizeFamilyBrowseData } from './familyBrowseData'
 
-const API_BASE_URL = import.meta.env.VITE_D1_API_BASE_URL?.trim()
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim()
 
 let sessionToken: string | null = null
 let familyRevision: number | null = null
@@ -35,8 +35,8 @@ export class ApiError extends Error {
 }
 
 function resolveApiUrl(pathname: string): string {
-  const base = API_BASE_URL && API_BASE_URL.length > 0 ? API_BASE_URL : location.origin
-  return new URL(pathname, base).toString()
+  const base = API_BASE_URL || new URL(import.meta.env.BASE_URL, location.origin).toString()
+  return new URL(pathname.replace(/^\//, ''), base.endsWith('/') ? base : `${base}/`).toString()
 }
 
 function buildHeaders(options?: { includeAuth?: boolean; extra?: HeadersInit }): Headers {
@@ -139,7 +139,7 @@ export async function runD1SelfCheck(): Promise<D1SelfCheckResult> {
       checkedAt,
       tokenConfigured: Boolean(sessionToken),
       httpStatus: response.status,
-      message: data ? '已连接到 D1，且成功读取到云端数据。' : '已连接到 D1，但数据库当前为空。',
+      message: data ? '已连接到 SQLite 服务，且成功读取到族谱数据。' : 'SQLite 数据库当前为空。',
       memberCount: data?.members.length ?? 0,
       trackCount: data?.tracks.length ?? 0,
       eventCount: data?.events.length ?? 0,
@@ -152,7 +152,7 @@ export async function runD1SelfCheck(): Promise<D1SelfCheckResult> {
       checkedAt,
       tokenConfigured: Boolean(sessionToken),
       httpStatus: null,
-      message: error instanceof Error ? error.message : '无法连接到 D1 Worker。',
+      message: error instanceof Error ? error.message : '无法连接到本地服务。',
       memberCount: 0,
       trackCount: 0,
       eventCount: 0,

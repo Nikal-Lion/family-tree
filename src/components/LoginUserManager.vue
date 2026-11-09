@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Alert, Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message,
   type TableProps,
@@ -15,6 +16,7 @@ const emit = defineEmits<{
   notify: [message: string, type: 'success' | 'error' | 'info']
 }>()
 const auth = useAuth()
+const router = useRouter()
 const users = ref<LoginUser[]>([])
 const loading = ref(false)
 const submitting = ref(false)
@@ -60,7 +62,7 @@ function notify(text: string) {
 function syncSavedAccount(saved: LoginUser) {
   if (updateCurrentLoginUser(saved)) {
     message.info('当前账号的登录信息已变更，请重新登录')
-    window.location.replace('/login')
+    window.location.replace(router.resolve('/login').href)
   }
 }
 

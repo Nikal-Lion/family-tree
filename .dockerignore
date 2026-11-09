@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.git
+.github
+.claude
+.wrangler
+coverage
+data
+dist
+node_modules
+playwright-report
+test-results
+tests

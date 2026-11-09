@@ -1,0 +1,25 @@
+services:
+  app:
+    image: ${APP_IMAGE:-family-tree:local}
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 128
+    environment:
+      NODE_OPTIONS: --max-old-space-size=256
+      DB_PATH: /data/family-tree.sqlite
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
+      SYSADMIN_PASSWORD_PBKDF2: ${SYSADMIN_PASSWORD_PBKDF2:-}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000"
+    volumes:
+      - family-tree-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  family-tree-data:

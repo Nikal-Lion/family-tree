@@ -36,11 +36,11 @@ function request(path: string, init: RequestInit = {}, source: string | null = '
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...(source ? { 'CF-Connecting-IP': source } : {}),
+      ...(source ? { 'X-Forwarded-For': source } : {}),
       ...init.headers,
     },
   })
-  if (source !== null) Object.defineProperty(req, 'cf', { value: { colo: 'TEST' } })
+  if (source !== null) Object.defineProperty(req, 'clientAddress', { value: source })
   return handler.fetch(req, { DB: db, SYSADMIN_PASSWORD_PBKDF2: passwordHash })
 }
 
@@ -601,7 +601,7 @@ describe('shared, atomic authentication rate limits', () => {
     expect(sourceResults.filter((response) => response.status === 429)).toHaveLength(15)
   })
 
-  it('keeps counts after a new Worker module and database adapter use the same D1', async () => {
+  it('keeps counts after a new API module and database adapter use the same SQLite database', async () => {
     for (let i = 0; i < 10; i += 1) expect((await login()).status).toBe(401)
     vi.resetModules()
     const restartedWorker = (await import('../../api/index')).default
@@ -610,11 +610,11 @@ describe('shared, atomic authentication rate limits', () => {
     expect(response.status).toBe(429)
   })
 
-  it('ignores spoofed forwarding headers and uses a shared fallback without platform metadata', async () => {
+  it('ignores spoofed forwarding headers without trusted connection metadata', async () => {
     for (let i = 0; i < 31; i += 1) {
       const response = await request(loginPath, {
         method: 'POST',
-        headers: { 'CF-Connecting-IP': `203.0.113.${i + 1}`, 'X-Forwarded-For': `198.51.100.${i + 1}` },
+        headers: { 'X-Forwarded-For': `198.51.100.${i + 1}` },
         body: JSON.stringify({ mobile: `1390002${String(i).padStart(4, '0')}` }),
       }, null)
       expect(response.status).toBe(i < 30 ? 401 : 429)
@@ -622,7 +622,7 @@ describe('shared, atomic authentication rate limits', () => {
     expect((await login('13999999999', null)).status).toBe(429)
   })
 
-  it('does not let X-Forwarded-For override the Cloudflare source', async () => {
+  it('does not let X-Forwarded-For override the server-provided source', async () => {
     for (let i = 0; i < 31; i += 1) {
       const response = await request(loginPath, {
         method: 'POST', headers: { 'X-Forwarded-For': `198.51.100.${i + 1}` },
@@ -632,7 +632,7 @@ describe('shared, atomic authentication rate limits', () => {
     }
   })
 
-  it('shares the fallback for absent and malformed Cloudflare source addresses', async () => {
+  it('shares the fallback for absent and malformed source addresses', async () => {
     for (let i = 0; i < 30; i += 1) {
       expect((await login(`1390005${String(i).padStart(4, '0')}`, i % 2 ? '' : 'not-an-ip')).status).toBe(401)
     }

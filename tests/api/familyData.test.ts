@@ -28,7 +28,7 @@ async function read() {
 function write(data: unknown, revision: number) {
   return request('/api/family-data', { method: 'PUT', headers: { ...adminHeaders, 'If-Match': `"${revision}"` }, body: JSON.stringify({ data }) })
 }
-describe('actual Worker family persistence with SQLite transactions', () => {
+describe('family persistence with SQLite transactions', () => {
   it('does not initialize a blank database with sample members', async () => {
     expect(await read()).toEqual({ data: null, revision: 0 })
     expect(await read()).toEqual({ data: null, revision: 0 })
