@@ -1,5 +1,7 @@
 # 家族云谱
 
+> 立项与运营请阅读[完整项目企划书](docs/projectProposal.md)（安全、人力、预算、运行保障与阶段门禁）；具体开发任务见[长期产品路线、功能拆分与变现计划](docs/iterationPlan.md)。规划内容不代表已经实现、安全验收或市场验证通过。
+
 基于 Vue 3、TypeScript、Vben Admin 核心布局和 ECharts 的电子族谱系统，
 使用 Cloudflare Workers + Static Assets + D1 提供同源前端与业务 API。
 
