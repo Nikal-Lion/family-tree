@@ -73,6 +73,16 @@ jobs:
       - name: Build Docker image
         run: docker build --tag family-tree:ci .
 
+      - name: Check compressed image size
+        run: |
+          docker save family-tree:ci | gzip > "$RUNNER_TEMP/family-tree-image.tar.gz"
+          bytes=$(wc -c < "$RUNNER_TEMP/family-tree-image.tar.gz")
+          echo "Compressed image: $bytes bytes"
+          if [ "$bytes" -gt 125829120 ]; then
+            echo "::error::Compressed runtime image exceeds 120 MiB"
+            exit 1
+          fi
+
       - name: Verify constrained Compose runtime
         env:
           APP_IMAGE: family-tree:ci

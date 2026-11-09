@@ -1,9 +1,10 @@
 {
   "name": "family-tree-app",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "workspaces": [
+    "server",
     "vendor/vben/*"
   ],
   "scripts": {
@@ -23,7 +24,6 @@
     "@vben-core/design": "5.7.0",
     "@vben-core/layout-ui": "5.7.0",
     "ant-design-vue": "^4.2.6",
-    "better-sqlite3": "^13.0.3",
     "echarts": "^6.1.0",
     "sql.js": "^1.15.2",
     "tesseract.js": "^7.0.0",

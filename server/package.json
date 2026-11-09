@@ -1,0 +1,8 @@
+{
+  "name": "@family-tree/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3"
+  }
+}

@@ -155,8 +155,8 @@ docker compose ps
 更新前先完成数据库备份；保留旧镜像，确认健康检查和登录、读写正常后再清理。
 保持部署目录或 Compose 项目名不变，避免意外使用新的空数据卷。
 回滚镜像前确认数据库结构兼容；不兼容时需要在停止服务后恢复发布前的整库备份。
-普通 CI 只检查代码和容器；版本标签的 Release 工作流还会发布镜像包并通过 SSH 部署，
-具体权限和触发方式见下文。
+普通 CI 只检查代码和容器；版本标签的 Release 工作流还会发布镜像包。
+服务器按下文的定时任务主动拉取，不需要 GitHub Actions 连接服务器的 SSH 端口。
 
 ## 7. 阿里云上线验收
 
@@ -212,35 +212,47 @@ docker compose up -d --wait --wait-timeout 90
 修改代理前备份原文件、执行 `nginx -t`，成功后再平滑 reload；保留原文件 inode，
 避免 bind mount 仍指向被替换的旧文件。自动发布只更新族谱应用，不改写共享 Nginx 配置。
 
-### GitHub 配置与触发
-
-仓库 Actions variables：
-
-| 名称 | 值 |
-| --- | --- |
-| `FAMILY_DEPLOY_HOST` | `106.14.43.188` |
-| `FAMILY_DEPLOY_USER` | `web` |
-
-仓库 Actions secrets：
-
-| 名称 | 用途 |
-| --- | --- |
-| `FAMILY_DEPLOY_KEY` | 专用部署 SSH 私钥，不复用个人私钥 |
-| `FAMILY_DEPLOY_KNOWN_HOSTS` | 经过可信 SSH 连接确认的服务器主机密钥，禁止跳过主机校验 |
-
-专用公钥以 `restrict` 选项加入 `web` 的 `authorized_keys`。拥有仓库 Actions 写权限的人员
-可能使用部署凭据；`web` 的 Docker 访问权限也非常强，应限制仓库写权限并定期轮换密钥。
-初始化管理员凭据只存在服务器，**不放在 GitHub secrets、Release 附件或 Git 仓库**。
+### 构建与定时拉取
 
 推送与 `package.json`、`package-lock.json` 一致的 `vX.Y.Z` 标签触发 `.github/workflows/release.yml`。
-同一时刻只允许一次生产发布，不因新任务取消正在进行的部署。也可以从 Actions 手动指定已有标签重试。
+流水线执行测试、版本核对、`linux/amd64` 镜像构建、512 MiB 受限容器启动检查，
+将镜像与部署脚本打包到 GitHub Release；发布包上限为 120 MiB。
+服务器运行镜像只安装 `server` 工作区的依赖，不包含图标库等前端构建依赖。
 此流程不会自动合并功能分支；标签所指向的提交才是发布内容。
 
-流水线依次执行测试、版本核对、`linux/amd64` 镜像构建、512 MiB 受限容器启动检查，
-然后将镜像与 Compose/部署脚本打包到 GitHub Release。
-构建机下载发布包，经固定主机密钥的 SSH/SCP 传输到
-`/srv/family-tree/releases/<tag>-<run>-<attempt>`，两端验证 SHA-256 清单。
-生产服务器不需要访问 Docker Hub、GitHub 或 npm 来获取发布依赖。
+服务器的 `web` 用户 crontab 每周四 **22:00 Asia/Shanghai（北京时间）** 执行一次
+`/srv/family-tree/bin/run-weekly.sh`。系统时区必须保持 `Asia/Shanghai`，且 `cron` 服务保持运行；
+任务启动时会检查时区，时区不符时记录错误并拒绝部署；
+机器关机期间不会补跑。每次检查 GitHub 的最新非草稿、非预发布 Release，只部署新的 `vX.Y.Z`；
+版本未变时只检查本机健康状态，不重启容器；不会自动降级。
+
+服务器需能通过 IPv4 HTTPS 访问 `api.github.com` 和 GitHub Release 资产下载端点。
+当前公开仓库无需 GitHub 凭据；仓库若改为私有，必须先另行设计受限的读取凭据。
+运行端不需要 npm、Docker Hub 或入站 SSH 访问；保留现有 22 端口白名单。
+自动拉取信任仓库发布者：发布包 SHA-256 由 GitHub Release 元数据提供，能检测下载损坏，
+但并不是独立的发布签名。应严格限制有权限创建或替换 Release 的账号。
+
+首次安装或更新定时任务时，在有 SSH 权限的管理机执行：
+
+```bash
+ssh web@106.14.43.188 'mkdir -p /srv/family-tree/installer'
+scp scripts/install-schedule.sh scripts/pull-release.py scripts/run-weekly.sh \
+  web@106.14.43.188:/srv/family-tree/installer/
+ssh web@106.14.43.188 'bash /srv/family-tree/installer/install-schedule.sh && crontab -l'
+```
+
+安装程序只管理自己的 crontab 标记块、保留其他任务；并检查当前时区和 cron 状态。
+成功部署的新发布包可以更新拉取脚本和日志包装脚本，不会修改其他 cron 任务。
+需要临时立即检查并发布时，在服务器执行：
+
+```bash
+DEPLOY_ROOT=/srv/family-tree /bin/bash /srv/family-tree/bin/run-weekly.sh
+tail -n 100 /srv/family-tree/logs/weekly-deploy.log
+```
+
+日志达到 5 MiB 时保留一份轮转文件。拉取失败写入日志并返回非零状态，
+不会停止现有应用；下次定时运行才会再次检查，也可由管理员手动重试。
+没有配置独立告警时，需要主动检查日志。
 
 ### 更新与失败处理
 
@@ -252,7 +264,7 @@ docker compose up -d --wait --wait-timeout 90
 备份失败且新应用尚未启动时，脚本尝试恢复旧容器；新版本启动或健康检查失败时，
 停止新应用并让工作流失败，保留备份和日志。**不会自动恢复数据库或盲目启动旧镜像**，
 因为迁移后的结构可能与旧版本不兼容。需人工判断兼容性，必要时停止应用并恢复发布前整库备份。
-GitHub Release 创建成功不等于生产部署成功，以 Deploy job 和实际 HTTPS 健康状态为准。
+GitHub Release 创建成功不等于生产部署成功，以服务器定时日志和实际 HTTPS 健康状态为准。
 
 日常操作使用固定项目、当前发布文件与已记录镜像，而非默认的 `family-tree:local`：
 
@@ -265,7 +277,8 @@ docker compose -p family-tree --env-file .env \
   -f current/docker-compose.yml -f current/docker-compose.production.yml logs --tail=100 app
 ```
 
-服务器保留发布包、旧镜像和整库备份供回滚，**不会自动删除**。
+服务器保留解包后的发布文件、旧镜像和整库备份供回滚；部署成功后删除重复的下载压缩包，
+不自动删除旧版本或备份。
 20 GB 磁盘上应监控使用量，将备份转移到安全的异机存储，确认恢复窗口后再清理明确的旧版本；
 不要运行会删除业务卷的全局 prune。
 

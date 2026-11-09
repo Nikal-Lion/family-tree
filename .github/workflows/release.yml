@@ -63,7 +63,10 @@ jobs:
           npm ci
           npm test
           bash -n scripts/deploy.sh
-          shellcheck scripts/deploy.sh
+          bash -n scripts/install-schedule.sh
+          bash -n scripts/run-weekly.sh
+          shellcheck scripts/deploy.sh scripts/install-schedule.sh scripts/run-weekly.sh
+          python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' scripts/pull-release.py
 
       - name: Test subdirectory login flow
         run: |
@@ -93,11 +96,18 @@ jobs:
           printf 'family-tree:%s\n' "${TAG_NAME#v}" > bundle/image.txt
           docker save "family-tree:${TAG_NAME#v}" | gzip > bundle/family-tree-image.tar.gz
           cp docker-compose.yml docker-compose.production.yml bundle/
-          cp scripts/deploy.sh bundle/scripts/
+          cp scripts/deploy.sh scripts/pull-release.py scripts/run-weekly.sh bundle/scripts/
           cd bundle
           sha256sum image.txt family-tree-image.tar.gz docker-compose.yml \
-            docker-compose.production.yml scripts/deploy.sh > SHA256SUMS
+            docker-compose.production.yml scripts/deploy.sh scripts/pull-release.py \
+            scripts/run-weekly.sh > SHA256SUMS
           tar -czf "../family-tree-${TAG_NAME}-linux-amd64.tar.gz" .
+          bytes=$(wc -c < "../family-tree-${TAG_NAME}-linux-amd64.tar.gz")
+          echo "Release bundle: $bytes bytes"
+          if [ "$bytes" -gt 125829120 ]; then
+            echo "::error::Release bundle exceeds 120 MiB"
+            exit 1
+          fi
 
       - name: Publish release bundle
         env:
@@ -114,47 +124,3 @@ jobs:
           export APP_IMAGE="family-tree:${TAG_NAME#v}"
           docker compose logs --tail=80
           docker compose down --volumes
-
-  deploy:
-    name: Deploy to Aliyun
-    needs: release
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      DEPLOY_HOST: ${{ vars.FAMILY_DEPLOY_HOST }}
-      DEPLOY_USER: ${{ vars.FAMILY_DEPLOY_USER }}
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - name: Download verified release bundle
-        run: |
-          gh release download "$TAG_NAME" --pattern "family-tree-${TAG_NAME}-linux-amd64.tar.gz"
-          mkdir bundle
-          tar -xzf "family-tree-${TAG_NAME}-linux-amd64.tar.gz" -C bundle
-          cd bundle && sha256sum --check SHA256SUMS
-
-      - name: Configure pinned SSH connection
-        env:
-          DEPLOY_KEY: ${{ secrets.FAMILY_DEPLOY_KEY }}
-          KNOWN_HOSTS: ${{ secrets.FAMILY_DEPLOY_KNOWN_HOSTS }}
-        run: |
-          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9.-]+$ ]] && [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/family-deploy
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/family-deploy ~/.ssh/known_hosts
-
-      - name: Transfer and deploy
-        run: |
-          release="/srv/family-tree/releases/${TAG_NAME}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          target="${DEPLOY_USER}@${DEPLOY_HOST}"
-          options=(-i "$HOME/.ssh/family-deploy" -o IdentitiesOnly=yes
-            -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
-          ssh "${options[@]}" "$target" "umask 077; mkdir -p '$release'"
-          scp "${options[@]}" -r bundle/. "$target:$release/"
-          ssh "${options[@]}" "$target" "bash '$release/scripts/deploy.sh' '$release'"
-
-      - name: Remove runner SSH key
-        if: always()
-        run: rm -f ~/.ssh/family-deploy

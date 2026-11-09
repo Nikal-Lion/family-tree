@@ -7,7 +7,8 @@
 运行不依赖 Cloudflare 或外部数据库服务。
 首发部署目标为阿里云 1 vCPU / 1 GB RAM / 40 Mbps 出口带宽，服务器仅运行预构建镜像，
 不在该规格上编译前端或安装构建依赖；资源预算和上线验收见[部署指南](docs/guides/deployment.md)。
-首发入口为现有 HTTPS 站点的 `/family/` 子路径；版本标签触发 GitHub Actions 构建并通过 SSH 自动部署。
+首发入口为现有 HTTPS 站点的 `/family/` 子路径；版本标签触发 GitHub Actions 构建，
+服务器每周四 22:00（北京时间）检查并拉取新的稳定发布。
 
 ## 当前能力与边界
 

@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY vendor ./vendor
+COPY server/package.json ./server/package.json
 RUN npm ci --registry="${NPM_REGISTRY}"
 COPY . .
 ARG APP_BASE_PATH=/
@@ -19,8 +20,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-COPY vendor ./vendor
-RUN npm ci --omit=dev --registry="${NPM_REGISTRY}"
+COPY server/package.json ./server/package.json
+RUN npm ci --omit=dev --workspace=@family-tree/server --include-workspace-root=false --registry="${NPM_REGISTRY}"
 
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
