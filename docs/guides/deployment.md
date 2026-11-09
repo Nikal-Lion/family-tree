@@ -202,17 +202,37 @@ docker compose up -d --wait --wait-timeout 90
   使用唯一别名 `family-tree-app`。不要删除这个共享网络；Nginx 与应用必须保留网络连接。
 - Nginx 将 `/family/` 前缀剥离后转发到应用；镜像构建时使用
   `--build-arg APP_BASE_PATH=/family/`。仅修改运行环境变量不能改变已经构建好的前端路径。
-- `deploy/nginx-family.conf` 是现有 HTTPS `server` 块内的配置片段，不是完整站点文件。
-  Docker DNS 动态解析后端，容器更新时无需替换固定 IP；代理覆盖来源地址，允许开启 `TRUST_PROXY`。
-  该共享网络中的其他服务应同样受信任。请求体限制为 10 MiB，大型导入须先拆分或评估内存后调整限制。
+- `deploy/nginx/conf.d/family-tree.conf` 是现有 HTTPS `server` 块内的配置片段，不是完整站点文件。
+  服务器将它保存为 `/srv/family-tree/nginx/conf.d/family-tree.conf`，并将该目录只读挂载到
+  共享代理的 `/etc/nginx/conf.d/family-tree/`。Docker DNS 动态解析后端，容器更新时无需替换固定 IP；
+  代理覆盖来源地址，允许开启 `TRUST_PROXY`。该共享网络中的其他服务应同样受信任。
+  请求体限制为 10 MiB，大型导入须先拆分或评估内存后调整限制。
 - 同一域名下的其他页面与族谱共享浏览器 origin，不构成安全隔离边界；
   原站点必须可信，未来需要隔离时应改用独立域名。
 
 首次接入需由管理员授权部署目录和 Nginx 配置写入；不能使用 Docker 绕过未授予的主机文件权限。
-修改代理前备份原文件、执行 `nginx -t`，成功后再平滑 reload；保留原文件 inode，
-避免 bind mount 仍指向被替换的旧文件。自动发布只更新族谱应用，不改写共享 Nginx 配置。
-`stock-analyze` 的部署若重新生成该配置，可能覆盖 `/family/` 路由；必须将
-`deploy/nginx-family.conf` 中的路由同步保留在共享代理的配置源中。
+共享代理的 Compose 配置需要保留以下挂载，HTTPS `server` 块内部需要保留对应的 `include`：
+
+```yaml
+volumes:
+  - /srv/family-tree/nginx/conf.d:/etc/nginx/conf.d/family-tree:ro
+```
+
+```nginx
+include /etc/nginx/conf.d/family-tree/*.conf;
+```
+
+顶层 `/etc/nginx/conf.d/*.conf` 在 `http` 上下文加载，不能将仅含 `location` 的片段直接放在那里，
+也不能用另一个同域名的 `server` 块代替现有站点的路径分流。
+修改代理前备份原文件、执行 `nginx -t`，成功后再平滑 reload；现有单文件 bind mount
+须保留原文件 inode，避免容器仍指向被替换的旧文件。
+
+项目片段保存在族谱自己的目录，不会随 `stock-analyze` 的站点配置文件一起被覆盖。
+`stock-analyze` 的发布会同步共享代理配置，因此其发布源也必须保留 Compose 挂载和 HTTPS
+`server` 内的 `include`；如果其中任一项被覆盖，族谱路由仍会中断。
+更新项目片段时先备份旧文件，替换后执行 `docker exec stock-analyze-nginx nginx -t`，
+通过后再执行 `docker exec stock-analyze-nginx nginx -s reload`；失败须立即恢复旧片段。
+族谱自动发布只更新应用，不自动改写或 reload 共享代理。
 若公网路径突然返回 404，应检查并合并两站点的最新配置后再验证和 reload，
 不能用旧备份直接覆盖其他站点的新路由。相同版本的定时检查只验证本机健康接口，
 不会发现共享代理路由丢失。
