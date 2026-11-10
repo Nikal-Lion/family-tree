@@ -68,6 +68,31 @@ function commands(): string[][] {
 }
 
 describe('production deployment', () => {
+  it('deploys a pre-pulled registry digest without loading or pulling a tar image', () => {
+    const reference = `registry-vpc.cn-shanghai.aliyuncs.com/wolfife/family@sha256:${'a'.repeat(64)}\n`
+    writeFileSync(join(release, 'image.txt'), reference)
+    writeFileSync(join(release, 'SHA256SUMS'), `${createHash('sha256').update(reference).digest('hex')}  image.txt\n`)
+    const result = run({ existing: true })
+    expect(result.status, result.stderr).toBe(0)
+    expect(commands().some(args => args[1] === 'load' || args[1] === 'pull')).toBe(false)
+    const start = commands().find(args => args[1] === 'compose' && args.includes('up'))!
+    expect(start.slice(start.indexOf('--pull'), start.indexOf('--pull') + 2)).toEqual(['--pull', 'never'])
+    expect(readFileSync(join(root, 'current-image.txt'), 'utf8')).toBe(reference)
+  })
+
+  it.each([
+    'registry-vpc.cn-shanghai.aliyuncs.com/wolfife/family:latest',
+    `registry.cn-shanghai.aliyuncs.com/wolfife/family@sha256:${'a'.repeat(64)}`,
+  ])('refuses an unpinned or non-VPC image: %s', (reference) => {
+    const contents = `${reference}\n`
+    writeFileSync(join(release, 'image.txt'), contents)
+    writeFileSync(join(release, 'SHA256SUMS'), `${createHash('sha256').update(contents).digest('hex')}  image.txt\n`)
+    const result = run({ existing: true })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('Invalid release image')
+    expect(commands().some(args => args[0] === 'docker')).toBe(false)
+  })
+
   it('creates protected first-run credentials and switches current only after health checks', () => {
     const result = run()
     expect(result.status, result.stderr).toBe(0)

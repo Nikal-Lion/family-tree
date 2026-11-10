@@ -19,12 +19,13 @@ flock -n 9 || { echo "Another deployment is running" >&2; exit 1; }
 cd "$release"
 sha256sum --check SHA256SUMS
 image=$(cat image.txt)
-if ! [[ "$image" =~ ^family-tree:[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [[ "$image" =~ ^family-tree:[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  docker load --input family-tree-image.tar.gz
+elif ! [[ "$image" =~ ^registry-vpc\.cn-shanghai\.aliyuncs\.com/wolfife/family@sha256:[a-f0-9]{64}$ ]]; then
   echo "Invalid release image" >&2
   exit 1
 fi
 docker network inspect stock-analyze_default >/dev/null
-docker load --input family-tree-image.tar.gz
 docker image inspect "$image" >/dev/null
 mkdir -p "$root/backups"
 
@@ -91,7 +92,7 @@ if grep -Fxq family-tree_family-tree-data <<< "$volumes"; then
 fi
 
 started=1
-"${compose[@]}" up -d --wait --wait-timeout 90
+"${compose[@]}" up -d --pull never --wait --wait-timeout 90
 curl --fail --silent --show-error --max-time 15 http://127.0.0.1:3000/healthz
 curl --fail --silent --show-error --retry 5 --retry-delay 3 --max-time 15 \
   https://wolfife.top/family/healthz

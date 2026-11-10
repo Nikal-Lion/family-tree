@@ -15,7 +15,7 @@ fi
     echo "Weekly release check failed: server timezone is not Asia/Shanghai" >&2
     exit 1
   fi
-  if python3 "$root/bin/pull-release.py"; then
+  if python3 "$root/bin/pull-image.py"; then
     echo "Weekly release check completed"
   else
     status=$?

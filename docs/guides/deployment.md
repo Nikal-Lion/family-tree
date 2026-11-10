@@ -68,8 +68,8 @@ node scripts/generate-admin-secret.mjs
 
 按提示在终端输入一个至少 12 位的初始化密码，输入不会回显。
 通过 SSH/SCP 将镜像包、`docker-compose.yml` 和 `.env.example` 传到服务器的固定部署目录。
-也可以使用自己配置且服务器可访问的镜像仓库；自动发布流程使用 GitHub Release 附件传递镜像，
-不会上传到容器镜像仓库。
+也可以使用自己配置且服务器可访问的镜像仓库；下文自动发布流程使用阿里云 ACR，
+上述 `docker save/load` 步骤仅用于手动离线部署。
 阿里云节点若拉取外部镜像不稳定，可使用上述离线镜像包，不依赖 Docker Hub 的生产机拉取链路。
 
 在服务器部署目录执行：
@@ -155,7 +155,7 @@ docker compose ps
 更新前先完成数据库备份；保留旧镜像，确认健康检查和登录、读写正常后再清理。
 保持部署目录或 Compose 项目名不变，避免意外使用新的空数据卷。
 回滚镜像前确认数据库结构兼容；不兼容时需要在停止服务后恢复发布前的整库备份。
-普通 CI 只检查代码和容器；版本标签的 Release 工作流还会发布镜像包。
+普通 CI 只检查代码和容器；版本标签的 Release 工作流还会推送镜像到阿里云 ACR。
 服务器按下文的定时任务主动拉取，不需要 GitHub Actions 连接服务器的 SSH 端口。
 
 ## 7. 阿里云上线验收
@@ -234,43 +234,97 @@ include /etc/nginx/conf.d/family-tree/*.conf;
 通过后再执行 `docker exec stock-analyze-nginx nginx -s reload`；失败须立即恢复旧片段。
 族谱自动发布只更新应用，不自动改写或 reload 共享代理。
 若公网路径突然返回 404，应检查并合并两站点的最新配置后再验证和 reload，
-不能用旧备份直接覆盖其他站点的新路由。相同版本的定时检查只验证本机健康接口，
-不会发现共享代理路由丢失。
+不能用旧备份直接覆盖其他站点的新路由。摘要未变时的定时检查也验证公网健康接口，
+路由丢失会记录错误，但不会自动改写共享代理。
 
 ### 构建与定时拉取
 
 推送与 `package.json`、`package-lock.json` 一致的 `vX.Y.Z` 标签触发 `.github/workflows/release.yml`。
 流水线执行测试、版本核对、`linux/amd64` 镜像构建、512 MiB 受限容器启动检查，
-将镜像与部署脚本打包到 GitHub Release；发布包上限为 120 MiB。
+以及 120 MiB 压缩镜像上限检查，之后推送两个镜像标签：
+
+```text
+registry.cn-shanghai.aliyuncs.com/wolfife/family:X.Y.Z
+registry.cn-shanghai.aliyuncs.com/wolfife/family:latest
+```
+
+`latest` 只在验证及版本标签推送成功后更新；它表示最后一次发布成功的镜像，
+不是按版本号排序的查询结果。不要手动重跑旧版本发布或覆盖已发布的版本标签；
+服务器会拒绝低于当前版本的 `latest`，同版本的不同摘要则会重新部署。
+工作流仍创建 GitHub Release 说明，但不再生成或下载包含 Docker 镜像的 Release 附件。
 服务器运行镜像只安装 `server` 工作区的依赖，不包含图标库等前端构建依赖。
 此流程不会自动合并功能分支；标签所指向的提交才是发布内容。
+
+#### Registry 凭据
+
+先在阿里云 ACR 创建 `wolfife/family` 仓库。GitHub Actions 使用公网地址
+`registry.cn-shanghai.aliyuncs.com` 推送；上海服务器通过内网地址
+`registry-vpc.cn-shanghai.aliyuncs.com` 拉取同一仓库，须确保服务器的 VPC 网络可访问它。
+不会在 VPC 访问失败时自动改用公网。在 GitHub 仓库 Settings → Secrets and variables → Actions 设置：
+
+| Secret | 用途 |
+| --- | --- |
+| `ACR_USERNAME` | 有权推送 `wolfife/family` 的 ACR 登录用户名 |
+| `ACR_PASSWORD` | 对应 ACR 密码或受限凭据 |
+
+工作流使用 `--password-stdin` 登录，并在结束时登出；不要把密码写入 YAML、
+`.env`、Git 或聊天。本次配置不会自动创建 secrets，也不意味着已完成镜像推送。
+为服务器配置仅拉取权限的账号（如账号权限体系支持），先通过 SSH 以实际运行 cron 的
+`web` 用户登录服务器，然后在服务器的 Bash 终端运行（密码输入不回显）：
+
+```bash
+(
+  set -euo pipefail
+  read -r -p 'ACR username: ' ACR_USERNAME
+  read -r -s -p 'ACR password: ' ACR_PASSWORD
+  printf '\n'
+  printf '%s' "$ACR_PASSWORD" |
+    docker login --username="$ACR_USERNAME" --password-stdin registry-vpc.cn-shanghai.aliyuncs.com
+)
+```
+
+使用提供的 ACR 用户名，在提示中输入密码；两端都使用 `--password-stdin`，
+密码不在命令参数中，服务器示例退出子 shell 后即清除临时变量。
+登录状态必须位于 `web` 的 Docker 凭据存储中；不能只以 root 登录。
+Docker 无 credential helper 时会把可恢复的登录信息保存在 `~/.docker/config.json`，
+该文件应仅由 `web` 读取，不能纳入备份分享或版本控制。
+凭据失效、仓库不存在或网络不可用时拉取会报错，旧服务继续运行。
+
+#### 每周部署及从旧发布包迁移
 
 服务器的 `web` 用户 crontab 每周四 **22:00 Asia/Shanghai（北京时间）** 执行一次
 `/srv/family-tree/bin/run-weekly.sh`。系统时区必须保持 `Asia/Shanghai`，且 `cron` 服务保持运行；
 任务启动时会检查时区，时区不符时记录错误并拒绝部署；
-机器关机期间不会补跑。每次检查 GitHub 的最新非草稿、非预发布 Release，只部署新的 `vX.Y.Z`；
-版本未变时只检查本机健康状态，不重启容器；不会自动降级。
+机器关机期间不会补跑。`pull-image.py` 先拉取
+`registry-vpc.cn-shanghai.aliyuncs.com/wolfife/family:latest`，核对镜像版本标签、
+`linux/amd64` 架构与 `/family/` 构建标签，将仓库摘要写入发布目录的 `image.txt`；
+实际启动的是 `family@sha256:…`，不会在启动时再次解析易变的 `latest`。
+摘要未变时只检查本机和公网健康状态，不重启容器。
 
-服务器需能通过 IPv4 HTTPS 访问 `api.github.com` 和 GitHub Release 资产下载端点。
-当前公开仓库无需 GitHub 凭据；仓库若改为私有，必须先另行设计受限的读取凭据。
-发布包按小块并发拉取；连接中断时保留已完成的块，重试或下次定时运行时继续下载。
-全部块合并并通过 Release 的大小和 SHA-256 校验后才会部署；校验失败会丢弃这些块。
-运行端不需要 npm、Docker Hub 或入站 SSH 访问；保留现有 22 端口白名单。
-自动拉取信任仓库发布者：发布包 SHA-256 由 GitHub Release 元数据提供，能检测下载损坏，
-但并不是独立的发布签名。应严格限制有权限创建或替换 Release 的账号。
+服务器仅需访问 ACR 及其镜像层存储端点，不再依赖 GitHub Release 下载，
+也不需要 npm、Docker Hub 或 GitHub Actions 入站 SSH 访问；保留现有 22 端口白名单。
+自动拉取信任该 ACR 仓库的发布者：摘要防止内容变动，但不是独立签名，
+必须限制推送权限，保护 Actions secrets 和服务器登录凭据。
 
-首次安装或更新定时任务时，在有 SSH 权限的管理机执行：
+旧 `v0.2.2` 及以前安装的 cron 仍调用 Release 下载器，必须执行以下安装步骤才会切换，
+仅推送镜像不会更改服务器脚本。首次安装或更新时，在有 SSH 权限的管理机从当前仓库根目录执行：
 
 ```bash
-ssh web@106.14.43.188 'mkdir -p /srv/family-tree/installer'
-scp scripts/install-schedule.sh scripts/pull-release.py scripts/run-weekly.sh \
-  web@106.14.43.188:/srv/family-tree/installer/
-ssh web@106.14.43.188 'bash /srv/family-tree/installer/install-schedule.sh && crontab -l'
+ssh web@106.14.43.188 'mkdir -p /srv/family-tree/installer/acr/scripts'
+scp scripts/install-schedule.sh scripts/pull-image.py scripts/run-weekly.sh scripts/deploy.sh \
+  web@106.14.43.188:/srv/family-tree/installer/acr/scripts/
+scp docker-compose.yml docker-compose.production.yml \
+  web@106.14.43.188:/srv/family-tree/installer/acr/
+ssh web@106.14.43.188 'bash /srv/family-tree/installer/acr/scripts/install-schedule.sh && crontab -l'
 ```
 
-安装程序只管理自己的 crontab 标记块、保留其他任务；并检查当前时区和 cron 状态。
-成功部署的新发布包可以更新拉取脚本和日志包装脚本，不会修改其他 cron 任务。
-需要临时立即检查并发布时，在服务器执行：
+安装程序只管理自己的 crontab 标记块，保留其他任务；检查时区、cron 状态并拒绝与拉取任务同时运行。
+它把拉取器、部署脚本及 Compose 模板安装到 `/srv/family-tree/bin`，不会启动容器。
+以后脚本或 Compose 模板发生变化时须重新执行安装；镜像更新不自动替换这些宿主机脚本。
+旧的 `pull-release.py` 不再由 cron 调用；切换后不要手动运行旧更新器。
+原有 `.env`、初始化凭据、`family-tree_family-tree-data` 数据卷和独立 Nginx 配置均保留，
+不需要重新初始化管理员。首次切换前确认新的 ACR `latest` 已发布且版本不低于旧镜像。
+需要临时立即检查并发布时，经授权在服务器执行：
 
 ```bash
 DEPLOY_ROOT=/srv/family-tree /bin/bash /srv/family-tree/bin/run-weekly.sh
@@ -284,14 +338,14 @@ tail -n 100 /srv/family-tree/logs/weekly-deploy.log
 ### 更新与失败处理
 
 部署脚本 `scripts/deploy.sh` 在服务器上使用 `flock` 加锁，保持项目名 `family-tree` 不变。
-更新会短暂停止旧应用，将包含 WAL 的完整数据卷备份到 `backups/`，
+镜像下载和元数据验证在停服前完成。更新会短暂停止旧应用，将包含 WAL 的完整数据卷备份到 `backups/`，
 再启动新容器并检查本机健康接口、外部 HTTPS 健康接口和子路径登录页。
 通过后原子更新 `current` 软链接，写入 `current-image.txt`。
 
 备份失败且新应用尚未启动时，脚本尝试恢复旧容器；新版本启动或健康检查失败时，
 停止新应用并让工作流失败，保留备份和日志。**不会自动恢复数据库或盲目启动旧镜像**，
 因为迁移后的结构可能与旧版本不兼容。需人工判断兼容性，必要时停止应用并恢复发布前整库备份。
-GitHub Release 创建成功不等于生产部署成功，以服务器定时日志和实际 HTTPS 健康状态为准。
+ACR 推送或 GitHub Release 创建成功不等于生产部署成功，以服务器定时日志和实际 HTTPS 健康状态为准。
 
 日常操作使用固定项目、当前发布文件与已记录镜像，而非默认的 `family-tree:local`：
 
@@ -304,8 +358,9 @@ docker compose -p family-tree --env-file .env \
   -f current/docker-compose.yml -f current/docker-compose.production.yml logs --tail=100 app
 ```
 
-服务器保留解包后的发布文件、旧镜像和整库备份供回滚；部署成功后删除重复的下载压缩包，
-不自动删除旧版本或备份。
+服务器保留每次部署的 Compose 文件、镜像摘要、旧镜像和整库备份供回滚，
+不自动删除旧版本或备份。不得清理仍被 `current-image.txt` 引用的镜像，
+定时任务需要读取其版本标签来判断是否降级。
 20 GB 磁盘上应监控使用量，将备份转移到安全的异机存储，确认恢复窗口后再清理明确的旧版本；
 不要运行会删除业务卷的全局 prune。
 

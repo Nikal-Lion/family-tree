@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to release and deploy (vX.Y.Z)
+        description: Existing version tag to publish to ACR (vX.Y.Z)
         required: true
         type: string
 
@@ -19,6 +19,8 @@ permissions:
 
 env:
   TAG_NAME: ${{ inputs.tag || github.ref_name }}
+  REGISTRY: registry.cn-shanghai.aliyuncs.com
+  IMAGE_REPOSITORY: registry.cn-shanghai.aliyuncs.com/wolfife/family
 
 jobs:
   release:
@@ -58,15 +60,29 @@ jobs:
           }
           NODE
 
+      - name: Check registry credentials
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          if [ -z "$ACR_USERNAME" ] || [ -z "$ACR_PASSWORD" ]; then
+            echo "::error::Set ACR_USERNAME and ACR_PASSWORD repository secrets"
+            exit 1
+          fi
+          install -d -m 700 "$RUNNER_TEMP/family-registry-auth"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/family-registry-auth" >> "$GITHUB_ENV"
+
       - name: Test release
         run: |
           npm ci
           npm test
           bash -n scripts/deploy.sh
           bash -n scripts/install-schedule.sh
+          bash -n scripts/publish-image.sh
           bash -n scripts/run-weekly.sh
-          shellcheck scripts/deploy.sh scripts/install-schedule.sh scripts/run-weekly.sh
+          shellcheck scripts/deploy.sh scripts/install-schedule.sh scripts/publish-image.sh scripts/run-weekly.sh
           python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' scripts/pull-release.py
+          python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' scripts/pull-image.py
 
       - name: Test subdirectory login flow
         run: |
@@ -81,6 +97,8 @@ jobs:
           docker build --platform linux/amd64 --build-arg APP_BASE_PATH=/family/ \
             --build-arg NODE_IMAGE="$NODE_IMAGE" --build-arg NPM_REGISTRY="$NPM_REGISTRY" \
             --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+            --label "org.opencontainers.image.version=${TAG_NAME#v}" \
+            --label "org.family-tree.base-path=/family/" \
             --tag "family-tree:${TAG_NAME#v}" .
 
       - name: Check constrained runtime
@@ -90,33 +108,42 @@ jobs:
           curl --fail http://127.0.0.1:3000/healthz
           curl --fail http://127.0.0.1:3000/login | grep '/family/assets/'
 
-      - name: Prepare release bundle
+      - name: Check compressed image size
         run: |
-          mkdir -p bundle/scripts
-          printf 'family-tree:%s\n' "${TAG_NAME#v}" > bundle/image.txt
-          docker save "family-tree:${TAG_NAME#v}" | gzip > bundle/family-tree-image.tar.gz
-          cp docker-compose.yml docker-compose.production.yml bundle/
-          cp scripts/deploy.sh scripts/pull-release.py scripts/run-weekly.sh bundle/scripts/
-          cd bundle
-          sha256sum image.txt family-tree-image.tar.gz docker-compose.yml \
-            docker-compose.production.yml scripts/deploy.sh scripts/pull-release.py \
-            scripts/run-weekly.sh > SHA256SUMS
-          tar -czf "../family-tree-${TAG_NAME}-linux-amd64.tar.gz" .
-          bytes=$(wc -c < "../family-tree-${TAG_NAME}-linux-amd64.tar.gz")
-          echo "Release bundle: $bytes bytes"
+          docker save "family-tree:${TAG_NAME#v}" | gzip > "$RUNNER_TEMP/family-tree-image.tar.gz"
+          bytes=$(wc -c < "$RUNNER_TEMP/family-tree-image.tar.gz")
+          echo "Compressed image: $bytes bytes"
           if [ "$bytes" -gt 125829120 ]; then
-            echo "::error::Release bundle exceeds 120 MiB"
+            echo "::error::Compressed runtime image exceeds 120 MiB"
             exit 1
           fi
 
-      - name: Publish release bundle
+      - name: Log in to Alibaba Cloud Container Registry
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          mkdir -p "$DOCKER_CONFIG"
+          chmod 700 "$DOCKER_CONFIG"
+          printf '%s' "$ACR_PASSWORD" |
+            docker login "$REGISTRY" --username "$ACR_USERNAME" --password-stdin
+
+      - name: Publish version and latest images without moving tags backwards
+        run: bash scripts/publish-image.sh "${TAG_NAME#v}" "$IMAGE_REPOSITORY"
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+
+      - name: Publish release notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release create "$TAG_NAME" --verify-tag --generate-notes
           fi
-          gh release upload "$TAG_NAME" "family-tree-${TAG_NAME}-linux-amd64.tar.gz" --clobber
+
+      - name: Log out of registry
+        if: always()
+        run: docker logout "$REGISTRY"
 
       - name: Collect logs and clean up test container
         if: always()

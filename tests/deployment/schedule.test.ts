@@ -56,6 +56,12 @@ describe('weekly deployment schedule', () => {
     expect(contents).toContain('15 3 * * * /existing/job\n')
     expect(contents).toContain(`0 22 * * 4 DEPLOY_ROOT=${root} /bin/bash ${root}/bin/run-weekly.sh\n`)
     expect(contents.match(/BEGIN FAMILY_TREE_WEEKLY/g)).toHaveLength(1)
+    for (const name of ['pull-image.py', 'run-weekly.sh', 'deploy.sh']) {
+      expect(readFileSync(join(root, 'bin', name), 'utf8')).toBe(readFileSync(resolve('scripts', name), 'utf8'))
+    }
+    for (const name of ['docker-compose.yml', 'docker-compose.production.yml']) {
+      expect(readFileSync(join(root, 'bin', name), 'utf8')).toBe(readFileSync(resolve(name), 'utf8'))
+    }
   })
 
   it('refuses an unexpected system timezone without changing the crontab', () => {
