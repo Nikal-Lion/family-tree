@@ -27,6 +27,7 @@ jobs:
     name: Build and publish image
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    environment: copilot
     permissions:
       contents: write
     steps:

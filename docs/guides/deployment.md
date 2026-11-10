@@ -260,7 +260,8 @@ registry.cn-shanghai.aliyuncs.com/wolfife/family:latest
 先在阿里云 ACR 创建 `wolfife/family` 仓库。GitHub Actions 使用公网地址
 `registry.cn-shanghai.aliyuncs.com` 推送；上海服务器通过内网地址
 `registry-vpc.cn-shanghai.aliyuncs.com` 拉取同一仓库，须确保服务器的 VPC 网络可访问它。
-不会在 VPC 访问失败时自动改用公网。在 GitHub 仓库 Settings → Secrets and variables → Actions 设置：
+不会在 VPC 访问失败时自动改用公网。在 GitHub 仓库 Settings → Environments → `copilot` → Environment secrets 设置。
+Release 作业绑定此环境后才能读取以下机密：
 
 | Secret | 用途 |
 | --- | --- |
